@@ -6,24 +6,14 @@ import (
 	"time"
 )
 
-// Model defines the basic requirements for a struct to be managed by the ORM.
-// It's intentionally minimal, relying on the embedded BaseModel and struct tags
-// for most configuration (like table name, primary key).
-type Model interface {
-	GetID() int64
-	SetID(id int64)
-	TableName() string
-	// Consider adding methods if reflection becomes too slow or complex,
-	// e.g., GetFieldMap() map[string]interface{}
-}
-
 // CacheClient defines the interface for the caching layer.
 type CacheClient interface {
-	// Get retrieves a single model from the cache. `dest` should be a pointer to the model struct.
-	// Returns ErrNotFound if not found, potentially a specific constant like `NoneResult` internally.
-	GetModel(ctx context.Context, key string, dest Model) error
-	// Set stores a single model in the cache.
-	SetModel(ctx context.Context, key string, model Model, expiration time.Duration) error
+	// Get retrieves a single model from the cache. `dest` should be a pointer
+	// satisfying the Model interface (e.g., *User).
+	GetModel(ctx context.Context, key string, dest interface{}) error // Changed dest to interface{} for flexibility
+	// Set stores a single model in the cache. `model` should be a pointer
+	// satisfying the Model interface (e.g., *User).
+	SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error // Changed model to interface{}
 	// Delete removes a single model from the cache.
 	DeleteModel(ctx context.Context, key string) error
 
@@ -46,8 +36,9 @@ type CacheClient interface {
 // Implementations will handle database-specific SQL dialects for the ORM's supported features.
 type DBAdapter interface {
 	// Get executes a query expected to return a single row and scans it into dest.
-	Get(ctx context.Context, dest Model, query string, args ...interface{}) error
-	// Select executes a query expected to return multiple rows and scans them into dest. dest must be a slice of models.
+	// `dest` should be a pointer satisfying the Model interface (e.g., *User).
+	Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error // Changed dest to interface{}
+	// Select executes a query expected to return multiple rows and scans them into dest. dest must be a pointer to a slice of pointers (e.g., *[]*User).
 	Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error
 	// Exec executes a query that doesn't return rows (INSERT, UPDATE, DELETE).
 	Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
@@ -63,9 +54,16 @@ type DBAdapter interface {
 
 // Tx defines the interface for transaction operations, mirroring DBAdapter but operating within a transaction.
 type Tx interface {
-	Get(ctx context.Context, dest Model, query string, args ...interface{}) error
+	// Get executes a query within the transaction.
+	// `dest` should be a pointer satisfying the Model interface (e.g., *User).
+	Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error // Changed dest to interface{}
+	// Select executes a query within the transaction.
+	// dest must be a pointer to a slice of pointers (e.g., *[]*User).
 	Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error
+	// Exec executes a query within the transaction.
 	Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 	Commit() error
 	Rollback() error
 }
+
+// --- Exported Constructor Wrappers (if implementations are internal) ---
