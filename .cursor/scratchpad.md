@@ -16,7 +16,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 (Revised) Building this focused ORM presents several challenges:
 
-- **Integrating Existing Code:** Leveraging the progress made on the initial `base_model.go` (basic CRUD, caching concepts, hooks) as a foundation for the full ORM.
+- **Integrating Existing Code:** Leveraging the progress made on the initial `thing.go` (basic CRUD, caching concepts, hooks) as a foundation for the full ORM.
 - **Retaining `BaseModel` Concept:** Designing the ORM so that user models can embed a base struct (e.g., `thing.BaseModel` or `thing.ThingBase`) which provides common fields and potentially core method access, maintaining familiarity from the initial implementation.
 - **Multi-Database Compatibility:** Ensuring SQL dialect compatibility *for the supported simple query features* and consistent behavior across MySQL, PostgreSQL, and SQLite.
 - **Efficient Query Implementation:** Designing and implementing the focused query capabilities (WHERE, ORDER BY, LIMIT, OFFSET) efficiently across different databases.
@@ -46,34 +46,34 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 *This plan outlines the steps for building the Thing ORM, focusing on cached CRUD and simple list queries.* 
 
-1.  **[~] Project Setup & Core Structure:** (Partially addressed by `base_model.go`)
+1.  **[~] Project Setup & Core Structure:** (Partially addressed by `thing.go`)
     *   Initialize/Verify Go module. **Package name: `thing`**.
-    *   **Rename `base_model.go` to `thing.go`**. 
+    *   **Rename `thing.go` to `thing.go`**. 
     *   Define/Refine core interfaces (`DBAdapter`, `CacheClient`, `Model`, `QueryExecutor`, etc.).
     *   Set up basic project layout (`thing/`, `thing/internal/`, `examples/`, `tests/`).
     *   Setup basic logging and configuration handling.
     *   **Success Criteria:** Project structure created (`thing` package with `thing.go`), core interfaces defined, basic build/test pipeline works.
 2.  **[ ] Database Adapter Layer:**
     *   Design the `DBAdapter` interface (potentially refining `DBExecutor`).
-    *   Implement initial adapter for one database (e.g., SQLite or PostgreSQL using `sqlx` or `database/sql`). `base_model.go` uses placeholder logic.
+    *   Implement initial adapter for one database (e.g., SQLite or PostgreSQL using `sqlx` or `database/sql`). `thing.go` uses placeholder logic.
     *   Implement connection pooling/management.
     *   **Success Criteria:** Able to connect to the target DB, execute *real* SQL, and manage connections via the adapter interface.
-3.  **[~] Basic CRUD Operations (No Cache Yet):** (Partially addressed by `base_model.go` placeholders)
-    *   Implement *actual* database logic for `Create`, `Read` (ByID), `Update`, `Delete` using the DB adapter. `base_model.go` has the function signatures, generic structure, and placeholder logic.
-    *   Use generics and reflection (initially) for struct mapping. (`base_model.go` uses this approach).
+3.  **[~] Basic CRUD Operations (No Cache Yet):** (Partially addressed by `thing.go` placeholders)
+    *   Implement *actual* database logic for `Create`, `Read` (ByID), `Update`, `Delete` using the DB adapter. `thing.go` has the function signatures, generic structure, and placeholder logic.
+    *   Use generics and reflection (initially) for struct mapping. (`thing.go` uses this approach).
     *   Define how models map to tables (e.g., struct tags, naming conventions). Needs formalization (current uses basic struct name).
     *   Refine `BaseModel` struct (e.g., `thing.BaseModel`) for embedding.
     *   **Success Criteria:** Can perform basic CRUD operations with *real database interaction* on a simple model struct embedding `thing.BaseModel`.
-4.  **[~] Initial Query Executor Design:** (Partially addressed by `IDs` / `Query` in `base_model.go`, Scope Reduced)
+4.  **[~] Initial Query Executor Design:** (Partially addressed by `IDs` / `Query` in `thing.go`, Scope Reduced)
     *   Design the API for executing list queries based on criteria (e.g., `thing.Query(ctx, &params)` where params includes WHERE clauses, ORDER BY, LIMIT, OFFSET). Avoid a complex chainable builder.
     *   Implement translation to *real* SQL for the first DB adapter for these simple criteria, **ensuring it selects only the columns corresponding to the fields defined in the target model struct (not `SELECT *`)**. 
     *   Implement execution returning lists of model instances (refining `Query` and `CachedResult.Fetch`).
     *   **Success Criteria:** Can execute simple list queries returning mapped structs (with only defined fields selected) using a clear API.
-5.  **[~] Caching Layer Integration:** (Partially addressed by `base_model.go`)
+5.  **[~] Caching Layer Integration:** (Partially addressed by `thing.go`)
     *   Define/Refine `CacheClient` interface (e.g., for Redis). (`RedisClient` exists).
-    *   Implement Redis `CacheClient`. (`base_model.go` uses placeholder logic).
-    *   Integrate object caching into CRUD operations (`ByID`, `Create`, `Save`, `Delete`). (`base_model.go` implements this conceptually with placeholders).
-    *   Integrate query caching (e.g., caching IDs or results based on query hash). Define TTLs and basic invalidation (on mutation). (`base_model.go` implements ID list caching with TTL conceptually).
+    *   Implement Redis `CacheClient`. (`thing.go` uses placeholder logic).
+    *   Integrate object caching into CRUD operations (`ByID`, `Create`, `Save`, `Delete`). (`thing.go` implements this conceptually with placeholders).
+    *   Integrate query caching (e.g., caching IDs or results based on query hash). Define TTLs and basic invalidation (on mutation). (`thing.go` implements ID list caching with TTL conceptually).
     *   **Success Criteria:** CRUD operations and simple queries utilize the *actual* cache client, improving performance. Cache entries are invalidated/updated on mutations.
 6.  **[ ] Relationship Management (Phase 1: BelongsTo, HasMany):**
     *   Define how relationships are specified (e.g., struct tags).
@@ -81,9 +81,9 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
     *   **Crucially, ensure these implementations reuse the existing high-performance, cached `thing.ByID` (for BelongsTo) and `thing.Query`/`CachedResult` (for HasMany) functions** to avoid redundant lookups and leverage the caching layer.
     *   Integrate relationship loading with the query builder/executor for preloading (fetching related objects efficiently alongside the main query).
     *   **Success Criteria:** Can define and load simple `BelongsTo` and `HasMany` relationships between models, leveraging the core cached data access functions.
-7.  **[~] Hooks/Events System:** (Partially addressed by `base_model.go`)
-    *   Implement/Refine the Hooks system. (`base_model.go` has definitions and integration points).
-    *   Define standard lifecycle events (`BeforeCreate`, `AfterCreate`, etc.). (`base_model.go` has some defined).
+7.  **[~] Hooks/Events System:** (Partially addressed by `thing.go`)
+    *   Implement/Refine the Hooks system. (`thing.go` has definitions and integration points).
+    *   Define standard lifecycle events (`BeforeCreate`, `AfterCreate`, etc.). (`thing.go` has some defined).
     *   Integrate event triggering into CRUD and potentially relationship operations.
     *   Add tests for the hooks system.
     *   **Success Criteria:** Users can register listeners to react to model lifecycle events; system is tested.
@@ -109,18 +109,43 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
     *   Implement basic schema generation (`CREATE TABLE`) based on models.
     *   *Optional:* Explore basic migration generation/execution tools or integration with existing ones.
     *   **Success Criteria:** Can generate `CREATE TABLE` statements from model definitions.
-13. **[ ] Testing, Benchmarking, and Refinement:** (Partially addressed by old Task 10)
-    *   Write comprehensive unit and integration tests covering all features and databases. (Need tests for *real* DB/Cache interactions).
-    *   Set up CI (Continuous Integration).
-    *   Perform benchmarking and optimize critical paths.
-    *   Refine API based on usage and feedback.
-    *   Implement previous placeholders (`findChangedFields`, dynamic SQL in `Save`).
-    *   **(Deferred):** Consider adding instance method wrappers (e.g., `model.Save(ctx)`) as convenience helpers around package functions.
-    *   **Success Criteria:** High test coverage, documented performance benchmarks, stable API, placeholders implemented.
-14. **[ ] Documentation and Examples:**
-    *   Write comprehensive documentation (GoDoc, tutorials, conceptual explanations).
-    *   Provide clear usage examples for all major features.
-    *   **Success Criteria:** Project has clear, accessible documentation and examples.
+13. **[~] Testing, Benchmarking, and Refinement:** (Refined)
+    *   **Improve Test Infrastructure:**
+        *   Implement/Refine Cache Client for Testing (Mock/Real Redis - *Depends on Task 5*).
+        *   Ensure robust test DB setup (In-memory SQLite or instructions/scripts).
+        *   Create test helpers (data setup, cleanup, assertions).
+    *   **Optimization:**
+        *   Implement reflection metadata caching (map `reflect.Type` to column names, field info) to optimize SQL generation and value extraction.
+    *   **Core Functionality Tests:**
+        *   Add comprehensive tests for CRUD (`Create`, `ByID`, `Save`, `Delete`) including DB/cache interactions and error scenarios.
+        *   Refine and test `findChangedFields` implementation within `Save`.
+        *   Add comprehensive tests for Querying (`IDs`, `Query`) with various params, including cache interactions.
+    *   **Advanced Feature Tests:**
+        *   Add tests for Transaction Management (`BeginTx`, `Commit`, `Rollback`).
+        *   Implement/Refine and test Hooks/Events system (*Depends on Task 7*).
+    *   **Concurrency Tests:** Add tests for potential race conditions.
+    *   **Continuous Integration:** Set up CI pipeline (e.g., GitHub Actions).
+    *   **(Lower Priority):** Perform benchmarking and optimize critical paths.
+    *   **(Deferred):** Consider adding instance method wrappers (e.g., `model.Save(ctx)`).
+    *   **Success Criteria:** High test coverage for core features, DB/cache interactions, transactions, and hooks (when implemented). Tests pass reliably in CI. Placeholders refined/implemented. Performance documented.
+14. **[ ] Documentation and Examples:** (Refined)
+    *   **Setup:**
+        *   Create `examples/` directory.
+        *   Define sample model (e.g., `examples/models/user.go`).
+        *   Provide supporting files (Go module, run scripts, schema setup).
+    *   **Core Examples:**
+        *   `examples/01_basic_crud/main.go`: Demonstrate Init, Create, ByID, Save, Delete.
+        *   `examples/02_querying/main.go`: Demonstrate IDs, Query with params.
+        *   `examples/03_transactions/main.go`: Demonstrate transaction usage.
+    *   **Future Examples:**
+        *   Add examples for Hooks (*Depends on Task 7*).
+        *   Add examples for Relationships (*Depends on Task 6, 11*).
+    *   **Documentation:**
+        *   Write comprehensive GoDoc comments for the public API.
+        *   Write initial `README.md` (English).
+        *   Write initial `README_zh.md` (Chinese Translation).
+        *   *Optional:* Write tutorials/conceptual explanations.
+    *   **Success Criteria:** Runnable examples exist covering core features. Public API has GoDoc comments. Basic `README.md` and `README_zh.md` are present.
 15. **[ ] Open Source Release Preparation:**
     *   Choose a license (e.g., MIT, Apache 2.0).
     *   Write `README.md`, contribution guidelines (`CONTRIBUTING.md`), code of conduct.
@@ -132,42 +157,54 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 (Revised for Integration & Scope)
 
 - [x] Project Setup & Core Structure (Done: Module init, `thing` pkg, `thing.go` rename, dirs, interfaces defined)
-- [x] Database Adapter Layer (Initial - Done: SQLite adapter implemented with `sqlx`)
-- [~] Basic CRUD Operations (Partially done: `Create` refactored; `Update`/`Delete` need refactor)
-- [~] Initial Query Executor Design (Partially done: `ByID` refactored; `IDs`/`Query` need refactor & SQL builder)
+- [x] Database Adapter Layer (Initial - Done: SQLite adapter implemented with `sqlx`, including transaction support)
+- [x] Basic CRUD Operations (Done: `Create`, `Update`, `Delete`, `ByID`, `Save` refactored to use DBAdapter)
+- [x] Initial Query Executor Design (Done: `IDs`, `Query` refactored to use DBAdapter and SQL builder)
 - [~] Caching Layer Integration (Partially done conceptually, needs real Cache logic & integration)
 - [ ] Relationship Management (Phase 1: BelongsTo, HasMany) - *Note: Keep simple, reuse core funcs.*
 - [~] Hooks/Events System (Partially done, needs testing/refinement)
-- [ ] Transaction Management (Done: Implemented in SQLite adapter)
+- [x] Transaction Management (Done: Implemented in SQLite adapter)
 - [ ] Adding Support for More Databases
 - [ ] Querying Refinements (Scope Reduced)
 - [ ] Relationship Management (Phase 2: ManyToMany) - *Note: Keep simple, reuse core funcs.*
 - [ ] Schema Definition & Migration Tools (Basic)
-- [x] Testing, Benchmarking, and Refinement (Partial: Initial test setup with SQLite in-memory, basic ByID test)
-  - [~] Implement placeholders (`findChangedFields` in `Save` uses basic reflection, dynamic SQL needs builder for `Save`)
-  - [ ] Mock DB/Redis Tests (Using mock cache, real SQLite)
-  - [~] Replace DB Placeholders (`ByID`, `Create`, `Save` use adapter; `Delete`, `IDs` need refactor)
+- [~] Testing, Benchmarking, and Refinement (Partial: Initial test setup with SQLite in-memory, basic ByID test. *Refined plan added.*)
+  - [~] Implement placeholders (`findChangedFields` in `Save` uses basic reflection, needs refinement & tests)
+  - [ ] Mock DB/Redis Tests (Needs improved Cache Mock/Implementation)
+  - [x] Replace DB Placeholders (`ByID`, `Create`, `Save`, `Delete`, `IDs` use adapter)
   - [ ] Cache TTL Configuration
   - [ ] Locking refinement (Using basic cache client lock methods)
-  - [ ] Test Hooks/Events
+  - [ ] Implement reflection metadata caching
+  - [ ] Test Hooks/Events (*Depends on Task 7*)
+  - [ ] Add CRUD tests
+  - [ ] Add Querying tests
+  - [ ] Add Transaction tests
+  - [ ] Add Concurrency tests
+  - [ ] Setup CI
   - [ ] *(Deferred):* Instance method wrappers
-- [ ] Documentation and Examples
+- [ ] Documentation and Examples (*Refined plan added.*)
+  - [ ] Create `examples/` dir & sample model
+  - [ ] Add Basic CRUD example
+  - [ ] Add Querying example
+  - [ ] Add Transactions example
+  - [ ] Write GoDocs
+  - [ ] Write README.md
+  - [ ] Write README_zh.md
 - [ ] Open Source Release Preparation
 
 ## Executor's Feedback or Assistance Requests
 
 **(Updated)**
 - **Progress:**
-    - Completed Task 1 (Project Setup): Initialized module, created `thing` package structure, renamed initial core file to `thing.go`, defined core interfaces in `thing/interfaces.go`.
-    - Completed Task 2 (DB Adapter): Implemented `SQLiteAdapter` in `thing/internal/adapter_sqlite.go` using `sqlx`, including transaction support.
-    - Progressed Task 3/4 (CRUD/Query): Refactored `ByID`, `Create`, and `Save` in `thing.go` to use the `DBAdapter` interface. Added basic SQL generation helpers (`getColumns`, `buildSelectSQL`, `buildInsertSQL`, `getValues`, `buildUpdateSQL`).
-    - Added basic test setup (`thing_test.go`) using in-memory SQLite and a mock cache, testing `ByID`.
-    - Modified `BaseModel` to hold client references for potential instance methods.
-    - Added (incomplete) instance method `(m *BaseModel) Save(ctx)` as requested, highlighting reflection challenges.
-- **Current State:** Paused development flow. Code committed.
-- **Remaining Refactoring:** `Delete` and `IDs`/`Query` functions in `thing.go` still need refactoring to use the `DBAdapter` and proper SQL generation.
-- **Placeholders:** SQL generation for `Create`/`Save` is basic; `findChangedFields` logic in `Save` is basic; robust error handling and logging needed.
-- **Next:** Ready to resume when requested, likely starting with refactoring `Delete` or `IDs`/`Query`.
+    - Completed Tasks 1, 2, 3, 4, 8 (Setup, DB Adapter, CRUD, Query, Transactions).
+    - Implemented reflection metadata caching (`getCachedModelInfo`) (Sub-task of 13).
+- **Current State:** Refactored core functions to use `getCachedModelInfo`.
+- **Blocker:** Encountered persistent linter errors in `thing/thing.go` after refactoring for metadata caching. Errors relate to:
+    - Calling methods defined on embedded `BaseModel` (like `SetAdapter`, `setNewRecordFlag`) from generic functions operating on the embedding type `T` (or `*T`).
+    - Passing generic type pointers (`*T`) or related interface types (`interface{}`) to functions expecting the `Model` interface (like `triggerEvent`, cache methods).
+    - Multiple automated fix attempts failed.
+- **Assistance Needed:** Requesting guidance on the correct Go patterns/syntax to resolve these generic type/interface/reflection interaction errors in `ByID`, `Create`, `Save`, `Delete`.
+- **Next:** Paused. Waiting for guidance on resolving linter errors.
 
 ## Lessons
 
@@ -187,37 +224,37 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 1.  **Relationships (`Relation`, `_fast_query`, `load_things`, `MultiRelation`):**
     *   `thing.py`: Implements a dynamic, cache-heavy system for relationships between different `Thing` types. `_fast_query` attempts to optimize fetching multiple relationships.
-    *   `base_model.go`: No explicit relationship handling yet.
+    *   `thing.go`: No explicit relationship handling yet.
     *   Typical ORMs (GORM, Ent): Offer structured relationship definitions (e.g., HasMany, BelongsTo via struct tags or schema), preload/eager-loading mechanisms, and handle foreign key constraints. Much more structured and integrated with the database schema.
     *   *Comparison:* `thing.py`'s approach is very flexible but complex and relies heavily on specific caching patterns (`_rel_cache`, `sgm`). ORMs provide a more conventional, database-centric approach.
 
 2.  **Dynamic Properties / Schemaless (`_t` dict):**
     *   `thing.py`: Allows storing arbitrary key-value data within a `Thing` instance using the `_t` dictionary. `_essentials` defines required keys.
-    *   `base_model.go`: Uses statically typed Go structs.
+    *   `thing.go`: Uses statically typed Go structs.
     *   Typical ORMs: Primarily map struct fields to database columns. Some support mapping fields to JSON/JSONB database types, allowing for schemaless data storage within a structured column.
     *   *Comparison:* `thing.py` offers direct object-level flexibility. ORMs can achieve similar storage via JSON columns but access is less direct (e.g., `model.Data["key"]`).
 
 3.  **Hooks/Callbacks (`hooks.get_hook("thing.commit")`):**
     *   `thing.py`: Uses a global hook system (`r2.lib.hooks`) triggered during `_commit`.
-    *   `base_model.go`: Has placeholders (`triggerEvent`) but no implemented system.
+    *   `thing.go`: Has placeholders (`triggerEvent`) but no implemented system.
     *   Typical ORMs: Provide built-in lifecycle hooks (e.g., `BeforeSave`, `AfterCreate`, `BeforeUpdate`, `AfterDelete`) directly within the model definition or via interfaces.
     *   *Comparison:* ORM hooks are usually more tightly integrated with the model lifecycle. `thing.py` uses a more decoupled, global system.
 
 4.  **Atomic Increment (`_incr`):**
     *   `thing.py`: Provides a method to atomically increment integer properties (`_ups`, `_downs`, or fields in `_t`), handling locks, cache updates (`update_from_cache`), and DB increments.
-    *   `base_model.go`: No equivalent function yet.
+    *   `thing.go`: No equivalent function yet.
     *   Typical ORMs: Some offer ways to perform atomic updates (e.g., GORM's `Update("column", gorm.Expr("column + ?", 1))`).
     *   *Comparison:* `thing.py`'s `_incr` includes the full lock/cache logic specific to its architecture. ORM methods focus primarily on the DB update expression.
 
 5.  **Search Indexing (`update_search_index`):**
     *   `thing.py`: Explicitly sends a message to an AMQP queue (`search_changes`) to trigger external search index updates.
-    *   `base_model.go`: No search integration.
+    *   `thing.go`: No search integration.
     *   Typical ORMs: Don't typically handle search indexing directly; integration is usually done via hooks/callbacks or separate application logic.
     *   *Comparison:* This is an application-specific integration point.
 
 6.  **Advanced Querying (`Things`, `Relations`, `MultiQuery`, `Merge`):**
     *   `thing.py`: Provides a custom query builder (`Query`, `Things`, `Relations`) with features like caching query results (list of fullnames/IDs), merging results from different queries (`Merge`), handling pagination (`_before`, `_after`), and fetching specific properties (`RelationsPropsOnly`).
-    *   `base_model.go`: Has basic `IDs` and `Query` functions, returning a `CachedResult` struct holding IDs.
+    *   `thing.go`: Has basic `IDs` and `Query` functions, returning a `CachedResult` struct holding IDs.
     *   Typical ORMs: Offer sophisticated query builders allowing complex filtering, sorting, joining, grouping, and pagination, translating Go code into SQL. They usually return lists of model objects or specific selected fields.
     *   *Comparison:* `thing.py`'s query system is tailored to its specific architecture (fullname identifiers, separate caches). ORMs provide more general-purpose, SQL-centric query building.
 
@@ -227,7 +264,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
     *   Specialized Sort Properties (`_hot`, `_score`, etc.): Calculated properties based on fields. (Application logic, not typically ORM base)
     *   `_delete` (for Relations): Specific logic for deleting relationships and clearing caches.
 
-**Proposed New Features for `base_model.go`:**
+**Proposed New Features for `thing.go`:**
 
 Based on the analysis, here are features we could consider adding, prioritizing usefulness and feasibility within our current Go structure:
 
