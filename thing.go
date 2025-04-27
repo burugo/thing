@@ -14,8 +14,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	// We'll need a Redis client library. Using go-redis as an example.
-	// "github.com/redis/go-redis/v9"
 )
 
 // --- Constants ---
@@ -48,8 +46,6 @@ const (
 var (
 	ErrNotFound        = errors.New("record not found")
 	ErrLockNotAcquired = errors.New("could not acquire lock")
-	// Use redis.Nil for Redis-specific not found if using go-redis
-	RedisNilError = errors.New("redis: nil") // Placeholder if not using go-redis
 )
 
 // --- Global Configuration ---
@@ -939,62 +935,6 @@ func buildSelectSQL(info *modelInfo) string {
 	return fmt.Sprintf("SELECT %s FROM %s", strings.Join(quotedColumns, ", "), info.tableName)
 }
 
-// buildInsertSQL constructs an INSERT statement.
-func buildInsertSQL(info *modelInfo) (string, []string) {
-	insertCols := make([]string, 0, len(info.columns))
-	placeholders := make([]string, 0, len(info.columns))
-	for _, col := range info.columns {
-		if col != info.pkName {
-			insertCols = append(insertCols, col)
-			placeholders = append(placeholders, "?")
-		}
-	}
-	if info.tableName == "" || len(insertCols) == 0 {
-		log.Printf("Error: buildInsertSQL called with incomplete modelInfo or no insertable columns: %+v", info)
-		return "", nil
-	}
-	sqlStmt := fmt.Sprintf("INSERT INTO %s (\"%s\") VALUES (%s)",
-		info.tableName, strings.Join(insertCols, "\", \""), strings.Join(placeholders, ", "))
-	return sqlStmt, insertCols
-}
-
-// buildUpdateSQL constructs an UPDATE statement.
-func buildUpdateSQL(info *modelInfo, changedFields map[string]interface{}) (string, []interface{}, error) {
-	if len(changedFields) == 0 {
-		return "", nil, errors.New("no fields provided for update")
-	}
-	setClauses := make([]string, 0, len(changedFields))
-	values := make([]interface{}, 0, len(changedFields))
-	for _, colName := range info.columns { // Iterate over known columns for order
-		if value, ok := changedFields[colName]; ok {
-			if colName == info.pkName {
-				continue
-			}
-			setClauses = append(setClauses, fmt.Sprintf("\"%s\" = ?", colName))
-			values = append(values, value)
-		}
-	}
-	if len(setClauses) == 0 {
-		return "", nil, errors.New("no updatable fields provided for update (only PK change attempted?)")
-	}
-	if info.tableName == "" || info.pkName == "" {
-		log.Printf("Error: buildUpdateSQL called with incomplete modelInfo: %+v", info)
-		return "", nil, errors.New("cannot build update SQL with missing table or PK name")
-	}
-	sqlStmt := fmt.Sprintf("UPDATE %s SET %s WHERE \"%s\" = ?",
-		info.tableName, strings.Join(setClauses, ", "), info.pkName)
-	return sqlStmt, values, nil
-}
-
-// buildDeleteSQL constructs a DELETE statement.
-func buildDeleteSQL(info *modelInfo) string {
-	if info.tableName == "" || info.pkName == "" {
-		log.Printf("Error: buildDeleteSQL called with incomplete modelInfo: %+v", info)
-		return ""
-	}
-	return fmt.Sprintf("DELETE FROM %s WHERE \"%s\" = ?", info.tableName, info.pkName)
-}
-
 // buildSelectIDsSQL constructs a SELECT statement to fetch only primary key IDs.
 func buildSelectIDsSQL(info *modelInfo, params QueryParams) (string, []interface{}) {
 	var query strings.Builder
@@ -1025,33 +965,6 @@ func buildSelectIDsSQL(info *modelInfo, params QueryParams) (string, []interface
 }
 
 // --- Reflection & Value Helpers --- (Moved Down)
-
-// getValuesForColumns extracts field values corresponding to a specific list of columns.
-func getValuesForColumns(modelPtr interface{}, info *modelInfo, columns []string) ([]interface{}, error) {
-	v := reflect.ValueOf(modelPtr)
-	if v.Kind() == reflect.Ptr {
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("expected a struct pointer, got %T", modelPtr)
-	}
-	values := make([]interface{}, 0, len(columns))
-	for _, colName := range columns {
-		fieldName, ok := info.columnToFieldMap[colName]
-		if !ok {
-			return nil, fmt.Errorf("column '%s' not found in cached metadata for type %s", colName, v.Type().Name())
-		}
-		fieldVal := v.FieldByName(fieldName)
-		if !fieldVal.IsValid() {
-			return nil, fmt.Errorf("field '%s' (for column '%s') not found in struct %s", fieldName, colName, v.Type().Name())
-		}
-		if !fieldVal.CanInterface() {
-			return nil, fmt.Errorf("cannot interface field '%s' (for column '%s') in struct %s", fieldName, colName, v.Type().Name())
-		}
-		values = append(values, fieldVal.Interface())
-	}
-	return values, nil
-}
 
 // getTableNameFromType determines table name from reflect.Type.
 func getTableNameFromType(modelType reflect.Type) string {
