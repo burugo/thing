@@ -1114,20 +1114,3 @@ type QueryParams struct {
 	Start int           // Offset (for pagination)
 	Limit int           // Limit (for pagination)
 }
-
-// --- Placeholder Types/Interfaces --- (Moved Down, To Be Removed Eventually)
-
-// Placeholder for a Redis client. Replace with your actual client library (e.g., redis.Client).
-type RedisClient interface {
-	Get(ctx context.Context, key string) (string, error)
-	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
-	Del(ctx context.Context, keys ...string) error
-	SetNX(ctx context.Context, key string, value interface{}, expiration time.Duration) (bool, error)
-}
-
-// Placeholder for a database connection/transaction. Replace with *sql.DB, *sql.Tx, or your ORM's equivalent.
-type DBExecutor interface {
-	QueryRowContext(ctx context.Context, query string, args ...interface{}) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-	SelectContext(ctx context.Context, dest interface{}, query string, args ...interface{}) error
-}
