@@ -613,28 +613,55 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value interface{}) error 
 
 // queryInternal retrieves a slice of models based on query parameters.
 func (t *Thing[T]) queryInternal(ctx context.Context, params QueryParams) ([]*T, error) {
-	if t.db == nil {
-		return nil, errors.New("queryInternal: DBAdapter not configured on Thing instance")
+	if t.db == nil || t.cache == nil { // Ensure cache is also checked
+		return nil, errors.New("queryInternal: DBAdapter and CacheClient must be configured on Thing instance")
 	}
 	if t.info == nil {
 		return nil, errors.New("queryInternal: model info not available on Thing instance")
 	}
 
-	// Build the SQL query for fetching primary objects
-	query, args := buildSelectSQLWithParams(t.info, params) // Assumes this helper exists or is created
-
-	// Execute the query
-	results := make([]*T, 0)
-	// Use the DBAdapter's Select method
-	err := t.db.Select(ctx, &results, query, args...)
+	// 1. Get IDs using the cache-aware idsInternal function
+	ids, err := t.idsInternal(ctx, t.info, params)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return results, nil // Return empty slice, not an error
-		}
-		return nil, fmt.Errorf("query execution failed: %w", err)
+		// Propagate errors from fetching IDs (e.g., DB error if cache missed)
+		return nil, fmt.Errorf("failed to get IDs for query: %w", err)
+	}
+	if len(ids) == 0 {
+		return []*T{}, nil // No IDs found, return empty slice
 	}
 
-	// --- Eager Loading (Preloading) ---
+	// 2. Fetch models by ID, utilizing the object cache via byIDInternal
+	//    We fetch them one by one for simplicity, leveraging byIDInternal's caching.
+	//    A batch fetch could be implemented for optimization if needed.
+	results := make([]*T, 0, len(ids))
+	fetchErrors := []string{}
+	for _, id := range ids {
+		instance := new(T)
+		err := t.byIDInternal(ctx, id, instance) // This checks cache first
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				// This might indicate cache inconsistency (ID found in query cache but not object cache/DB)
+				log.Printf("WARN: queryInternal: ID %d found by idsInternal but not found by byIDInternal (cache/DB inconsistency?)", id)
+				// Skip this ID, but collect the error
+				fetchErrors = append(fetchErrors, fmt.Sprintf("ID %d not found", id))
+			} else {
+				// Log and collect other unexpected errors during fetch
+				log.Printf("ERROR: queryInternal: Failed to fetch model for ID %d: %v", id, err)
+				fetchErrors = append(fetchErrors, fmt.Sprintf("fetching ID %d: %v", id, err))
+			}
+			continue // Skip adding this instance if an error occurred
+		}
+		results = append(results, instance)
+	}
+
+	// Optional: If strict consistency is required, return an error if any fetches failed.
+	if len(fetchErrors) > 0 {
+		log.Printf("WARN: queryInternal completed with %d fetch errors: %s", len(fetchErrors), strings.Join(fetchErrors, "; "))
+		// Decide whether to return partial results or an error. Returning partial results for now.
+		// return nil, fmt.Errorf("failed to fetch some models: %s", strings.Join(fetchErrors, "; "))
+	}
+
+	// 3. Eager Loading (Preloading) - Apply to the successfully fetched results
 	if len(params.Preloads) > 0 && len(results) > 0 {
 		for _, preloadName := range params.Preloads {
 			if err := t.preloadRelations(ctx, results, preloadName); err != nil {
@@ -1103,7 +1130,8 @@ func setUpdatedAtTimestamp(value interface{}, t time.Time) {
 
 // generateCacheKey creates a standard cache key string for a single model.
 func generateCacheKey(tableName string, id int64) string {
-	return fmt.Sprintf("model:%s:%d", tableName, id)
+	// Format: {tableName}:{id}
+	return fmt.Sprintf("%s:%d", tableName, id)
 }
 
 // generateQueryCacheKey generates a cache key for a query based on table name and params hash.
@@ -1349,7 +1377,8 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 	relatedSliceVal := reflect.New(relatedSliceType).Elem() // reflect.Value of the slice
 
 	log.Printf("Executing query for related %s: %s [%v]", relatedModelType.Name(), relatedQuery, uniqueFkList)
-	err = globalDB.Select(ctx, relatedSliceVal.Addr().Interface(), relatedQuery, uniqueFkList...)
+	// Use the instance's db adapter (t.db) instead of globalDB
+	err = t.db.Select(ctx, relatedSliceVal.Addr().Interface(), relatedQuery, uniqueFkList...)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to fetch related %s models: %w", relatedModelType.Name(), err)
 	}
@@ -1484,7 +1513,8 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 	relatedSelectDestVal := reflect.New(relatedSelectDestType).Elem()         // reflect.Value of the []*R slice
 
 	log.Printf("Executing query for related %s: %s [%v]", relatedModelType.Name(), relatedQuery, uniqueLkList)
-	err = globalDB.Select(ctx, relatedSelectDestVal.Addr().Interface(), relatedQuery, uniqueLkList...)
+	// Use the instance's db adapter (t.db) instead of globalDB
+	err = t.db.Select(ctx, relatedSelectDestVal.Addr().Interface(), relatedQuery, uniqueLkList...)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("failed to fetch related %s models: %w", relatedModelType.Name(), err)
 	}
