@@ -175,17 +175,29 @@ func (t *Thing[T]) Delete(value *T) error {
 }
 
 // Query executes a query based on QueryParams and returns results of type []*T.
+// Note: This method currently passes its own context directly to internal methods.
+// It could be refactored to use t.ctx like ByID/Save/Delete if desired.
 func (t *Thing[T]) Query(params QueryParams) ([]*T, error) {
 	return t.queryInternal(t.ctx, params) // Calls internal method
 }
 
 // IDs executes a query based on QueryParams and returns only the primary key IDs for type T.
+// Note: This method currently passes its own context directly to internal methods.
+// It could be refactored to use t.ctx like ByID/Save/Delete if desired.
 func (t *Thing[T]) IDs(params QueryParams) ([]int64, error) {
 	if t.info == nil { // Add check for safety
 		return nil, errors.New("IDs: model info not available on Thing instance")
 	}
 	// Pass the pre-computed info from the Thing instance
 	return t.idsInternal(t.ctx, t.info, params) // Calls internal method
+}
+
+// Load explicitly loads relationships for a given model instance using the Thing's context.
+// model must be a pointer to a struct of type T.
+// relations are the string names of the fields representing the relationships to load.
+func (t *Thing[T]) Load(model *T, relations ...string) error {
+	// Use the context stored in the Thing instance
+	return t.loadInternal(t.ctx, model, relations...)
 }
 
 // --- BaseModel Struct ---
@@ -601,37 +613,48 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value interface{}) error 
 
 // queryInternal retrieves a slice of models based on query parameters.
 func (t *Thing[T]) queryInternal(ctx context.Context, params QueryParams) ([]*T, error) {
-	if t.db == nil || t.cache == nil {
-		return nil, errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+	if t.db == nil {
+		return nil, errors.New("queryInternal: DBAdapter not configured on Thing instance")
+	}
+	if t.info == nil {
+		return nil, errors.New("queryInternal: model info not available on Thing instance")
 	}
 
-	// 1. Get IDs (will use query cache via idsInternal)
-	ids, err := t.idsInternal(ctx, t.info, params)
+	// Build the SQL query for fetching primary objects
+	query, args := buildSelectSQLWithParams(t.info, params) // Assumes this helper exists or is created
+
+	// Execute the query
+	results := make([]*T, 0)
+	// Use the DBAdapter's Select method
+	err := t.db.Select(ctx, &results, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get IDs for query: %w", err)
-	}
-
-	if len(ids) == 0 {
-		return []*T{}, nil // Return empty slice if no IDs found
-	}
-
-	// 2. Fetch objects by ID (will use object cache via ByID)
-	results := make([]*T, 0, len(ids))
-	// Consider concurrent fetches? For now, sequential.
-	for _, id := range ids {
-		// Use the public ByID method which encapsulates cache/DB logic
-		model, err := t.ByID(id) // ByID already uses the instance context (t.ctx)
-		if err != nil {
-			// Log error for this specific ID but continue fetching others
-			log.Printf("WARN: Failed to fetch model %s with ID %d during query hydration: %v", t.info.tableName, id, err)
-			continue
+		if errors.Is(err, sql.ErrNoRows) {
+			return results, nil // Return empty slice, not an error
 		}
-		results = append(results, model)
+		return nil, fmt.Errorf("query execution failed: %w", err)
 	}
 
-	log.Printf("Query Internal: Fetched %d / %d models for query", len(results), len(ids))
+	// --- Eager Loading (Preloading) ---
+	if len(params.Preloads) > 0 && len(results) > 0 {
+		for _, preloadName := range params.Preloads {
+			if err := t.preloadRelations(ctx, results, preloadName); err != nil {
+				// Log the error but potentially continue? Or return?
+				// For now, return the error to make it visible.
+				log.Printf("Warning: failed to preload relation '%s': %v", preloadName, err)
+				return nil, fmt.Errorf("failed to preload relation '%s': %w", preloadName, err)
+			}
+		}
+	}
+
+	// Set isNewRecord flag to false for all retrieved records
+	for _, result := range results {
+		setNewRecordFlagIfBaseModel(result, false)
+	}
+
 	return results, nil
 }
+
+// --- IDs Query ---
 
 // idsInternal retrieves a list of IDs based on query parameters, checking query cache first.
 func (t *Thing[T]) idsInternal(ctx context.Context, info *modelInfo, params QueryParams) ([]int64, error) {
@@ -964,6 +987,37 @@ func buildSelectIDsSQL(info *modelInfo, params QueryParams) (string, []interface
 	return query.String(), args
 }
 
+// buildSelectSQLWithParams constructs SELECT SQL query including WHERE, ORDER, LIMIT, OFFSET.
+func buildSelectSQLWithParams(info *modelInfo, params QueryParams) (string, []interface{}) {
+	baseQuery := buildSelectSQL(info) // Use existing helper for SELECT ... FROM ...
+
+	var whereClause string
+	var args = params.Args
+	if params.Where != "" {
+		whereClause = " WHERE " + params.Where
+	}
+
+	var orderClause string
+	if params.Order != "" {
+		orderClause = " ORDER BY " + params.Order
+	}
+
+	var limitClause string
+	if params.Limit > 0 {
+		// Use placeholders for limit/offset for broader DB compatibility
+		limitClause = " LIMIT ?"
+		args = append(args, params.Limit)
+		if params.Start > 0 {
+			limitClause += " OFFSET ?"
+			args = append(args, params.Start)
+		}
+	}
+
+	finalQuery := baseQuery + whereClause + orderClause + limitClause
+	log.Printf("Built SQL: %s | Args: %v", finalQuery, args) // Debug log
+	return finalQuery, args
+}
+
 // --- Reflection & Value Helpers --- (Moved Down)
 
 // getTableNameFromType determines table name from reflect.Type.
@@ -1056,6 +1110,7 @@ func generateCacheKey(tableName string, id int64) string {
 func generateQueryCacheKey(tableName string, params QueryParams) (string, error) {
 	paramsBytes, err := json.Marshal(params)
 	if err != nil {
+		log.Printf("ERROR: json.Marshal(params) failed in generateQueryCacheKey: %v\nParams: %+v", err, params)
 		return "", fmt.Errorf("failed to marshal query params for cache key: %w", err)
 	}
 	hasher := sha256.New()
@@ -1106,11 +1161,425 @@ func withLock(ctx context.Context, cache CacheClient, lockKey string, action fun
 
 // --- Querying Structs --- (Moved Down)
 
-// QueryParams defines parameters for list queries.
+// QueryParams defines parameters for database queries.
 type QueryParams struct {
-	Where string        // Raw WHERE clause (e.g., "status = ? AND name LIKE ?")
-	Args  []interface{} // Arguments for the WHERE clause placeholders
-	Order string        // Raw ORDER BY clause (e.g., "created_at DESC")
-	Start int           // Offset (for pagination)
-	Limit int           // Limit (for pagination)
+	Where    string        // Raw WHERE clause (e.g., "status = ? AND name LIKE ?")
+	Args     []interface{} // Arguments for the WHERE clause placeholders
+	Order    string        // Raw ORDER BY clause (e.g., "created_at DESC")
+	Start    int           // Offset (for pagination)
+	Limit    int           // Limit (for pagination)
+	Preloads []string      // List of relationship names to eager-load (e.g., ["Author", "Comments"])
+}
+
+// --- NEW Relationship Preloading Functions --- (Added at the end)
+
+// RelationshipOpts holds parsed options from the 'thing' tag for relationships.
+type RelationshipOpts struct {
+	RelationType string // "belongsTo", "hasMany"
+	ForeignKey   string // FK field name in the *owning* struct (for belongsTo) or *related* struct (for hasMany)
+	LocalKey     string // PK field name in the *owning* struct (defaults to info.pkName)
+	RelatedModel string // Optional: Specify related model name if different from field type
+}
+
+// parseRelationTag parses the `thing` tag for relationship definitions.
+// Example: `thing:"rel=belongsTo;fk=AuthorID"`
+// Example: `thing:"rel=hasMany;fk=PostID"`
+func parseRelationTag(tag string) (opts RelationshipOpts, err error) {
+	parts := strings.Split(tag, ";")
+	for _, part := range parts {
+		kv := strings.SplitN(part, "=", 2)
+		if len(kv) != 2 {
+			continue // Ignore invalid parts
+		}
+		key := strings.TrimSpace(kv[0])
+		value := strings.TrimSpace(kv[1])
+
+		// --- DEBUG LOGGING ---
+		log.Printf("DEBUG parseRelationTag: Part='%s', Key='%s', Value='%s'", part, key, value)
+		// --- END DEBUG LOGGING ---
+
+		switch strings.ToLower(key) {
+		case "rel":
+			opts.RelationType = strings.ToLower(value) // Ensure value is lowercased
+			// --- DEBUG LOGGING ---
+			log.Printf("DEBUG parseRelationTag: Set opts.RelationType to '%s'", opts.RelationType)
+			// --- END DEBUG LOGGING ---
+		case "fk":
+			opts.ForeignKey = value
+		case "localkey":
+			opts.LocalKey = value
+		case "model":
+			opts.RelatedModel = value // Less common, might be needed for interface fields?
+		}
+	}
+
+	if opts.RelationType != "belongs_to" && opts.RelationType != "has_many" {
+		err = fmt.Errorf("invalid or missing 'rel' type in tag: %s", tag)
+		return
+	}
+	// Basic validation (more could be added)
+	if opts.ForeignKey == "" {
+		// FK is usually required, derivation logic is complex, enforce for now.
+		err = fmt.Errorf("missing required 'fk' (foreign key) in relation tag: %s", tag)
+		return
+	}
+
+	return opts, nil
+}
+
+// preloadRelations dispatches preloading work based on relationship type.
+func (t *Thing[T]) preloadRelations(ctx context.Context, results []*T, preloadName string) error {
+	if len(results) == 0 {
+		return nil // Nothing to preload
+	}
+	// 1. Get reflect.Type and reflect.Value of the results slice
+	resultsVal := reflect.ValueOf(results)
+	modelType := reflect.TypeOf(results[0]).Elem() // Get type T from the first element
+
+	// 2. Get the StructField for preloadName
+	field, found := modelType.FieldByName(preloadName)
+	if !found {
+		return fmt.Errorf("relation field '%s' not found in model type %s", preloadName, modelType.Name())
+	}
+
+	// 3. Parse the `thing` tag
+	tag := field.Tag.Get("thing")
+	if tag == "" {
+		return fmt.Errorf("missing 'thing' tag on relation field '%s' in model type %s", preloadName, modelType.Name())
+	}
+	opts, err := parseRelationTag(tag)
+	if err != nil {
+		return fmt.Errorf("error parsing 'thing' tag for field '%s': %w", preloadName, err)
+	}
+
+	// Ensure LocalKey is set (defaults to primary key of T)
+	if opts.LocalKey == "" {
+		opts.LocalKey = t.info.pkName
+		if opts.LocalKey == "" {
+			return fmt.Errorf("cannot determine local key (primary key) for model type %s", modelType.Name())
+		}
+	}
+
+	// 4. Based on tag, call appropriate helper
+	log.Printf("Dispatching preload for '%s.%s' (Type: %s, FK: %s, LocalKey: %s)", modelType.Name(), preloadName, opts.RelationType, opts.ForeignKey, opts.LocalKey)
+	switch opts.RelationType {
+	case "belongs_to":
+		return t.preloadBelongsTo(ctx, resultsVal, field, opts)
+	case "has_many":
+		return t.preloadHasMany(ctx, resultsVal, field, opts)
+	default:
+		// Should be caught by parseRelationTag, but defensive check
+		return fmt.Errorf("unsupported relation type '%s' for field '%s'", opts.RelationType, preloadName)
+	}
+}
+
+// preloadBelongsTo handles eager loading for BelongsTo relationships.
+func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Value, field reflect.StructField, opts RelationshipOpts) error {
+	// T = Owning Model (e.g., Post)
+	// R = Related Model (e.g., User)
+
+	// --- Type checking ---
+	relatedFieldType := field.Type // Type of the field (e.g., *User)
+	if relatedFieldType.Kind() != reflect.Ptr || relatedFieldType.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("belongsTo field '%s' must be a pointer to a struct, but got %s", field.Name, relatedFieldType.String())
+	}
+	relatedModelType := relatedFieldType.Elem() // Type R (e.g., User)
+	log.Printf("Preloading BelongsTo: Field %s (*%s), FK in %s: %s", field.Name, relatedModelType.Name(), t.info.tableName, opts.ForeignKey)
+
+	// --- Get Foreign Key Info from Owning Model T ---
+	owningModelType := t.info.columnToFieldMap // map[dbCol]goField
+	fkFieldName, fkFieldFound := owningModelType[opts.ForeignKey]
+	if !fkFieldFound {
+		// Maybe FK *is* the Go field name?
+		if _, directFieldFound := reflect.TypeOf(resultsVal.Index(0).Interface()).Elem().FieldByName(opts.ForeignKey); directFieldFound {
+			fkFieldName = opts.ForeignKey
+			fkFieldFound = true
+		} else {
+			return fmt.Errorf("foreign key field '%s' (from tag 'fk') not found in owning model %s", opts.ForeignKey, resultsVal.Type().Elem().Elem().Name())
+		}
+	}
+	log.Printf("Foreign Key Field in Owning Model (%s): %s", resultsVal.Type().Elem().Elem().Name(), fkFieldName)
+
+	// --- Collect Foreign Key Values from results ---
+	fkValues := make(map[interface{}]bool)
+	for i := 0; i < resultsVal.Len(); i++ {
+		owningModelElem := resultsVal.Index(i).Elem()          // Get underlying struct T
+		fkFieldVal := owningModelElem.FieldByName(fkFieldName) // Get FK field (e.g., AuthorID)
+		if fkFieldVal.IsValid() {
+			key := fkFieldVal.Interface() // Get the value (e.g., int64 ID)
+			// Check for zero value - don't preload nil associations
+			if !reflect.ValueOf(key).IsZero() {
+				fkValues[key] = true
+			}
+		} else {
+			log.Printf("WARN: FK field '%s' not valid on element %d during belongsTo preload", fkFieldName, i)
+		}
+	}
+
+	if len(fkValues) == 0 {
+		log.Println("No valid non-zero foreign keys found for belongsTo preload.")
+		return nil // No related models to load
+	}
+
+	uniqueFkList := make([]interface{}, 0, len(fkValues))
+	for k := range fkValues {
+		uniqueFkList = append(uniqueFkList, k)
+	}
+	log.Printf("Collected %d unique foreign keys for %s: %v", len(uniqueFkList), field.Name, uniqueFkList)
+
+	// --- Fetch Related Models (Type R) ---
+	// We need info for the related model (R)
+	relatedInfo, err := getCachedModelInfo(relatedModelType)
+	if err != nil {
+		return fmt.Errorf("failed to get model info for related type %s: %w", relatedModelType.Name(), err)
+	}
+	// Assume related model's PK is the target of our FK list
+	relatedPkName := relatedInfo.pkName
+	if relatedPkName == "" {
+		return fmt.Errorf("cannot determine primary key for related type %s", relatedModelType.Name())
+	}
+
+	// Construct query: SELECT * FROM related_table WHERE related_pk IN (?, ?, ...)
+	relatedQuery := buildSelectSQL(relatedInfo)                                     // SELECT related_cols... FROM related_table
+	placeholders := strings.Repeat("?,", len(uniqueFkList))[:len(uniqueFkList)*2-1] // "?,?,?"
+	relatedQuery = fmt.Sprintf("%s WHERE %s IN (%s)", relatedQuery, relatedPkName, placeholders)
+
+	// Create a slice of the correct related type R (e.g., []*User)
+	relatedSliceType := reflect.SliceOf(relatedFieldType)   // Slice of pointers *R
+	relatedSliceVal := reflect.New(relatedSliceType).Elem() // reflect.Value of the slice
+
+	log.Printf("Executing query for related %s: %s [%v]", relatedModelType.Name(), relatedQuery, uniqueFkList)
+	err = globalDB.Select(ctx, relatedSliceVal.Addr().Interface(), relatedQuery, uniqueFkList...)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("failed to fetch related %s models: %w", relatedModelType.Name(), err)
+	}
+
+	// --- Map Related Models back to results ---
+	// Create a map: foreignKeyValue -> *RelatedModel
+	relatedMap := make(map[interface{}]reflect.Value)
+	for i := 0; i < relatedSliceVal.Len(); i++ {
+		relatedModelPtr := relatedSliceVal.Index(i) // *R
+		relatedModelElem := relatedModelPtr.Elem()  // R
+		// Find the PK field value of the related model (which corresponds to our FK)
+		pkGoFieldName, ok := relatedInfo.columnToFieldMap[relatedPkName]
+		if !ok {
+			log.Printf("WARN: Could not find Go field name for PK '%s' in related model %s", relatedPkName, relatedModelType.Name())
+			continue
+		}
+		pkValField := relatedModelElem.FieldByName(pkGoFieldName)
+		if pkValField.IsValid() {
+			relatedMap[pkValField.Interface()] = relatedModelPtr // Map FK -> *R
+		} else {
+			log.Printf("WARN: PK field '%s' not valid on fetched related model %s at index %d", pkGoFieldName, relatedModelType.Name(), i)
+		}
+	}
+
+	// Iterate through original results and set the relationship field
+	for i := 0; i < resultsVal.Len(); i++ {
+		owningModelPtr := resultsVal.Index(i)                  // *T
+		owningModelElem := owningModelPtr.Elem()               // T
+		fkFieldVal := owningModelElem.FieldByName(fkFieldName) // Get FK field value
+
+		if fkFieldVal.IsValid() {
+			fkValue := fkFieldVal.Interface()
+			if relatedModelPtr, found := relatedMap[fkValue]; found {
+				relationField := owningModelElem.FieldByName(field.Name) // Get the *User field
+				if relationField.IsValid() && relationField.CanSet() {
+					relationField.Set(relatedModelPtr) // Set post.Author = userPtr
+				}
+			}
+		}
+	}
+
+	log.Printf("Successfully preloaded BelongsTo relation '%s'", field.Name)
+	return nil
+}
+
+// preloadHasMany handles eager loading for HasMany relationships.
+func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value, field reflect.StructField, opts RelationshipOpts) error {
+	// T = Owning Model (e.g., Post)
+	// R = Related Model (e.g., Comment)
+
+	// --- Type checking ---
+	relatedFieldType := field.Type // Type of the field (e.g., []Comment or []*Comment)
+	if relatedFieldType.Kind() != reflect.Slice {
+		return fmt.Errorf("hasMany field '%s' must be a slice, but got %s", field.Name, relatedFieldType.String())
+	}
+	relatedElemType := relatedFieldType.Elem() // Type of slice elements (e.g., Comment or *Comment)
+	var relatedModelType reflect.Type
+	var relatedIsSliceOfPtr bool
+	if relatedElemType.Kind() == reflect.Ptr && relatedElemType.Elem().Kind() == reflect.Struct {
+		relatedModelType = relatedElemType.Elem() // Type R (e.g., Comment)
+		relatedIsSliceOfPtr = true
+	} else if relatedElemType.Kind() == reflect.Struct {
+		relatedModelType = relatedElemType // Type R (e.g., Comment)
+		relatedIsSliceOfPtr = false
+	} else {
+		return fmt.Errorf("hasMany field '%s' must be a slice of structs or pointers to structs, got slice of %s", field.Name, relatedElemType.String())
+	}
+	log.Printf("Preloading HasMany: Field %s (%s), FK in %s: %s", field.Name, relatedFieldType.String(), relatedModelType.Name(), opts.ForeignKey)
+
+	// --- Get Local Key Info from Owning Model T ---
+	// Local key is usually the PK of the owning model T
+	localKeyColName := opts.LocalKey // e.g., "id"
+	localKeyGoFieldName, ok := t.info.columnToFieldMap[localKeyColName]
+	if !ok {
+		return fmt.Errorf("local key column '%s' not found in model %s info", localKeyColName, resultsVal.Type().Elem().Elem().Name())
+	}
+	log.Printf("Local Key Field in Owning Model (%s): %s (DB: %s)", resultsVal.Type().Elem().Elem().Name(), localKeyGoFieldName, localKeyColName)
+
+	// --- Collect Local Key Values from results ---
+	localKeyValues := make(map[interface{}]bool)
+	for i := 0; i < resultsVal.Len(); i++ {
+		owningModelElem := resultsVal.Index(i).Elem()                  // Get underlying struct T
+		lkFieldVal := owningModelElem.FieldByName(localKeyGoFieldName) // Get local key field (e.g., ID)
+		if lkFieldVal.IsValid() {
+			key := lkFieldVal.Interface() // Get the value (e.g., int64 ID)
+			localKeyValues[key] = true
+		} else {
+			log.Printf("WARN: Local key field '%s' not valid on element %d during hasMany preload", localKeyGoFieldName, i)
+		}
+	}
+
+	if len(localKeyValues) == 0 {
+		log.Println("No valid local keys found for hasMany preload.")
+		return nil // No related models to load
+	}
+
+	uniqueLkList := make([]interface{}, 0, len(localKeyValues))
+	for k := range localKeyValues {
+		uniqueLkList = append(uniqueLkList, k)
+	}
+	log.Printf("Collected %d unique local keys for %s: %v", len(uniqueLkList), field.Name, uniqueLkList)
+
+	// --- Fetch Related Models (Type R) ---
+	// We need info for the related model (R)
+	relatedInfo, err := getCachedModelInfo(relatedModelType)
+	if err != nil {
+		return fmt.Errorf("failed to get model info for related type %s: %w", relatedModelType.Name(), err)
+	}
+	// Foreign key is in the *related* table R, referencing the owning model T
+	relatedFkColName := opts.ForeignKey // e.g., "post_id"
+	relatedFkGoFieldName, fkFieldFound := relatedInfo.columnToFieldMap[relatedFkColName]
+	if !fkFieldFound {
+		// Maybe FK *is* the Go field name in related model?
+		if _, directFieldFound := relatedModelType.FieldByName(opts.ForeignKey); directFieldFound {
+			relatedFkGoFieldName = opts.ForeignKey
+			fkFieldFound = true
+		} else {
+			return fmt.Errorf("foreign key column '%s' (from tag 'fk') not found in related model %s info", relatedFkColName, relatedModelType.Name())
+		}
+	}
+	log.Printf("Foreign Key Field in Related Model (%s): %s (DB: %s)", relatedModelType.Name(), relatedFkGoFieldName, relatedFkColName)
+
+	// Construct query: SELECT * FROM related_table WHERE related_fk IN (?, ?, ...)
+	relatedQuery := buildSelectSQL(relatedInfo)                                     // SELECT related_cols... FROM related_table
+	placeholders := strings.Repeat("?,", len(uniqueLkList))[:len(uniqueLkList)*2-1] // "?,?,?"
+	relatedQuery = fmt.Sprintf("%s WHERE %s IN (%s)", relatedQuery, relatedFkColName, placeholders)
+	// TODO: Add ORDER BY? Maybe another tag option?
+
+	// Create a slice of the correct related type R (e.g., []*Comment or []Comment)
+	// We need a slice of pointers for db.Select even if the target field is slice of structs
+	relatedSelectDestType := reflect.SliceOf(reflect.PtrTo(relatedModelType)) // []*R
+	relatedSelectDestVal := reflect.New(relatedSelectDestType).Elem()         // reflect.Value of the []*R slice
+
+	log.Printf("Executing query for related %s: %s [%v]", relatedModelType.Name(), relatedQuery, uniqueLkList)
+	err = globalDB.Select(ctx, relatedSelectDestVal.Addr().Interface(), relatedQuery, uniqueLkList...)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("failed to fetch related %s models: %w", relatedModelType.Name(), err)
+	}
+
+	// --- Map Related Models back to results ---
+	// Create a map: localKeyValue -> SliceOfRelatedModels ([]*R or []R)
+	relatedMap := reflect.MakeMap(reflect.MapOf(reflect.TypeOf(uniqueLkList[0]), relatedFieldType)) // map[LocalKeyType]SliceType
+
+	for i := 0; i < relatedSelectDestVal.Len(); i++ {
+		relatedModelPtr := relatedSelectDestVal.Index(i) // *R
+		relatedModelElem := relatedModelPtr.Elem()       // R
+		// Get the FK value from the related model (which points back to the owning model's PK)
+		fkValField := relatedModelElem.FieldByName(relatedFkGoFieldName)
+		if !fkValField.IsValid() {
+			log.Printf("WARN: FK field '%s' not valid on fetched related model %s at index %d", relatedFkGoFieldName, relatedModelType.Name(), i)
+			continue
+		}
+		fkValue := fkValField.Interface()
+		mapKey := reflect.ValueOf(fkValue)
+
+		// Get the existing slice for this key, or create a new one
+		sliceForKey := relatedMap.MapIndex(mapKey)
+		if !sliceForKey.IsValid() {
+			sliceForKey = reflect.MakeSlice(relatedFieldType, 0, 0)
+		}
+
+		// Append the current related model (*R or R)
+		var modelToAppend reflect.Value
+		if relatedIsSliceOfPtr {
+			modelToAppend = relatedModelPtr // Append *R
+		} else {
+			modelToAppend = relatedModelElem // Append R
+		}
+		sliceForKey = reflect.Append(sliceForKey, modelToAppend)
+		relatedMap.SetMapIndex(mapKey, sliceForKey) // Put the updated slice back in the map
+	}
+
+	// Iterate through original results and set the relationship field
+	for i := 0; i < resultsVal.Len(); i++ {
+		owningModelPtr := resultsVal.Index(i)                          // *T
+		owningModelElem := owningModelPtr.Elem()                       // T
+		lkFieldVal := owningModelElem.FieldByName(localKeyGoFieldName) // Get local key value (e.g., post.ID)
+
+		if lkFieldVal.IsValid() {
+			lkValue := lkFieldVal.Interface()
+			mapKey := reflect.ValueOf(lkValue)
+			relatedSlice := relatedMap.MapIndex(mapKey) // Get the reflect.Value for the slice
+
+			// Check if the key was found *and* if the resulting slice value is valid
+			if relatedSlice.IsValid() { // Check if the key existed in the map
+				relationField := owningModelElem.FieldByName(field.Name) // Get the []Comment field
+				if relationField.IsValid() && relationField.CanSet() {
+					relationField.Set(relatedSlice) // Set the reflect.Value directly
+				} else {
+					log.Printf("WARN: Cannot set hasMany field '%s' on owning model %s at index %d", field.Name, resultsVal.Type().Elem().Elem().Name(), i)
+				}
+			} else {
+				// Key not found in map, ensure field is set to an empty slice
+				relationField := owningModelElem.FieldByName(field.Name)
+				if relationField.IsValid() && relationField.CanSet() {
+					relationField.Set(reflect.MakeSlice(relatedFieldType, 0, 0))
+				}
+			}
+		}
+	}
+
+	log.Printf("Successfully preloaded HasMany relation '%s'", field.Name)
+	return nil
+}
+
+// loadInternal explicitly loads relationships for a given model instance using the provided context.
+// This is the internal implementation called by the public Load method.
+// model must be a pointer to a struct of type T.
+// relations are the string names of the fields representing the relationships to load.
+func (t *Thing[T]) loadInternal(ctx context.Context, model *T, relations ...string) error {
+	if model == nil {
+		return errors.New("model cannot be nil")
+	}
+	if len(relations) == 0 {
+		return nil // Nothing to load
+	}
+	if t.info == nil { // Add check for safety
+		return errors.New("loadInternal: model info not available on Thing instance")
+	}
+
+	// Wrap the single model in a slice to reuse the preloadRelations helper
+	modelSlice := []*T{model}
+
+	for _, relationName := range relations {
+		// Use the provided context (ctx) when calling preloadRelations
+		if err := t.preloadRelations(ctx, modelSlice, relationName); err != nil {
+			// Stop on the first error
+			return fmt.Errorf("failed to load relation '%s': %w", relationName, err)
+		}
+	}
+
+	return nil
 }
