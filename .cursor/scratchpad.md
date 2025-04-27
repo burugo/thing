@@ -338,70 +338,72 @@ Based on the analysis, here are features we could consider adding, prioritizing 
 
 ## Background and Motivation
 
-The user wants to build/refine a Go library/framework tentatively named "thing", likely an ORM or data access layer. Key requirements include dependency injection (using Google Wire), support for multiple database drivers (starting with SQLite), and a testing suite.
+The project aims to develop a simple ORM-like library named "Thing" in Go, focusing on ease of use, basic CRUD operations, caching (object and query), and a clean interface. Recent work focused on fixing update logic bugs and managing dependencies. The next critical step is ensuring cache consistency by implementing query cache invalidation.
 
 ## Key Challenges and Analysis
 
-- **Dependency Management:** Correctly setting up Google Wire for injecting dependencies like DB adapters and cache clients.
-- **Driver Abstraction:** Designing the `DBAdapter` interface and implementing it for different databases (starting with SQLite) in a way that's easy to extend.
-- **Testing:** Establishing a robust test suite that can run against a real (in-memory) database and potentially mocks.
-- **API Design:** Ensuring the `thing` API (`New`, `Use`, `Configure`, model interactions) is intuitive and functional.
-- **Environment Setup:** Ensuring necessary tools (`wire`, Go environment) are correctly installed and configured in the user's environment.
+*   **Query Cache Invalidation Complexity:** Precisely mapping model changes (Save/Delete) to specific affected query cache keys is difficult due to the opaque nature of the query hash.
+*   **Performance vs. Correctness:** A precise invalidation strategy is performant but complex. An aggressive strategy (invalidate all queries for the table) is simpler and guarantees correctness but can negatively impact cache hit rates. We will start with the aggressive strategy.
+*   **Cache Client Interface:** The `CacheClient` needs a method to delete keys by prefix/pattern, which must be implemented carefully in concrete adapters (especially Redis, using `SCAN` not `KEYS`).
+*   **Testing Invalidation:** Verifying invalidation requires careful test setup to confirm cache misses after relevant operations.
 
 ## High-level Task Breakdown
 
-1.  **Initial Setup & SQLite Driver:**
-    *   Define `DBAdapter` and `CacheClient` interfaces.
-    *   Implement `SQLiteAdapter`.
-    *   Set up basic example (`examples/main.go`) using manual instantiation. (Partially done, evolved with Wire)
-2.  **Introduce Dependency Injection (Wire):**
-    *   Install `wire` tool.
-    *   Create `wire.go` in `examples` with providers for `DBAdapter`, `CacheClient`, and repositories.
-    *   Define an `Application` struct to hold injected dependencies.
-    *   Create an injector function (`initializeApplication`).
-    *   Run `wire gen ./...` to generate `wire_gen.go`.
-    *   Update `examples/main.go` to use the Wire injector.
-3.  **Refactor Driver Structure:**
-    *   Move SQLite adapter implementation into a dedicated `drivers/sqlite` package.
-    *   Update imports and calls in `examples/wire.go`.
-    *   Ensure `wire gen` still works.
-4.  **Refine Testing:**
-    *   Set up `TestMain` for package-level setup/teardown.
-    *   Implement `setupTestDB` using an in-memory SQLite DB.
-    *   Configure `thing` globally for tests using `thing.Configure`.
-    *   Refactor tests to use `thing.Use` instead of `thing.New`.
-    *   Ensure all tests pass using `go test ./...`.
+1.  **Fix Update Logic Bug (COMPLETED)**
+    *   Analyze `saveInternal` and `findChangedFieldsReflection`.
+    *   Correct the logic for building the `UPDATE` SQL statement.
+    *   Ensure `UpdatedAt` is handled correctly.
+    *   **Success Criteria:** `TestThing_Save_Update` passes.
+
+2.  **Manage Dependencies (COMPLETED)**
+    *   Identify usage of `google/wire`.
+    *   Remove the dependency from `go.mod` if not needed by core logic.
+    *   Use build constraints (`//go:build ignore`) to keep `examples/wire.go` without making it a required dependency.
+    *   **Success Criteria:** `go mod tidy` runs cleanly, `wire` dependency is removed, `examples/wire.go` remains but is ignored by default.
+
+3.  **Implement Query Cache Invalidation (PLANNED)**
+    *   **Task 3.1: Add Pattern Deletion to `CacheClient` Interface:**
+        *   Define `DeleteByPrefix(ctx context.Context, prefix string) error` in `thing.CacheClient`.
+        *   **Success Criteria:** Interface updated.
+    *   **Task 3.2: Implement Pattern Deletion in `mockCacheClient`:**
+        *   Implement `DeleteByPrefix` in `tests/thing_test.go`.
+        *   **Success Criteria:** Mock implementation works correctly.
+    *   **Task 3.3: Implement Pattern Deletion in Redis Cache:**
+        *   Implement `DeleteByPrefix` in `thing/cache/redis/redis.go` using `SCAN`.
+        *   **Success Criteria:** Redis adapter implements `DeleteByPrefix` via `SCAN`.
+    *   **Task 3.4: Implement Invalidation Logic in `saveInternal`:**
+        *   Call `DeleteByPrefix` after successful DB update, before lock release.
+        *   **Success Criteria:** `saveInternal` calls invalidation logic.
+    *   **Task 3.5: Implement Invalidation Logic in `deleteInternal`:**
+        *   Call `DeleteByPrefix` after successful DB delete, before lock release.
+        *   **Success Criteria:** `deleteInternal` calls invalidation logic.
+    *   **Task 3.6: Add Tests for Query Cache Invalidation:**
+        *   Create tests verifying query cache miss after Save/Delete.
+        *   **Success Criteria:** Invalidation tests pass.
 
 ## Project Status Board
 
-- [x] Install `wire` tool and configure PATH.
-- [x] Define `DBAdapter` and `CacheClient` interfaces (implicitly done through usage).
-- [x] Implement initial `SQLiteAdapter` (within `drivers` initially).
-- [x] Set up basic `examples/main.go`.
-- [x] Create `examples/wire.go` with providers and injector.
-- [x] Generate `wire_gen.go`.
-- [x] Update `examples/main.go` to use Wire.
-- [x] Refactor SQLite driver to `drivers/sqlite` package.
-- [x] Update `examples/wire.go` for the new driver package structure.
-- [x] Successfully run `wire gen ./...` after driver refactor.
-- [x] Set up basic test structure in `tests/thing_test.go` with `TestMain` and `setupTestDB`.
-- [x] Configure `thing` globally in test setup using `thing.Configure`.
-- [x] Refactor `tests/thing_test.go` to use `thing.Use`.
-- [x] Run `go test ./...` successfully.
+*   [x] Fix Update Logic Bug (`TestThing_Save_Update`)
+*   [x] Remove `google/wire` dependency
+*   [x] Implement Query Cache Invalidation
+    *   [x] Task 3.1: Add `DeleteByPrefix` to `CacheClient` interface
+    *   [x] Task 3.2: Implement `DeleteByPrefix` in `mockCacheClient`
+    *   [x] Task 3.3: Implement `DeleteByPrefix` in Redis Cache (`SCAN`)
+    *   [x] Task 3.4: Call invalidation from `saveInternal` (update path)
+    *   [x] Task 3.5: Call invalidation from `deleteInternal`
+    *   [x] Task 3.6: Write tests for query cache invalidation
 
 ## Executor's Feedback or Assistance Requests
 
-*(No current requests)*
+*(Executor can add notes here)*
 
-## Lessons
+## Lessons Learned
 
-- Ensure Go tools installed via `go install` are in the system `$PATH` (e.g., add `$HOME/go/bin`).
-- Run `go mod tidy` after changing package structures or dependencies.
-- Terminal file operations (`mv`, `git mv`) might fail unexpectedly; manual intervention by the user might be needed sometimes. Verify file existence with `ls` or equivalent if `mv` reports "No such file or directory" despite prior confirmation.
-- Double-check code edits to avoid introducing unused variables, especially during refactoring.
-- Go test files are often located in a separate `tests/` directory or using `_test.go` suffix within the package directory. `go test ./...` is useful for running tests across the project.
-- Using `thing.Configure` in test setup allows simplifying individual tests by using `thing.Use`.
-- When refactoring driver locations, remember to update test setup files (`tests/thing_test.go` in this case) that might directly import the driver implementation.
+*   Include info useful for debugging in the program output (e.g., detailed logging in `findChangedFieldsReflection`).
+*   Read the file before you try to edit it (especially important for complex functions like `saveInternal`).
+*   Always ask before using the `-force` git command (General Git safety).
+*   `go mod tidy` adds dependencies based on *all* non-ignored `.go` files, even in `examples/`. Use build constraints like `//go:build ignore` to exclude files from dependency analysis while keeping them in the project.
+*   When building SQL UPDATE statements from a map of changes, ensure the keys used to build the `SET` clause match the keys generated by the change detection logic (DB column names vs. Go field names). Iterating over the change map keys is safer than iterating over all possible fields.
 
 ## Current Status / Progress Tracking
 

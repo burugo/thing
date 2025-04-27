@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -60,6 +61,8 @@ func (b *Book) TableName() string {
 type mockCacheClient struct {
 	// Use sync.Map for thread-safe storage of models, query IDs, and locks
 	store sync.Map
+	// Simple flag to track if the last GetQueryIDs call was a cache hit
+	lastQueryCacheHit bool
 }
 
 // Reset clears the mock cache's internal store.
@@ -69,6 +72,7 @@ func (m *mockCacheClient) Reset() {
 		m.store.Delete(key)
 		return true
 	})
+	m.lastQueryCacheHit = false // Reset flag as well
 }
 
 // Exists checks if a key is present in the mock cache store.
@@ -140,16 +144,20 @@ func (m *mockCacheClient) DeleteModel(ctx context.Context, key string) error {
 func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
 	val, ok := m.store.Load(queryKey)
 	if !ok {
+		m.lastQueryCacheHit = false // Cache miss
 		return nil, thing.ErrNotFound
 	}
 	storedBytes, ok := val.([]byte)
 	if !ok {
+		m.lastQueryCacheHit = false // Treat internal error as miss for testing
 		return nil, fmt.Errorf("mock cache internal error: value for query key '%s' is not []byte", queryKey)
 	}
 	var ids []int64
 	if err := unmarshalFromMock(storedBytes, &ids); err != nil {
+		m.lastQueryCacheHit = false // Treat unmarshal error as miss for testing
 		return nil, fmt.Errorf("mock cache unmarshal error for query key '%s': %w", queryKey, err)
 	}
+	m.lastQueryCacheHit = true // Cache hit
 	return ids, nil
 }
 
@@ -178,6 +186,76 @@ func (m *mockCacheClient) AcquireLock(ctx context.Context, lockKey string, expir
 func (m *mockCacheClient) ReleaseLock(ctx context.Context, lockKey string) error {
 	actualLockKey := "lock:" + lockKey
 	m.store.Delete(actualLockKey)
+	return nil
+}
+
+// DeleteByPrefix removes all cache entries whose keys match the given prefix.
+func (m *mockCacheClient) DeleteByPrefix(ctx context.Context, prefix string) error {
+	// Need to collect keys to delete first, as deleting during Range is problematic
+	keysToDelete := []string{}
+	m.store.Range(func(key, value interface{}) bool {
+		if keyStr, ok := key.(string); ok {
+			if strings.HasPrefix(keyStr, prefix) {
+				keysToDelete = append(keysToDelete, keyStr)
+			}
+		}
+		return true // Continue ranging
+	})
+
+	// Delete the collected keys
+	for _, key := range keysToDelete {
+		m.store.Delete(key)
+	}
+	log.Printf("MOCK CACHE: Deleted %d keys with prefix '%s'", len(keysToDelete), prefix)
+	return nil
+}
+
+// InvalidateQueriesContainingID simulates targeted query cache invalidation for the mock.
+func (m *mockCacheClient) InvalidateQueriesContainingID(ctx context.Context, prefix string, idToInvalidate int64) error {
+	keysToDelete := []string{}
+	var invalidatedCount int
+
+	m.store.Range(func(key, value interface{}) bool {
+		if keyStr, ok := key.(string); ok {
+			// Check if the key matches the query prefix
+			if strings.HasPrefix(keyStr, prefix) {
+				// Attempt to get the IDs associated with this query key
+				// We need to load the value and unmarshal it, similar to GetQueryIDs
+				valBytes, isBytes := value.([]byte)
+				if !isBytes {
+					log.Printf("WARN (Mock Invalidate): Non-byte value found for query key %s, skipping.", keyStr)
+					return true // Continue ranging
+				}
+				var cachedIDs []int64
+				if err := unmarshalFromMock(valBytes, &cachedIDs); err != nil {
+					log.Printf("WARN (Mock Invalidate): Failed to unmarshal IDs for key %s: %v, skipping.", keyStr, err)
+					return true // Continue ranging
+				}
+
+				// Check if the ID to invalidate is present in the cached IDs
+				found := false
+				for _, cachedID := range cachedIDs {
+					if cachedID == idToInvalidate {
+						found = true
+						break
+					}
+				}
+
+				// If found, mark this key for deletion
+				if found {
+					keysToDelete = append(keysToDelete, keyStr)
+				}
+			}
+		}
+		return true // Continue ranging
+	})
+
+	// Delete the collected keys
+	for _, key := range keysToDelete {
+		m.store.Delete(key)
+		invalidatedCount++
+	}
+	log.Printf("MOCK CACHE: Invalidated %d query keys with prefix '%s' containing ID %d", invalidatedCount, prefix, idToInvalidate)
 	return nil
 }
 
@@ -632,6 +710,120 @@ func TestThing_Query_Cache(t *testing.T) {
 	}
 
 	t.Logf("TestQuery_Cache: OK")
+}
+
+// TestThing_Query_CacheInvalidation verifies that Save/Delete operations invalidate query cache entries.
+func TestThing_Query_CacheInvalidation(t *testing.T) {
+	setupTestDB(t)
+	// Explicitly reset cache *for this test* to avoid state from setup seeding
+	mockCache, ok := globalTestCacheClient.(*mockCacheClient)
+	if !ok {
+		t.Fatalf("Test setup error: globalTestCacheClient is not *mockCacheClient")
+	}
+	mockCache.Reset()
+
+	ctx := context.Background()
+	userThing, err := thing.Use[User]()
+	if err != nil {
+		t.Fatalf("Failed to get User Thing via Use: %v", err)
+	}
+
+	// Define query params
+	params := thing.QueryParams{
+		Where: "email LIKE ?",
+		Args:  []interface{}{"%@example.com"}, // Match seeded and potentially created users
+		Order: "id ASC",
+	}
+
+	// --- Test Invalidation After Save (Update) ---
+	t.Log("--- Testing Invalidation After Save (Update) ---")
+
+	// 1. Initial query - should be cache miss
+	_, err = userThing.WithContext(ctx).IDs(params)
+	if err != nil {
+		t.Fatalf("Update Test: Initial IDs query failed: %v", err)
+	}
+	if mockCache.lastQueryCacheHit {
+		t.Error("Update Test: Expected initial query to be a cache MISS")
+	}
+
+	// 2. Second query - should be cache hit
+	_, err = userThing.WithContext(ctx).IDs(params)
+	if err != nil {
+		t.Fatalf("Update Test: Second IDs query failed: %v", err)
+	}
+	if !mockCache.lastQueryCacheHit {
+		t.Error("Update Test: Expected second query to be a cache HIT")
+	}
+
+	// 3. Save (update) one of the users (e.g., the seeded user)
+	userToUpdate, err := userThing.WithContext(ctx).ByID(seededUserID)
+	if err != nil {
+		t.Fatalf("Update Test: Failed to get user %d to update: %v", seededUserID, err)
+	}
+	userToUpdate.Name = "Updated Seed User - Invalidation Test"
+	err = userThing.WithContext(ctx).Save(userToUpdate)
+	if err != nil {
+		t.Fatalf("Update Test: Save failed: %v", err)
+	}
+
+	// 4. Third query - should be cache miss again due to invalidation
+	_, err = userThing.WithContext(ctx).IDs(params)
+	if err != nil {
+		t.Fatalf("Update Test: Third IDs query failed: %v", err)
+	}
+	if mockCache.lastQueryCacheHit {
+		t.Error("Update Test: Expected third query (after Save) to be a cache MISS")
+	}
+	t.Log("Save (Update) Invalidation OK")
+
+	// --- Reset for Delete Test ---
+	mockCache.Reset()
+	t.Log("--- Testing Invalidation After Delete ---")
+
+	// Create a user specifically for delete invalidation test
+	userToDelete := User{Name: "Invalidation Delete Me", Email: "inval-delete@example.com"}
+	err = userThing.WithContext(ctx).Save(&userToDelete)
+	if err != nil {
+		t.Fatalf("Delete Test: Failed to create user: %v", err)
+	}
+	deleteID := userToDelete.ID
+
+	// 1. Initial query - should be cache miss
+	_, err = userThing.WithContext(ctx).IDs(params)
+	if err != nil {
+		t.Fatalf("Delete Test: Initial IDs query failed: %v", err)
+	}
+	if mockCache.lastQueryCacheHit {
+		t.Error("Delete Test: Expected initial query to be a cache MISS")
+	}
+
+	// 2. Second query - should be cache hit
+	_, err = userThing.WithContext(ctx).IDs(params)
+	if err != nil {
+		t.Fatalf("Delete Test: Second IDs query failed: %v", err)
+	}
+	if !mockCache.lastQueryCacheHit {
+		t.Error("Delete Test: Expected second query to be a cache HIT")
+	}
+
+	// 3. Delete the user
+	err = userThing.WithContext(ctx).Delete(&userToDelete)
+	if err != nil {
+		t.Fatalf("Delete Test: Delete failed for user %d: %v", deleteID, err)
+	}
+
+	// 4. Third query - should be cache miss again due to invalidation
+	_, err = userThing.WithContext(ctx).IDs(params)
+	if err != nil {
+		t.Fatalf("Delete Test: Third IDs query failed: %v", err)
+	}
+	if mockCache.lastQueryCacheHit {
+		t.Error("Delete Test: Expected third query (after Delete) to be a cache MISS")
+	}
+	t.Log("Delete Invalidation OK")
+
+	log.Printf("TestThing_Query_CacheInvalidation: OK")
 }
 
 // Helper function to access BaseModel field if GetBaseModelField is not exported
