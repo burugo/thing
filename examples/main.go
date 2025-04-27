@@ -4,12 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"time"
 
-	// Import core package (now at module root)
 	"thing"
-	// Import drivers package
-	"thing/drivers"
+	// Driver import removed from here, Wire handles it
+	// "thing/drivers"
 )
 
 // --- Example Models (could be in a separate 'models' package) ---
@@ -34,71 +32,46 @@ func (b *Book) TableName() string {
 	return "books"
 }
 
-// --- Mock Cache (for example simplicity) ---
+// --- Mock Cache Removed ---
 
-type mockCache struct{}
+// --- Application Struct ---
+// This struct holds the dependencies we want Wire to inject.
 
-func (m *mockCache) GetModel(ctx context.Context, key string, dest interface{}) error {
-	return thing.ErrNotFound
+type Application struct {
+	UserRepo *thing.Thing[User]
+	BookRepo *thing.Thing[Book]
+	// Add DBAdapter to the struct so Wire injects it
+	DB thing.DBAdapter
+	// Add other dependencies here (e.g., services, http handlers)
 }
-func (m *mockCache) SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error {
-	return nil
-}
-func (m *mockCache) DeleteModel(ctx context.Context, key string) error { return nil }
-func (m *mockCache) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
-	return nil, thing.ErrNotFound
-}
-func (m *mockCache) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
-	return nil
-}
-func (m *mockCache) DeleteQueryIDs(ctx context.Context, queryKey string) error { return nil }
-func (m *mockCache) AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error) {
-	return true, nil
-}
-func (m *mockCache) ReleaseLock(ctx context.Context, lockKey string) error { return nil }
 
 func main() {
-	log.Println("--- Thing Example --- S")
+	log.Println("--- Thing Example with Wire --- S")
 
-	// 1. Initialization (typically done once at startup)
-	// Use SQLite adapter from the drivers package
-	db, err := drivers.NewSQLiteAdapter(":memory:") // Use in-memory SQLite for example
+	// 1. Initialization using Wire
+	dsn := ":memory:" // Use in-memory SQLite for example
+	app, cleanup, err := initializeApplication(dsn)
 	if err != nil {
-		log.Fatalf("Failed to create DB adapter: %v", err)
+		log.Fatalf("Failed to initialize application: %v", err)
 	}
-	defer db.Close()
+	defer cleanup()
 
-	cache := &mockCache{}
-
-	// Create necessary tables (in a real app, use migrations)
+	// Create necessary tables using the injected DB adapter
 	ctx := context.Background()
-	_, err = db.Exec(ctx, `CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT, created_at DATETIME, updated_at DATETIME);`)
+	_, err = app.DB.Exec(ctx, `CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, email TEXT, created_at DATETIME, updated_at DATETIME);`)
 	if err != nil {
 		log.Fatalf("Failed to create users table: %v", err)
 	}
-	_, err = db.Exec(ctx, `CREATE TABLE books (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, user_id INTEGER, created_at DATETIME, updated_at DATETIME);`)
+	_, err = app.DB.Exec(ctx, `CREATE TABLE books (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, user_id INTEGER, created_at DATETIME, updated_at DATETIME);`)
 	if err != nil {
 		log.Fatalf("Failed to create books table: %v", err)
 	}
 
-	// Configure the thing package globally
-	if err := thing.Configure(db, cache); err != nil {
-		log.Fatalf("Failed to configure Thing: %v", err)
-	}
+	// 2. Use the injected repositories from the Application struct
+	userRepo := app.UserRepo
+	bookRepo := app.BookRepo
 
-	// 2. Get Thing instances using Use[T]()
-	// No need to pass db, cache here!
-	userRepo, err := thing.Use[User]()
-	if err != nil {
-		log.Fatalf("Failed to get User repo: %v", err)
-	}
-
-	bookRepo, err := thing.Use[Book]()
-	if err != nil {
-		log.Fatalf("Failed to get Book repo: %v", err)
-	}
-
-	// 3. Use the Repositories
+	// 3. Use the Repositories (same logic as before)
 	log.Println("Creating user...")
 	newUser := User{Name: "Example User", Email: "user@example.com"}
 	if err := userRepo.Save(&newUser); err != nil {
@@ -131,5 +104,5 @@ func main() {
 		fmt.Printf("  - ID: %d, Title: %s\n", book.ID, book.Title)
 	}
 
-	log.Println("--- Thing Example End ---")
+	log.Println("--- Thing Example with Wire End ---")
 }

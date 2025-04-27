@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log" // For placeholder logging
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -426,18 +427,22 @@ func (b *BaseModel) SetNewRecordFlag(isNew bool) {
 
 // --- SQL Builder Helpers ---
 
-// buildSelectSQL constructs a SELECT statement for fetching a single record by ID.
-// Uses columns from the cached modelInfo.
+// buildSelectSQL constructs a SELECT statement for fetching columns for a specific model.
+// It no longer includes the WHERE clause.
 func buildSelectSQL(info *modelInfo) string {
-	if info.tableName == "" || info.pkName == "" || len(info.columns) == 0 {
-		// Log error or panic? Returning empty might cause SQL errors later.
+	if info.tableName == "" || len(info.columns) == 0 {
 		log.Printf("Error: buildSelectSQL called with incomplete modelInfo: %+v", info)
 		return ""
 	}
-	return fmt.Sprintf("SELECT %s FROM %s WHERE %s = ?",
-		strings.Join(info.columns, ", "),
+	// Quote column names for safety/compatibility
+	quotedColumns := make([]string, len(info.columns))
+	for i, col := range info.columns {
+		quotedColumns[i] = fmt.Sprintf("\"%s\"", col)
+	}
+
+	return fmt.Sprintf("SELECT %s FROM %s",
+		strings.Join(quotedColumns, ", "),
 		info.tableName,
-		info.pkName,
 	)
 }
 
@@ -837,442 +842,567 @@ func generateCacheKey(tableName string, id int64) string {
 // These contain the core logic, moved/adapted from the original package-level functions.
 // They use t.db, t.cache and the explicitly passed ctx.
 
-// byIDInternal fetches a record by ID into the dest pointer.
-// dest must be a non-nil pointer to a struct.
+// byIDInternal fetches a single record by ID, checking cache first.
 func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest interface{}) error {
-	// Validate dest
+	if t.cache == nil || t.db == nil {
+		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+	}
+	// Ensure dest is a pointer to a struct
 	destVal := reflect.ValueOf(dest)
-	if destVal.Kind() != reflect.Ptr || destVal.IsNil() || destVal.Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("dest must be a non-nil pointer to a struct, got %T", dest)
+	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("destination must be a pointer to a struct, got %T", dest)
 	}
-	destType := destVal.Elem().Type()
-	db := t.db
-	cache := t.cache
-	info, err := getCachedModelInfo(destType)
-	if err != nil {
-		return fmt.Errorf("could not get model info for ByID %s: %w", destType.Name(), err)
-	}
-	tableName := getTableName(dest)
-	if tableName == "" {
-		return fmt.Errorf("could not determine table name for ByID type %T", dest)
-	}
-	info.tableName = tableName
-	cacheKey := generateCacheKey(info.tableName, id)
-	err = cache.GetModel(ctx, cacheKey, dest)
-	if err == nil {
-		log.Printf("Thing Cache hit for %s", cacheKey)
+
+	cacheKey := generateCacheKey(t.info.tableName, id)
+
+	// 1. Check cache
+	cacheStart := time.Now()
+	cachedErr := t.cache.GetModel(ctx, cacheKey, dest)
+	cacheDuration := time.Since(cacheStart)
+	if cachedErr == nil {
+		log.Printf("CACHE HIT: Key: %s (%s)", cacheKey, cacheDuration)
+		// Successfully retrieved from cache, ensure internal flags are set correctly
 		setNewRecordFlagIfBaseModel(dest, false)
-		return nil
-	} else if !errors.Is(err, ErrNotFound) && !errors.Is(err, RedisNilError) {
-		log.Printf("Thing Cache error for %s: %v. Proceeding with DB query.", cacheKey, err)
-	} else {
-		log.Printf("Thing Cache miss for %s", cacheKey)
+		return nil // Found in cache
+	} else if !errors.Is(cachedErr, ErrNotFound) {
+		// Log unexpected cache errors but proceed to DB
+		log.Printf("WARN: Cache GetModel error for key %s: %v (%s)", cacheKey, cachedErr, cacheDuration)
 	}
-	query := buildSelectSQL(info)
-	if query == "" {
-		return errors.New("failed to build select SQL in byIDInternal")
-	}
-	log.Printf("Thing executing DB query for %s: %s [%d]", info.tableName, query, id)
-	err = db.Get(ctx, dest, query, id)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, ErrNotFound) {
-			log.Printf("Thing record not found in DB for %s", cacheKey)
-			_ = cache.SetModel(ctx, cacheKey, nil, NoneResultCacheDuration)
-			return ErrNotFound
+	// Log cache miss if it was ErrNotFound or another error occurred
+	log.Printf("CACHE MISS: Key: %s (%s) - Error: %v", cacheKey, cacheDuration, cachedErr)
+
+	// 2. Cache miss, query database
+	selectSQL := buildSelectSQL(t.info)
+	query := fmt.Sprintf("%s WHERE %s = ? LIMIT 1", selectSQL, t.info.pkName)
+
+	dbStart := time.Now()
+	dbErr := t.db.Get(ctx, dest, query, id) // Use the DBAdapter's Get method
+	dbDuration := time.Since(dbStart)
+
+	if dbErr != nil {
+		if errors.Is(dbErr, ErrNotFound) {
+			log.Printf("DB MISS: Key: %s (%s)", cacheKey, dbDuration)
+			// Optional: Cache the fact that the record doesn't exist (negative caching)
+			// To prevent repeated DB lookups for non-existent IDs.
+			// Consider a shorter TTL for negative cache entries.
+			// errCacheNone := t.cache.SetModel(ctx, cacheKey, &NoneResult, NoneResultCacheDuration) // Example, need NoneResult handling
+			// if errCacheNone != nil {
+			// 	log.Printf("WARN: Failed to set negative cache for key %s: %v", cacheKey, errCacheNone)
+			// }
+			return ErrNotFound // Return the standard not found error
 		}
-		log.Printf("Thing database error fetching %s: %v", cacheKey, err)
-		return fmt.Errorf("database error fetching %s %d: %w", info.tableName, id, err)
+		log.Printf("DB ERROR: Key: %s (%s) - %v", cacheKey, dbDuration, dbErr)
+		return fmt.Errorf("database query failed: %w", dbErr)
 	}
-	log.Printf("Thing caching result for %s", cacheKey)
-	errCache := cache.SetModel(ctx, cacheKey, dest, DefaultCacheDuration)
-	if errCache != nil {
-		log.Printf("Warning: Thing failed to cache result for %s: %v", cacheKey, errCache)
-	}
+	log.Printf("DB HIT: Key: %s (%s)", cacheKey, dbDuration)
+
+	// 3. Found in DB, store in cache (async?)
+	// Ensure internal flags are set after DB fetch
 	setNewRecordFlagIfBaseModel(dest, false)
+	// Maybe run this in a goroutine if cache write performance is critical?
+	cacheSetStart := time.Now()
+	errCacheSet := t.cache.SetModel(ctx, cacheKey, dest, DefaultCacheDuration) // Use appropriate TTL
+	cacheSetDuration := time.Since(cacheSetStart)
+	if errCacheSet != nil {
+		// Log error but don't fail the overall operation
+		log.Printf("WARN: Failed to cache model for key %s: %v (%s)", cacheKey, errCacheSet, cacheSetDuration)
+	}
+
+	return nil // Found in database
+}
+
+// saveInternal handles both creating new records and updating existing ones.
+func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
+	if t.db == nil || t.cache == nil {
+		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+	}
+
+	modelValue := reflect.ValueOf(value)
+	if modelValue.Kind() != reflect.Ptr || modelValue.IsNil() {
+		return errors.New("value must be a non-nil pointer")
+	}
+
+	// --- Trigger BeforeSave hook ---
+	if err := triggerEvent(ctx, EventTypeBeforeSave, value, nil); err != nil {
+		return fmt.Errorf("BeforeSave hook failed: %w", err)
+	}
+
+	baseModelPtr := getBaseModelPtr(value)
+	if baseModelPtr == nil {
+		return errors.New("could not get BaseModel pointer, model must embed thing.BaseModel")
+	}
+
+	isNew := baseModelPtr.IsNewRecord() || baseModelPtr.ID == 0
+	now := time.Now()
+	var query string
+	var args []interface{}
+	var err error
+	var result sql.Result
+	var changedFields map[string]interface{} // Only used for update
+
+	if isNew {
+		// --- CREATE Path ---
+		// Trigger BeforeCreate hook
+		if err := triggerEvent(ctx, EventTypeBeforeCreate, value, nil); err != nil {
+			return fmt.Errorf("BeforeCreate hook failed: %w", err)
+		}
+
+		setCreatedAtTimestamp(value, now)
+		setUpdatedAtTimestamp(value, now)
+
+		colsToInsert := []string{}
+		placeholders := []string{}
+		vals := []interface{}{}
+
+		// Iterate through known columns from cached info
+		for _, fieldName := range t.info.fields {
+			colName := t.info.fieldToColumnMap[fieldName]
+			// Skip PK column during insert (assuming auto-increment)
+			if colName == t.info.pkName {
+				continue
+			}
+			// Get field value using reflection
+			fieldVal := modelValue.Elem().FieldByName(fieldName)
+			if !fieldVal.IsValid() {
+				// This shouldn't happen if info.fields is correct
+				log.Printf("WARN: Field %s not found in model during insert preparation", fieldName)
+				continue
+			}
+			colsToInsert = append(colsToInsert, colName)
+			placeholders = append(placeholders, "?")
+			vals = append(vals, fieldVal.Interface())
+		}
+
+		if len(colsToInsert) == 0 {
+			return errors.New("no columns determined for insert")
+		}
+
+		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
+			t.info.tableName,
+			strings.Join(colsToInsert, ", "),
+			strings.Join(placeholders, ", "),
+		)
+		args = vals
+
+		log.Printf("DB INSERT: %s [%v]", query, args)
+		result, err = t.db.Exec(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("database insert failed: %w", err)
+		}
+
+		newID, errId := result.LastInsertId()
+		if errId != nil {
+			// Don't fail the whole operation, but log it. Cache might be inconsistent.
+			log.Printf("WARN: Could not get LastInsertId after insert: %v", errId)
+		} else {
+			baseModelPtr.SetID(newID)
+			// --- Cache Set on Create ---
+			cacheKey := generateCacheKey(t.info.tableName, newID)
+			cacheSetStart := time.Now()
+			errCacheSet := t.cache.SetModel(ctx, cacheKey, value, DefaultCacheDuration)
+			cacheSetDuration := time.Since(cacheSetStart)
+			if errCacheSet != nil {
+				log.Printf("WARN: Failed to cache model after create for key %s: %v (%s)", cacheKey, errCacheSet, cacheSetDuration)
+			}
+			// --- End Cache Set ---
+		}
+
+		// --- Trigger AfterCreate hook ---
+		if errHook := triggerEvent(ctx, EventTypeAfterCreate, value, nil); errHook != nil {
+			// Log error but don't fail the save operation
+			log.Printf("WARN: AfterCreate hook failed: %v", errHook)
+		}
+
+	} else {
+		// --- UPDATE Path ---
+		id := baseModelPtr.ID
+		if id == 0 {
+			return errors.New("cannot update record with zero ID")
+		}
+
+		// Need to fetch the original record to find changed fields
+		// This uses the ByID logic which includes caching.
+		original := reflect.New(modelValue.Elem().Type()).Interface().(*T)
+		if errFetch := t.byIDInternal(ctx, id, original); errFetch != nil {
+			return fmt.Errorf("failed to fetch original record for update (ID: %d): %w", id, errFetch)
+		}
+
+		// Find changed fields using reflection helper (keys are DB column names)
+		changedFields, err = findChangedFieldsReflection(original, value, t.info)
+		if err != nil {
+			return fmt.Errorf("failed to find changed fields for update: %w", err)
+		}
+
+		// If no fields changed (excluding UpdatedAt logic handled in findChangedFieldsReflection), skip DB update
+		if len(changedFields) == 0 {
+			log.Printf("Skipping update for %s %d: No relevant fields changed", t.info.tableName, id)
+			// Still trigger AfterSave hook?
+			if errHook := triggerEvent(ctx, EventTypeAfterSave, value, changedFields); errHook != nil {
+				log.Printf("WARN: AfterSave hook failed (no changes): %v", errHook)
+			}
+			baseModelPtr.SetNewRecordFlag(false) // Ensure flag is correct
+			return nil
+		}
+
+		// Always update the UpdatedAt timestamp in the model
+		setUpdatedAtTimestamp(value, now)
+		// Ensure updated_at is included in the map for the SQL query
+		changedFields["updated_at"] = now
+
+		// Build the UPDATE SQL
+		setClauses := []string{}
+		updateArgs := []interface{}{}
+
+		// --- Iterate over the CHANGED DB columns ---
+		// We iterate over a sorted list of keys for deterministic query generation (good for testing/logging)
+		changedCols := make([]string, 0, len(changedFields))
+		for colName := range changedFields {
+			changedCols = append(changedCols, colName)
+		}
+		sort.Strings(changedCols) // Sort for deterministic order
+
+		for _, colName := range changedCols {
+			// Skip PK column in SET clause (shouldn't be in changedFields anyway, but defensive check)
+			if colName == t.info.pkName {
+				log.Printf("WARN: Primary key column '%s' found in changedFields map during update. Skipping.", colName)
+				continue
+			}
+			setClauses = append(setClauses, fmt.Sprintf("%s = ?", colName))
+			updateArgs = append(updateArgs, changedFields[colName])
+		}
+		// --- End iteration over changed columns ---
+
+		if len(setClauses) == 0 {
+			// This case should theoretically not be reached if len(changedFields) > 0 initially
+			// and pkName is skipped correctly.
+			log.Printf("ERROR: No SET clauses generated for update on %s %d despite changedFields being non-empty: %v", t.info.tableName, id, changedFields)
+			return errors.New("internal error: no fields to update after processing changed fields")
+		}
+
+		query = fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?",
+			t.info.tableName,
+			strings.Join(setClauses, ", "),
+			t.info.pkName,
+		)
+		args = append(updateArgs, id) // Add the ID for the WHERE clause
+
+		// --- Lock for Update and Cache Invalidation ---
+		lockKey := fmt.Sprintf("lock:%s:%d", t.info.tableName, id)
+		err = withLock(ctx, t.cache, lockKey, func(lctx context.Context) error {
+			log.Printf("DB UPDATE: %s [%v]", query, args)
+			result, err = t.db.Exec(lctx, query, args...)
+			if err != nil {
+				return fmt.Errorf("database update failed: %w", err)
+			}
+
+			rowsAffected, _ := result.RowsAffected()
+			if rowsAffected == 0 {
+				log.Printf("WARN: Update affected 0 rows for %s %d. Record might not exist?", t.info.tableName, id)
+				// Consider returning ErrNotFound here as well?
+			}
+
+			// Invalidate Cache within the lock, after successful DB update
+			cacheKey := generateCacheKey(t.info.tableName, id)
+			cacheDelStart := time.Now()
+			errCacheDel := t.cache.DeleteModel(lctx, cacheKey)
+			cacheDelDuration := time.Since(cacheDelStart)
+			if errCacheDel != nil {
+				// Log failure but don't fail the lock action if DB succeeded
+				log.Printf("WARN: Failed to delete model from cache during update lock for key %s: %v (%s)", cacheKey, errCacheDel, cacheDelDuration)
+			}
+			return nil // Lock action successful
+		})
+		// --- End Lock ---
+
+		if err != nil {
+			// Error occurred during lock acquisition or the action inside the lock
+			return fmt.Errorf("save update failed (lock or db/cache exec): %w", err)
+		}
+
+		// --- TODO: Query Cache Invalidation ---
+		// Deferring for now.
+	}
+
+	baseModelPtr.SetNewRecordFlag(false)
+
+	// --- Trigger AfterSave hook (for both create and update) ---
+	if errHook := triggerEvent(ctx, EventTypeAfterSave, value, changedFields); errHook != nil {
+		// Log error but don't fail the save operation
+		log.Printf("WARN: AfterSave hook failed: %v", errHook)
+	}
+
 	return nil
 }
 
-// saveInternal handles both create and update logic now.
-// Changed signature: value is *T, returns only error.
-func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
-	db := t.db
-	cache := t.cache
-	// Ensure t.info is available first.
-	if t.info == nil {
-		// Attempt to compute info if missing (shouldn't happen if New worked)
-		modelType := reflect.TypeOf((*T)(nil)).Elem()
-		info, err := getCachedModelInfo(modelType)
-		if err != nil {
-			return fmt.Errorf("saveInternal: failed to get model info for type %T: %w", value, err)
-		}
-		t.info = info
-		log.Printf("Warning: saveInternal had to compute model info for %T", value)
-	}
-
-	// Ensure table name is set in t.info *before* any operation needing it.
-	if t.info.tableName == "" {
-		t.info.tableName = getTableName(value)
-		if t.info.tableName == "" {
-			return fmt.Errorf("saveInternal: could not determine table name for type %T", value)
-		}
-	}
-	// Now use the consistently populated t.info
-	info := t.info
-
-	valPtr := interface{}(value) // For reflection helpers needing interface{}
-
-	id := getModelID(valPtr)
-	// Default to isNew if ID is 0
-	isNew := id == 0
-	// Allow overriding ONLY if the flag is explicitly set to true (to force create)
-	if bmPtr := getBaseModelPtr(valPtr); bmPtr != nil && bmPtr.IsNewRecord() {
-		isNew = true
-	}
-
-	if isNew {
-		// --- Perform Create Logic Directly ---
-		if id != 0 {
-			log.Printf("Warning: Save called on model marked as new, but ID (%d) is non-zero. Treating as Create.", id)
-			// Optionally reset ID here? Depends on desired behavior.
-			// If using auto-increment, DB typically ignores passed ID on INSERT.
-		}
-
-		now := time.Now()
-		setCreatedAtTimestamp(valPtr, now)
-		setUpdatedAtTimestamp(valPtr, now)
-		setNewRecordFlagIfBaseModel(valPtr, true) // Mark as new for event
-
-		if err := triggerEvent(ctx, EventTypeBeforeCreate, valPtr, nil); err != nil {
-			return err
-		}
-
-		sqlStmt, columnsToInsert := buildInsertSQL(info)
-		if sqlStmt == "" {
-			return errors.New("save(create): failed to build insert SQL")
-		}
-		values, err := getValuesForColumns(valPtr, info, columnsToInsert)
-		if err != nil {
-			return fmt.Errorf("save(create): %w", err)
-		}
-
-		result, err := db.Exec(ctx, sqlStmt, values...)
-		if err != nil {
-			return fmt.Errorf("save(create): db error creating %s: %w", info.tableName, err)
-		}
-
-		newId, errId := result.LastInsertId()
-		if errId != nil {
-			log.Printf("Warning: save(create): could not get LastInsertId for %s: %v", info.tableName, errId)
-		} else {
-			structVal := reflect.ValueOf(value).Elem()
-			if idField := structVal.FieldByName("ID"); idField.IsValid() && idField.CanSet() && idField.Kind() == reflect.Int64 {
-				idField.SetInt(newId)
-				id = newId // Update local id variable for caching
-			} else {
-				log.Printf("Warning: save(create): could not set ID field after insert for %s", info.tableName)
-			}
-		}
-
-		setNewRecordFlagIfBaseModel(valPtr, false) // No longer new
-
-		_ = triggerEvent(ctx, EventTypeAfterCreate, valPtr, nil) // Log error only
-
-		if id > 0 { // Use updated id
-			cacheKey := generateCacheKey(info.tableName, id)
-			_ = cache.SetModel(ctx, cacheKey, valPtr, DefaultCacheDuration) // Log error only
-		}
-		return nil // Return nil error on success
-	}
-
-	// --- Perform Update Logic ---
-	originalValue := new(T)
-	// byIDInternal will use t.info implicitly via receiver, but its local info doesn't matter now.
-	// The crucial part is that the SQL/cache keys below use the consistent t.info.
-	err := t.byIDInternal(ctx, id, originalValue)
-	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			// Use the consistent info.tableName
-			return fmt.Errorf("cannot save non-existent %s %d", info.tableName, id)
-		}
-		return fmt.Errorf("save(update): failed to fetch original: %w", err)
-	}
-
-	// Use the consistent info
-	changedFields, err := findChangedFieldsReflection(originalValue, value, info)
-	if err != nil {
-		return fmt.Errorf("save(update): field comparison error: %w", err)
-	}
-
-	if len(changedFields) == 0 {
-		setNewRecordFlagIfBaseModel(valPtr, false)
-		// Use info from t.info
-		log.Printf("Save: No changes detected for %s %d. Skipping DB update.", info.tableName, id)
-		// Change return type to just error
-		return nil // No changes, return success (nil error)
-	}
-
-	now := time.Now()
-	setUpdatedAtTimestamp(valPtr, now)
-	// Use info from t.info
-	if updatedAtCol, ok := info.fieldToColumnMap["UpdatedAt"]; ok {
-		changedFields[updatedAtCol] = now
-	} else {
-		// Use info from t.info
-		log.Printf("Warning: save(update): UpdatedAt field not found in metadata for %s", info.tableName)
-	}
-
-	// Use info from t.info
-	sqlStmt, updateValues, err := buildUpdateSQL(info, changedFields)
-	if err != nil {
-		return fmt.Errorf("save(update): build update sql: %w", err)
-	}
-	if sqlStmt == "" {
-		return errors.New("save(update): no updatable fields provided")
-	}
-	updateValues = append(updateValues, id)
-
-	if err := triggerEvent(ctx, EventTypeBeforeSave, valPtr, changedFields); err != nil {
-		return err
-	}
-
-	// Use info from t.info
-	lockKey := fmt.Sprintf("lock:%s:%d", info.tableName, id)
-	err = withLock(ctx, cache, lockKey, func(lctx context.Context) error {
-		_, execErr := db.Exec(lctx, sqlStmt, updateValues...)
-		return execErr
-	})
-	if err != nil {
-		return fmt.Errorf("save(update): lock/db error: %w", err)
-	}
-
-	setNewRecordFlagIfBaseModel(valPtr, false)
-	_ = triggerEvent(ctx, EventTypeAfterSave, valPtr, changedFields) // Log error only
-
-	// Use info from t.info
-	cacheKey := generateCacheKey(info.tableName, id)
-	_ = cache.DeleteModel(ctx, cacheKey) // Log error only
-
-	return nil // Return nil error on success
-}
-
-// deleteInternal removes a record.
-// value must be a non-nil pointer to a struct with ID set.
+// deleteInternal removes a record from the database.
+// value must be a pointer to a struct embedding BaseModel with a valid ID.
 func (t *Thing[T]) deleteInternal(ctx context.Context, value interface{}) error {
-	// Validate value
-	val := reflect.ValueOf(value)
-	if val.Kind() != reflect.Ptr || val.IsNil() || val.Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("value must be a non-nil pointer to a struct, got %T", value)
+	if t.db == nil || t.cache == nil {
+		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
 	}
-	structType := val.Elem().Type()
-	id := getModelID(value)
+
+	baseModelPtr := getBaseModelPtr(value)
+	if baseModelPtr == nil {
+		return errors.New("deleteInternal: value must embed BaseModel")
+	}
+	id := baseModelPtr.ID
 	if id == 0 {
-		return fmt.Errorf("cannot delete model with ID 0")
+		return errors.New("deleteInternal: cannot delete record with zero ID")
 	}
-	db := t.db
-	cache := t.cache
-	info, err := getCachedModelInfo(structType)
-	if err != nil {
-		return fmt.Errorf("could not get model info for delete: %w", err)
-	}
-	tableName := getTableName(value)
-	if tableName == "" {
-		return fmt.Errorf("could not determine table name for delete type %T", value)
-	}
-	info.tableName = tableName
+
+	// --- Trigger BeforeDelete hook ---
 	if err := triggerEvent(ctx, EventTypeBeforeDelete, value, nil); err != nil {
-		return err
+		return fmt.Errorf("BeforeDelete hook failed: %w", err)
 	}
-	sqlStmt := buildDeleteSQL(info)
-	if sqlStmt == "" {
-		return errors.New("failed to build delete SQL in deleteInternal")
-	}
-	lockKey := fmt.Sprintf("lock:%s:%d", info.tableName, id)
-	err = withLock(ctx, cache, lockKey, func(lctx context.Context) error {
-		log.Printf("Thing executing DB Delete for %s %d: %s", info.tableName, id, sqlStmt)
-		result, execErr := db.Exec(lctx, sqlStmt, id)
+
+	// Use the cached model info
+	info := t.info
+	tableName := info.tableName
+	pkName := info.pkName
+
+	// Lock the record during deletion
+	lockKey := fmt.Sprintf("lock:%s:%d", tableName, id)
+	err := withLock(ctx, t.cache, lockKey, func(lctx context.Context) error {
+		// Build and execute the DELETE query
+		query := fmt.Sprintf("DELETE FROM %s WHERE %s = ?", tableName, pkName)
+		log.Printf("DB DELETE: %s [%d]", query, id)
+		result, execErr := t.db.Exec(lctx, query, id)
 		if execErr != nil {
-			return fmt.Errorf("database error deleting %s %d: %w", info.tableName, id, execErr)
+			return fmt.Errorf("database delete failed: %w", execErr)
 		}
 		rowsAffected, _ := result.RowsAffected()
 		if rowsAffected == 0 {
-			log.Printf("Warning: Delete affected 0 rows for %s %d.", info.tableName, id)
+			log.Printf("WARN: Delete affected 0 rows for %s %d. Record might not exist?", tableName, id)
+			// Return ErrNotFound if 0 rows affected, indicating it wasn't there to delete
+			return ErrNotFound
 		}
-		return nil
+
+		// --- Cache Invalidate within Lock ---
+		cacheKey := generateCacheKey(tableName, id)
+		cacheDelStart := time.Now()
+		errCacheDel := t.cache.DeleteModel(lctx, cacheKey) // Use context from lock
+		cacheDelDuration := time.Since(cacheDelStart)
+		if errCacheDel != nil {
+			// Log error but don't fail the lock action if DB succeeded
+			log.Printf("WARN: Failed to delete model from cache during delete lock for key %s: %v (%s)", cacheKey, errCacheDel, cacheDelDuration)
+		}
+		// --- End Cache Invalidate ---
+
+		return nil // Lock action successful
 	})
+
 	if err != nil {
-		return err
+		// Don't trigger AfterDelete hook if the lock or DB/Cache operation failed
+		if errors.Is(err, ErrNotFound) {
+			log.Printf("Attempted to delete non-existent record %s %d", tableName, id)
+			return ErrNotFound // Propagate not found error
+		}
+		return fmt.Errorf("delete operation failed (lock or db/cache exec): %w", err)
 	}
-	err = triggerEvent(ctx, EventTypeAfterDelete, value, nil)
-	if err != nil {
-		log.Printf("Error executing AfterDelete listener for %s %d: %v", info.tableName, id, err)
+
+	// --- Trigger AfterDelete hook (only if lock and DB/Cache action succeeded) ---
+	if errHook := triggerEvent(ctx, EventTypeAfterDelete, value, nil); errHook != nil {
+		// Log error but don't fail the delete operation
+		log.Printf("WARN: AfterDelete hook failed: %v", errHook)
 	}
-	cacheKey := generateCacheKey(info.tableName, id)
-	log.Printf("Thing deleting cache after delete for %s", cacheKey)
-	errCache := cache.DeleteModel(ctx, cacheKey)
-	if errCache != nil {
-		log.Printf("Warning: Thing failed to delete cache after delete for %s: %v", cacheKey, errCache)
-	}
-	log.Printf("Thing successfully deleted %s %d", info.tableName, id)
-	return nil
+
+	return nil // Success
 }
 
-// queryInternal executes a query and returns a slice of results ([]*T).
+// queryInternal retrieves a slice of models based on query parameters.
 func (t *Thing[T]) queryInternal(ctx context.Context, params QueryParams) ([]*T, error) {
-	// 1. Determine the target type T - We already know T from the receiver t *Thing[T]
-	// We can access the pre-computed info via t.info
-	info := t.info
-	if info == nil { // Should not happen if NewFor worked correctly
-		return nil, errors.New("queryInternal: model info not available on Thing instance")
+	if t.db == nil || t.cache == nil {
+		return nil, errors.New("Thing not properly initialized with DBAdapter and CacheClient")
 	}
 
-	// 2. Get IDs matching the query - Pass the pre-computed info
-	ids, err := t.idsInternal(ctx, info, params) // Use internal method with ctx and info
+	// 1. Get IDs (will use query cache via idsInternal)
+	ids, err := t.idsInternal(ctx, t.info, params)
 	if err != nil {
-		return nil, fmt.Errorf("queryInternal failed to get IDs: %w", err)
+		return nil, fmt.Errorf("failed to get IDs for query: %w", err)
 	}
 
-	// 3. If no IDs found, return empty slice immediately
 	if len(ids) == 0 {
-		return []*T{}, nil
+		return []*T{}, nil // Return empty slice if no IDs found
 	}
 
-	// 4. Fetch each model by ID (Hydration)
+	// 2. Fetch objects by ID (will use object cache via ByID)
 	results := make([]*T, 0, len(ids))
+	// Consider concurrent fetches? For now, sequential.
 	for _, id := range ids {
-		instance := new(T)
-		// Call internal ByID, passing the info as well
-		err := t.byIDInternal(ctx, id, instance)
-		if err == nil {
-			results = append(results, instance)
-		} else if errors.Is(err, ErrNotFound) {
-			log.Printf("Warning: Record %d (type %s) not found during query hydration", id, info.tableName)
-		} else {
-			log.Printf("Error fetching record %d (type %s) during query hydration: %v", id, info.tableName, err)
-			return nil, fmt.Errorf("error fetching record %d (%s) during query: %w", id, info.tableName, err)
+		// Use the public ByID method which encapsulates cache/DB logic
+		model, err := t.ByID(id) // ByID already uses the instance context (t.ctx)
+		if err != nil {
+			// Log error for this specific ID but continue fetching others
+			log.Printf("WARN: Failed to fetch model %s with ID %d during query hydration: %v", t.info.tableName, id, err)
+			// If ErrNotFound, it might indicate inconsistency between ID cache and object presence.
+			// Decide if the whole query should fail or just skip this one.
+			// For now, we skip and log.
+			continue
 		}
+		results = append(results, model)
 	}
 
-	// 5. Return the hydrated results
+	// TODO: Re-apply original query ordering if ByID fetches mess it up?
+	// If the order matters and ByID fetches are out of order, we might need
+	// to re-sort `results` based on the original `ids` order.
+	// This is complex, deferring for now.
+
+	log.Printf("Query Internal: Fetched %d / %d models for query", len(results), len(ids))
 	return results, nil
 }
 
-// idsInternal fetches only the primary key IDs matching the query.
-// It now accepts info *modelInfo directly
+// idsInternal retrieves a list of IDs based on query parameters, checking query cache first.
 func (t *Thing[T]) idsInternal(ctx context.Context, info *modelInfo, params QueryParams) ([]int64, error) {
-	db := t.db
-	cache := t.cache
-
-	// Added check for info validity, including table name which is needed now.
-	if info == nil || info.tableName == "" {
-		// Try to determine table name if missing
-		if info != nil && info.tableName == "" {
-			modelType := reflect.TypeOf((*T)(nil)).Elem()
-			info.tableName = getTableNameFromType(modelType)
-			if info.tableName == "" {
-				return nil, errors.New("idsInternal: invalid model info provided (missing table name)")
-			}
-			log.Printf("Warning: idsInternal determined table name '%s' dynamically.", info.tableName)
-		} else {
-			return nil, errors.New("idsInternal: invalid model info provided")
-		}
+	if t.cache == nil || t.db == nil {
+		return nil, errors.New("Thing not properly initialized with DBAdapter and CacheClient")
 	}
-
-	// Generate cache key
-	queryCacheKey, err := generateQueryCacheKey(info.tableName, params)
-	cacheable := err == nil && queryCacheKey != ""
+	// 1. Generate Query Cache Key
+	queryKey, err := generateQueryCacheKey(info.tableName, params)
 	if err != nil {
-		log.Printf("Error generating query cache key (proceeding without query cache): %v", err)
-	}
+		// Don't fail, just log and proceed without cache
+		log.Printf("WARN: Failed to generate query cache key for table %s: %v. Proceeding without cache.", info.tableName, err)
+	} else {
+		// 2. Check Query Cache
+		cacheStart := time.Now()
+		cachedIDs, cacheErr := t.cache.GetQueryIDs(ctx, queryKey)
+		cacheDuration := time.Since(cacheStart)
 
-	// 1. Check query cache if possible
-	if cacheable {
-		cachedIDs, err := cache.GetQueryIDs(ctx, queryCacheKey)
-		if err == nil {
-			log.Printf("Thing Query cache hit for key: %s", queryCacheKey)
-			return cachedIDs, nil
-		} else if !errors.Is(err, ErrNotFound) && !errors.Is(err, RedisNilError) {
-			log.Printf("Thing Query cache error for key %s: %v", queryCacheKey, err)
-		} else {
-			log.Printf("Thing Query cache miss for key: %s", queryCacheKey)
+		if cacheErr == nil {
+			log.Printf("QUERY CACHE HIT: Key: %s (%d IDs) (%s)", queryKey, len(cachedIDs), cacheDuration)
+			return cachedIDs, nil // Found in cache
+		} else if !errors.Is(cacheErr, ErrNotFound) {
+			// Log unexpected cache errors but proceed to DB
+			log.Printf("WARN: Cache GetQueryIDs error for key %s: %v (%s)", queryKey, cacheErr, cacheDuration)
 		}
+		// Log cache miss
+		log.Printf("QUERY CACHE MISS: Key: %s (%s) - Error: %v", queryKey, cacheDuration, cacheErr)
 	}
 
-	// 2. Database Query
-	sqlStmt, args := buildSelectIDsSQL(info, params)
-	if sqlStmt == "" {
-		return nil, errors.New("idsInternal: failed to build select IDs SQL")
+	// 3. Cache Miss or Key Generation Failed: Query Database
+	query, args := buildSelectIDsSQL(info, params)
+	if query == "" {
+		return nil, errors.New("failed to build select IDs SQL")
 	}
-	log.Printf("Thing executing DB IDs query for %s: %s | Args: %v", info.tableName, sqlStmt, args)
 
-	var ids []int64
-	err = db.Select(ctx, &ids, sqlStmt, args...)
+	// Destination slice for IDs. We know the PK type is int64.
+	var fetchedIDs []int64
+	dbStart := time.Now()
+	err = t.db.Select(ctx, &fetchedIDs, query, args...)
+	dbDuration := time.Since(dbStart)
+
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			log.Printf("No IDs found in DB for query: %s", sqlStmt)
-			if cacheable {
-				_ = cache.SetQueryIDs(ctx, queryCacheKey, []int64{}, NoneResultCacheDuration)
-			}
-			return []int64{}, nil
+		log.Printf("DB ERROR (Query IDs): %s [%v] (%s) - %v", query, args, dbDuration, err)
+		return nil, fmt.Errorf("database query for IDs failed: %w", err)
+	}
+	log.Printf("DB HIT (Query IDs): %s [%v] (%d IDs) (%s)", query, args, len(fetchedIDs), dbDuration)
+
+	// 4. Store fetched IDs in Query Cache (if key generation was successful)
+	if queryKey != "" {
+		cacheSetStart := time.Now()
+		errCacheSet := t.cache.SetQueryIDs(ctx, queryKey, fetchedIDs, DefaultCacheDuration) // Use appropriate TTL
+		cacheSetDuration := time.Since(cacheSetStart)
+		if errCacheSet != nil {
+			// Log error but don't fail the overall operation
+			log.Printf("WARN: Failed to cache query IDs for key %s: %v (%s)", queryKey, errCacheSet, cacheSetDuration)
 		}
-		return nil, fmt.Errorf("db error fetching IDs for %s: %w", info.tableName, err)
 	}
 
-	// 3. Cache Result if possible
-	if cacheable {
-		_ = cache.SetQueryIDs(ctx, queryCacheKey, ids, DefaultCacheDuration)
-	}
-
-	return ids, nil
+	return fetchedIDs, nil
 }
 
 // findChangedFieldsReflection compares two structs (original and updated)
 // and returns a map of column names to the changed values from the updated struct.
-// NOTE: This is a basic implementation. It compares exported fields based on 'db' tags.
-// It does not handle complex types (slices, maps, nested structs) deeply.
+// It handles embedded structs recursively.
 func findChangedFieldsReflection[T any](original, updated *T, info *modelInfo) (map[string]interface{}, error) {
 	changed := make(map[string]interface{})
 	originalVal := reflect.ValueOf(original).Elem()
 	updatedVal := reflect.ValueOf(updated).Elem()
-	modelType := originalVal.Type() // Assumes original and updated are same type
+	typeName := originalVal.Type().Name() // Get type name for logging
 
 	if originalVal.Type() != updatedVal.Type() {
 		return nil, errors.New("original and updated values must be of the same type")
 	}
 
-	for i := 0; i < modelType.NumField(); i++ {
-		field := modelType.Field(i)
-		fieldName := field.Name
+	var processFields func(oVal, uVal reflect.Value, path string) // Add path for nested logging
+	processFields = func(oVal, uVal reflect.Value, path string) {
+		structType := oVal.Type()
+		for i := 0; i < structType.NumField(); i++ {
+			field := structType.Field(i)
+			fieldName := field.Name
+			currentPath := path + "." + fieldName
 
-		// Skip unexported fields
-		if !field.IsExported() {
-			continue
-		}
+			// Handle embedded structs recursively
+			if field.Anonymous && field.Type.Kind() == reflect.Struct {
+				oField := oVal.Field(i)
+				uField := uVal.Field(i)
+				if oField.IsValid() && uField.IsValid() {
+					log.Printf("DEBUG: [%s%s] Recursing into embedded struct", typeName, currentPath)
+					processFields(oField, uField, currentPath)
+				} else {
+					log.Printf("DEBUG: [%s%s] Skipping invalid embedded struct", typeName, currentPath)
+				}
+				continue
+			}
 
-		// Get the DB column name for this field
-		dbColName, exists := info.fieldToColumnMap[fieldName]
-		if !exists || dbColName == "-" || dbColName == info.pkName {
-			// Skip fields without 'db' tag, explicitly ignored, or the primary key
-			continue
-		}
+			// Skip unexported fields
+			if !field.IsExported() {
+				log.Printf("DEBUG: [%s%s] Skipping unexported field", typeName, currentPath)
+				continue
+			}
 
-		originalFieldVal := originalVal.FieldByName(fieldName)
-		updatedFieldVal := updatedVal.FieldByName(fieldName)
+			// Get the DB column name for this field
+			dbColName, exists := info.fieldToColumnMap[fieldName]
+			if !exists || dbColName == "-" || dbColName == info.pkName {
+				log.Printf("DEBUG: [%s%s] Skipping field (no db tag, ignored, or PK). Exists: %v, DBCol: %s, PK: %s", typeName, currentPath, exists, dbColName, info.pkName)
+				continue
+			}
 
-		if !originalFieldVal.IsValid() || !updatedFieldVal.IsValid() {
-			log.Printf("Warning: Field %s not valid during change detection for type %s", fieldName, modelType.Name())
-			continue
-		}
+			originalFieldVal := oVal.FieldByName(fieldName)
+			updatedFieldVal := uVal.FieldByName(fieldName)
 
-		// Basic comparison - uses reflect.DeepEqual for simplicity.
-		// May need adjustments for specific types (e.g., time.Time comparison precision).
-		if !reflect.DeepEqual(originalFieldVal.Interface(), updatedFieldVal.Interface()) {
-			changed[dbColName] = updatedFieldVal.Interface()
+			if !originalFieldVal.IsValid() || !updatedFieldVal.IsValid() {
+				log.Printf("Warning: Field %s%s not valid during change detection", typeName, currentPath)
+				continue
+			}
+
+			originalInterface := originalFieldVal.Interface()
+			updatedInterface := updatedFieldVal.Interface()
+
+			// Compare values
+			areEqual := reflect.DeepEqual(originalInterface, updatedInterface)
+			log.Printf("DEBUG: [%s%s] Comparing DB:'%s' Original: [%v] (%T), Updated: [%v] (%T), Equal: %v",
+				typeName, currentPath, dbColName, originalInterface, originalInterface, updatedInterface, updatedInterface, areEqual)
+
+			if !areEqual {
+				log.Printf("DEBUG: [%s%s] Change DETECTED for DB column '%s'", typeName, currentPath, dbColName)
+				changed[dbColName] = updatedInterface
+			}
 		}
 	}
 
-	// Handle embedded BaseModel specifically if needed (e.g., UpdatedAt)
-	// The loop above should handle fields within BaseModel if they are exported and tagged.
-	// The UpdatedAt timestamp is handled separately in saveInternal.
+	log.Printf("DEBUG: Starting change detection for type %s", typeName)
+	processFields(originalVal, updatedVal, "") // Start with empty path
+	log.Printf("DEBUG: Raw changed map for %s: %v", typeName, changed)
+
+	// --- Fix for removing UpdatedAt ---
+	// Get the DB column name for the UpdatedAt field. Assume it exists.
+	// We need to find the Go field associated with the "updated_at" db column.
+	var updatedAtDBColName string
+	// This assumes the BaseModel standard convention. A more robust way might search info.columnToFieldMap
+	// but this works if the field is 'UpdatedAt' and tag is 'updated_at'.
+	updatedAtGoFieldName := "UpdatedAt" // Assuming standard BaseModel field name
+	if col, ok := info.fieldToColumnMap[updatedAtGoFieldName]; ok {
+		updatedAtDBColName = col // Should be "updated_at"
+	}
+
+	// Remove UpdatedAt DB column if it's the *only* change, as saveInternal handles it always.
+	if updatedAtDBColName != "" && len(changed) == 1 {
+		if _, isOnlyChange := changed[updatedAtDBColName]; isOnlyChange {
+			log.Printf("DEBUG: Removing '%s' from changed map as it's the only change.", updatedAtDBColName)
+			delete(changed, updatedAtDBColName)
+		}
+	}
+	log.Printf("DEBUG: Final changed map for %s after UpdatedAt check: %v", typeName, changed)
 
 	return changed, nil
 }

@@ -2,6 +2,9 @@ package thing_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -15,9 +18,8 @@ import (
 	// Import the internal package ONLY for the adapter implementation in the test setup
 	// Production code should not import internal packages directly.
 	// "thing/internal" // No longer needed
-
-	// Import the drivers package
-	"thing/drivers"
+	// Import the SQLite driver specifically for test setup
+	"thing/drivers/sqlite"
 )
 
 // --- Test Models ---
@@ -54,39 +56,128 @@ func (b *Book) TableName() string {
 
 // --- Test Setup ---
 
-// Mock CacheClient for testing purposes (replace with real implementation testing later)
+// Mock CacheClient for testing purposes
 type mockCacheClient struct {
-	// Simple in-memory store for testing locks, etc.
+	// Use sync.Map for thread-safe storage of models, query IDs, and locks
 	store sync.Map
 }
 
-func (m *mockCacheClient) GetModel(ctx context.Context, key string, dest interface{}) error {
-	return thing.ErrNotFound // Simulate cache miss for model gets
-}
-func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error {
-	// No-op for simplicity in these tests
-	return nil
-}
-func (m *mockCacheClient) DeleteModel(ctx context.Context, key string) error {
-	return nil // No-op
-}
-func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
-	return nil, thing.ErrNotFound // Simulate cache miss for query gets
-}
-func (m *mockCacheClient) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
-	return nil // No-op
-}
-func (m *mockCacheClient) DeleteQueryIDs(ctx context.Context, queryKey string) error {
-	return nil // No-op
+// Reset clears the mock cache's internal store.
+func (m *mockCacheClient) Reset() {
+	// Range and delete seems the most straightforward way to clear sync.Map
+	m.store.Range(func(key, value interface{}) bool {
+		m.store.Delete(key)
+		return true
+	})
 }
 
-// Simple lock simulation using sync.Map
-func (m *mockCacheClient) AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error) {
-	_, loaded := m.store.LoadOrStore(lockKey, time.Now())
-	return !loaded, nil // Acquired if it wasn't already loaded
+// Exists checks if a key is present in the mock cache store.
+// Note: This doesn't check lock prefixes.
+func (m *mockCacheClient) Exists(key string) bool {
+	_, ok := m.store.Load(key)
+	return ok
 }
+
+// GetValue retrieves the raw stored bytes for a key from the mock cache.
+// Note: This doesn't check lock prefixes.
+func (m *mockCacheClient) GetValue(key string) ([]byte, bool) {
+	val, ok := m.store.Load(key)
+	if !ok {
+		return nil, false
+	}
+	storedBytes, ok := val.([]byte)
+	if !ok {
+		// Value exists but isn't bytes - internal error or maybe a lock key?
+		// Return false as it's not a valid model/query cache entry.
+		return nil, false
+	}
+	return storedBytes, true
+}
+
+// Helper to marshal data for storage
+func marshalForMock(data interface{}) ([]byte, error) {
+	return json.Marshal(data)
+}
+
+// Helper to unmarshal data from storage
+func unmarshalFromMock(stored []byte, dest interface{}) error {
+	return json.Unmarshal(stored, dest)
+}
+
+func (m *mockCacheClient) GetModel(ctx context.Context, key string, dest interface{}) error {
+	val, ok := m.store.Load(key)
+	if !ok {
+		return thing.ErrNotFound // Not found
+	}
+
+	storedBytes, ok := val.([]byte)
+	if !ok {
+		// Should not happen if SetModel stores bytes
+		return fmt.Errorf("mock cache internal error: value for key '%s' is not []byte", key)
+	}
+
+	if err := unmarshalFromMock(storedBytes, dest); err != nil {
+		return fmt.Errorf("mock cache unmarshal error for key '%s': %w", key, err)
+	}
+	return nil // Found and successfully unmarshaled
+}
+
+func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error {
+	// Ignore expiration for mock, just store the marshaled data
+	dataBytes, err := marshalForMock(model)
+	if err != nil {
+		return fmt.Errorf("mock cache marshal error for key '%s': %w", key, err)
+	}
+	m.store.Store(key, dataBytes)
+	return nil
+}
+
+func (m *mockCacheClient) DeleteModel(ctx context.Context, key string) error {
+	m.store.Delete(key)
+	return nil
+}
+
+func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
+	val, ok := m.store.Load(queryKey)
+	if !ok {
+		return nil, thing.ErrNotFound
+	}
+	storedBytes, ok := val.([]byte)
+	if !ok {
+		return nil, fmt.Errorf("mock cache internal error: value for query key '%s' is not []byte", queryKey)
+	}
+	var ids []int64
+	if err := unmarshalFromMock(storedBytes, &ids); err != nil {
+		return nil, fmt.Errorf("mock cache unmarshal error for query key '%s': %w", queryKey, err)
+	}
+	return ids, nil
+}
+
+func (m *mockCacheClient) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
+	dataBytes, err := marshalForMock(ids)
+	if err != nil {
+		return fmt.Errorf("mock cache marshal error for query key '%s': %w", queryKey, err)
+	}
+	m.store.Store(queryKey, dataBytes)
+	return nil
+}
+
+func (m *mockCacheClient) DeleteQueryIDs(ctx context.Context, queryKey string) error {
+	m.store.Delete(queryKey)
+	return nil
+}
+
+// Simple lock simulation using sync.Map (can share the same store)
+func (m *mockCacheClient) AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error) {
+	// Prefix lock keys to avoid clashes with model/query keys if necessary
+	actualLockKey := "lock:" + lockKey
+	_, loaded := m.store.LoadOrStore(actualLockKey, time.Now()) // Store something simple for locks
+	return !loaded, nil                                         // Acquired if it wasn't already loaded
+}
+
 func (m *mockCacheClient) ReleaseLock(ctx context.Context, lockKey string) error {
-	m.store.Delete(lockKey)
+	actualLockKey := "lock:" + lockKey
+	m.store.Delete(actualLockKey)
 	return nil
 }
 
@@ -106,8 +197,8 @@ var (
 func setupTestDB(tb testing.TB) {
 	setupOnce.Do(func() {
 		dsn := "file::memory:?cache=shared" // Use shared cache for in-memory persistence across connections
-		// Use the constructor from the drivers package
-		dbAdapter, err := drivers.NewSQLiteAdapter(dsn)
+		// Use the constructor from the sqlite package
+		dbAdapter, err := sqlite.NewSQLiteAdapter(dsn)
 		if err != nil {
 			tb.Fatalf("Failed to initialize SQLite adapter: %v", err)
 		}
@@ -136,14 +227,14 @@ func setupTestDB(tb testing.TB) {
 
 		// --- Seed initial data using the new API (using Save for creation) ---
 		seedCtx := context.Background()
-		// Replace Use with New
-		userThing, err := thing.New[User](globalTestDbAdapter, globalTestCacheClient)
+		// Replace New with Use, handle potential error
+		userThing, err := thing.Use[User]()
 		if err != nil {
-			tb.Fatalf("Failed to create User Thing: %v", err)
+			tb.Fatalf("Failed to get User Thing via Use: %v", err)
 		}
-		bookThing, err := thing.New[Book](globalTestDbAdapter, globalTestCacheClient)
+		bookThing, err := thing.Use[Book]()
 		if err != nil {
-			tb.Fatalf("Failed to create Book Thing: %v", err)
+			tb.Fatalf("Failed to get Book Thing via Use: %v", err)
 		}
 
 		user1 := User{Name: "Seed User", Email: "seed@example.com"}
@@ -210,9 +301,9 @@ func TestMain(m *testing.M) {
 func TestThing_ByID_Found(t *testing.T) {
 	setupTestDB(t)
 	ctx := context.Background()
-	userThing, err := thing.New[User](globalTestDbAdapter, globalTestCacheClient)
+	userThing, err := thing.Use[User]()
 	if err != nil {
-		t.Fatalf("Failed to create User Thing: %v", err)
+		t.Fatalf("Failed to get User Thing via Use: %v", err)
 	}
 
 	user, err := userThing.WithContext(ctx).ByID(seededUserID)
@@ -238,9 +329,9 @@ func TestThing_ByID_Found(t *testing.T) {
 func TestThing_ByID_NotFound(t *testing.T) {
 	setupTestDB(t)
 	ctx := context.Background()
-	userThing, err := thing.New[User](globalTestDbAdapter, globalTestCacheClient)
+	userThing, err := thing.Use[User]()
 	if err != nil {
-		t.Fatalf("Failed to create User Thing: %v", err)
+		t.Fatalf("Failed to get User Thing via Use: %v", err)
 	}
 
 	nonExistentID := int64(99999)
@@ -258,15 +349,12 @@ func TestThing_ByID_NotFound(t *testing.T) {
 func TestThing_Save_Create(t *testing.T) {
 	setupTestDB(t)
 	ctx := context.Background()
-	userThing, err := thing.New[User](globalTestDbAdapter, globalTestCacheClient)
+	userThing, err := thing.Use[User]()
 	if err != nil {
-		t.Fatalf("Failed to create User Thing: %v", err)
+		t.Fatalf("Failed to get User Thing via Use: %v", err)
 	}
 
-	newUser := User{
-		Name:  "Create Test User",
-		Email: "create@example.com",
-	}
+	newUser := User{Name: "New Create", Email: "create@example.com"}
 
 	// Save the new user
 	err = userThing.WithContext(ctx).Save(&newUser)
@@ -296,8 +384,8 @@ func TestThing_Save_Create(t *testing.T) {
 	if fetchedUser == nil {
 		t.Fatalf("Fetched user created via Save is nil")
 	}
-	if fetchedUser.Name != "Create Test User" {
-		t.Errorf("Fetched name mismatch: expected 'Create Test User', got '%s'", fetchedUser.Name)
+	if fetchedUser.Name != "New Create" {
+		t.Errorf("Fetched name mismatch: expected 'New Create', got '%s'", fetchedUser.Name)
 	}
 	if fetchedUser.Email != "create@example.com" {
 		t.Errorf("Fetched email mismatch: expected 'create@example.com', got '%s'", fetchedUser.Email)
@@ -308,9 +396,9 @@ func TestThing_Save_Create(t *testing.T) {
 func TestThing_Save_Update(t *testing.T) {
 	setupTestDB(t)
 	ctx := context.Background()
-	userThing, err := thing.New[User](globalTestDbAdapter, globalTestCacheClient)
+	userThing, err := thing.Use[User]()
 	if err != nil {
-		t.Fatalf("Failed to create User Thing: %v", err)
+		t.Fatalf("Failed to get User Thing via Use: %v", err)
 	}
 
 	// 1. Fetch the seeded user to update
@@ -358,13 +446,13 @@ func TestThing_Save_Update(t *testing.T) {
 func TestThing_Delete(t *testing.T) {
 	setupTestDB(t)
 	ctx := context.Background()
-	userThing, err := thing.New[User](globalTestDbAdapter, globalTestCacheClient)
+	userThing, err := thing.Use[User]()
 	if err != nil {
-		t.Fatalf("Failed to create User Thing: %v", err)
+		t.Fatalf("Failed to get User Thing via Use: %v", err)
 	}
 
-	// 1. Create a user specifically for this test
-	userToDelete := User{Name: "Delete Test User", Email: "delete@example.com"}
+	// Create a user specifically for this test
+	userToDelete := User{Name: "Delete Me", Email: "delete@example.com"}
 	err = userThing.WithContext(ctx).Save(&userToDelete)
 	if err != nil {
 		t.Fatalf("Failed to create user for deletion test: %v", err)
@@ -391,9 +479,9 @@ func TestThing_Delete(t *testing.T) {
 func TestThing_Query(t *testing.T) {
 	setupTestDB(t)
 	ctx := context.Background()
-	bookThing, err := thing.New[Book](globalTestDbAdapter, globalTestCacheClient)
+	bookThing, err := thing.Use[Book]()
 	if err != nil {
-		t.Fatalf("Failed to create Book Thing: %v", err)
+		t.Fatalf("Failed to get Book Thing via Use: %v", err)
 	}
 
 	// Query for books belonging to the seeded user
@@ -433,9 +521,9 @@ func TestThing_Query(t *testing.T) {
 func TestThing_IDs(t *testing.T) {
 	setupTestDB(t)
 	ctx := context.Background()
-	bookThing, err := thing.New[Book](globalTestDbAdapter, globalTestCacheClient)
+	bookThing, err := thing.Use[Book]()
 	if err != nil {
-		t.Fatalf("Failed to create Book Thing: %v", err)
+		t.Fatalf("Failed to get Book Thing via Use: %v", err)
 	}
 
 	// Query for book IDs belonging to the seeded user
@@ -467,6 +555,83 @@ func TestThing_IDs(t *testing.T) {
 	// if !reflect.DeepEqual(ids, expectedIDs) {
 	//     t.Errorf("Expected IDs %v, got %v", expectedIDs, ids)
 	// }
+}
+
+// TestThing_Query_Cache verifies query cache interactions (using IDs method).
+func TestThing_Query_Cache(t *testing.T) {
+	setupTestDB(t)
+	// Explicitly reset cache *for this test* to avoid state from setup seeding
+	mockCache, ok := globalTestCacheClient.(*mockCacheClient)
+	if !ok {
+		t.Fatalf("Test setup error: globalTestCacheClient is not *mockCacheClient")
+	}
+	mockCache.Reset()
+
+	ctx := context.Background()
+	bookThing, err := thing.Use[Book]()
+	if err != nil {
+		t.Fatalf("Failed to get Book Thing via Use: %v", err)
+	}
+
+	// Define query params matching seeded data
+	params := thing.QueryParams{
+		Where: "user_id = ?",
+		Args:  []interface{}{seededUserID},
+		Order: "id ASC",
+	}
+
+	// Generate expected query cache key (needs access to internal helper ideally, replicate for test)
+	// This replication is brittle; better if generateQueryCacheKey were exported or testable.
+	paramsBytes, _ := json.Marshal(params)
+	hasher := sha256.New()
+	hasher.Write([]byte("books")) // Table name
+	hasher.Write(paramsBytes)
+	hash := hex.EncodeToString(hasher.Sum(nil))
+	queryKey := fmt.Sprintf("query:books:%s", hash)
+
+	// 1. Initial query - should be cache miss, then DB hit, then cache set
+	t.Logf("Attempting first IDs query for key: %s...", queryKey)
+	if mockCache.Exists(queryKey) {
+		t.Errorf("Query cache key '%s' should NOT exist before first query", queryKey)
+	}
+
+	ids1, err := bookThing.WithContext(ctx).IDs(params)
+	if err != nil {
+		t.Fatalf("First IDs query failed: %v", err)
+	}
+	if len(ids1) != 2 { // Should match seeded data
+		t.Fatalf("First IDs query returned %d IDs, expected 2", len(ids1))
+	}
+
+	if !mockCache.Exists(queryKey) {
+		t.Errorf("Query cache key '%s' SHOULD exist after first query", queryKey)
+	}
+	// Verify cache content
+	bytes, found := mockCache.GetValue(queryKey)
+	if !found {
+		t.Fatalf("Query cache key '%s' not found via GetValue after query", queryKey)
+	}
+	var cachedIDs []int64
+	if err := json.Unmarshal(bytes, &cachedIDs); err != nil {
+		t.Fatalf("Failed to unmarshal cached query IDs for key '%s': %v", queryKey, err)
+	}
+	if len(cachedIDs) != len(ids1) { // Simple comparison for this test
+		t.Errorf("Cached query IDs length mismatch. Expected %d, Got %d", len(ids1), len(cachedIDs))
+	}
+	t.Logf("First query successful, query cache populated for key: %s", queryKey)
+
+	// 2. Second query - should be query cache hit
+	t.Logf("Attempting second IDs query for key: %s...", queryKey)
+	// --- How to verify DB wasn't hit? Deferred for now. ---
+	ids2, err := bookThing.WithContext(ctx).IDs(params)
+	if err != nil {
+		t.Fatalf("Second IDs query failed: %v", err)
+	}
+	if len(ids2) != len(ids1) {
+		t.Fatalf("Second IDs query returned %d IDs, expected %d", len(ids2), len(ids1))
+	}
+
+	t.Logf("TestQuery_Cache: OK")
 }
 
 // Helper function to access BaseModel field if GetBaseModelField is not exported

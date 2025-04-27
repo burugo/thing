@@ -71,9 +71,9 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
     *   **Success Criteria:** Can execute simple list queries returning mapped structs (with only defined fields selected) using a clear API.
 5.  **[~] Caching Layer Integration:** (Partially addressed by `thing.go`)
     *   Define/Refine `CacheClient` interface (e.g., for Redis). (`RedisClient` exists).
-    *   Implement Redis `CacheClient`. (`thing.go` uses placeholder logic).
-    *   Integrate object caching into CRUD operations (`ByID`, `Create`, `Save`, `Delete`). (`thing.go` implements this conceptually with placeholders).
-    *   Integrate query caching (e.g., caching IDs or results based on query hash). Define TTLs and basic invalidation (on mutation). (`thing.go` implements ID list caching with TTL conceptually).
+    *   Implement Redis `CacheClient`. (`cache/redis/client.go` created).
+    *   Integrate object caching into CRUD operations (`ByID`, `Create`, `Save`, `Delete`). (Initial implementation done in `thing.go`).
+    *   Integrate query caching (e.g., caching IDs or results based on query hash). Define TTLs and basic invalidation (on mutation). (Initial ID list caching implemented in `thing.go`, TTLs need config, invalidation deferred).
     *   **Success Criteria:** CRUD operations and simple queries utilize the *actual* cache client, improving performance. Cache entries are invalidated/updated on mutations.
 6.  **[ ] Relationship Management (Phase 1: BelongsTo, HasMany):**
     *   Define how relationships are specified (e.g., struct tags).
@@ -111,15 +111,22 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
     *   **Success Criteria:** Can generate `CREATE TABLE` statements from model definitions.
 13. **[~] Testing, Benchmarking, and Refinement:** (Refined)
     *   **Improve Test Infrastructure:**
-        *   Implement/Refine Cache Client for Testing (Mock/Real Redis - *Depends on Task 5*).
+        *   Implement/Refine Cache Client for Testing (Enhance `mockCacheClient` or configure tests for real Redis - *Needed*).
         *   Ensure robust test DB setup (In-memory SQLite or instructions/scripts).
         *   Create test helpers (data setup, cleanup, assertions).
     *   **Optimization:**
         *   Implement reflection metadata caching (map `reflect.Type` to column names, field info) to optimize SQL generation and value extraction.
     *   **Core Functionality Tests:**
-        *   Add comprehensive tests for CRUD (`Create`, `ByID`, `Save`, `Delete`) including DB/cache interactions and error scenarios.
+        *   Add comprehensive tests for CRUD (`Create`, `ByID`, `Save`, `Delete`) including DB/cache interactions and error scenarios (*Needed for Cache*).
         *   Refine and test `findChangedFields` implementation within `Save`.
-        *   Add comprehensive tests for Querying (`IDs`, `Query`) with various params, including cache interactions.
+        *   Add comprehensive tests for Querying (`IDs`, `Query`) with various params, including cache interactions (*Needed for Cache*).
+    *   **Cache Refinement & Testing (Next Steps):**
+        *   **Test Cache Logic:** Verify cache hits, misses, sets, and invalidations (object cache) for `ByID`, `Save`, `Delete`.
+        *   **Test Query Cache:** Verify cache hits, misses, and sets for `IDs`.
+        *   **Implement Query Cache Invalidation:** Develop and test a strategy for invalidating query caches in `Save`/`Delete`.
+        *   **Cache TTL Configuration:** Add ways to configure default TTLs.
+        *   **(Optional) Negative Caching:** Implement and test caching for `ErrNotFound` results.
+        *   **Error Handling/Logging:** Review and refine error handling and logging verbosity in cache interactions.
     *   **Advanced Feature Tests:**
         *   Add tests for Transaction Management (`BeginTx`, `Commit`, `Rollback`).
         *   Implement/Refine and test Hooks/Events system (*Depends on Task 7*).
@@ -160,7 +167,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - [x] Database Adapter Layer (Initial - Done: SQLite adapter implemented with `sqlx`, including transaction support)
 - [x] Basic CRUD Operations (Done: `Create`, `Update`, `Delete`, `ByID`, `Save` refactored to use DBAdapter)
 - [x] Initial Query Executor Design (Done: `IDs`, `Query` refactored to use DBAdapter and SQL builder)
-- [~] Caching Layer Integration (Partially done conceptually, needs real Cache logic & integration)
+- [~] Caching Layer Integration (Done: Redis Client impl; Initial object/query cache logic added to core funcs; Needs testing & refinement)
 - [ ] Relationship Management (Phase 1: BelongsTo, HasMany) - *Note: Keep simple, reuse core funcs.*
 - [~] Hooks/Events System (Partially done, needs testing/refinement)
 - [x] Transaction Management (Done: Implemented in SQLite adapter)
@@ -172,12 +179,12 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
   - [~] Implement placeholders (`findChangedFields` in `Save` uses basic reflection, needs refinement & tests)
   - [ ] Mock DB/Redis Tests (Needs improved Cache Mock/Implementation)
   - [x] Replace DB Placeholders (`ByID`, `Create`, `Save`, `Delete`, `IDs` use adapter)
-  - [ ] Cache TTL Configuration
+  - [ ] Cache TTL Configuration (*Next*)
   - [ ] Locking refinement (Using basic cache client lock methods)
   - [ ] Implement reflection metadata caching
   - [ ] Test Hooks/Events (*Depends on Task 7*)
-  - [ ] Add CRUD tests
-  - [ ] Add Querying tests
+  - [ ] Add CRUD tests (*Next - Focus on Cache*)
+  - [ ] Add Querying tests (*Next - Focus on Cache*)
   - [ ] Add Transaction tests
   - [ ] Add Concurrency tests
   - [ ] Setup CI
@@ -331,71 +338,71 @@ Based on the analysis, here are features we could consider adding, prioritizing 
 
 ## Background and Motivation
 
-The goal is to refactor the existing `thing` ORM package. Initial design used package-level functions and `interface{}` extensively. The user desires a more type-safe and potentially more GORM-like API, exploring generics and context handling patterns.
+The user wants to build/refine a Go library/framework tentatively named "thing", likely an ORM or data access layer. Key requirements include dependency injection (using Google Wire), support for multiple database drivers (starting with SQLite), and a testing suite.
 
 ## Key Challenges and Analysis
 
--   Balancing type safety (generics) with the flexibility needed for an ORM (reflection).
--   Designing an intuitive API for context handling (explicit vs. implicit).
--   Managing ORM state (DB/Cache clients, context).
--   Limitations of Go generics (methods on non-generic types cannot have type parameters).
--   Difficulties with large automated refactoring edits.
-
-## Final Agreed Design
-
-1.  **Global Configuration:** A package-level `thing.Configure(db, cache)` function to set up database and cache clients internally once.
-2.  **Generic `Thing[T]`:** A type-specific struct `thing.Thing[T any]` holding `db`, `cache`, `ctx`, and pre-computed `modelInfo` for type `T`.
-3.  **`Use[T]` Function:** A package-level generic function `thing.Use[T any]() *Thing[T]` that accesses the global configuration and returns a ready-to-use, type-specific `Thing[T]` instance.
-4.  **Context Handling:** A `WithContext(ctx)` method on `*Thing[T]` returns a shallow copy (`*Thing[T]`) with the new context set.
-5.  **Core Methods:** Methods like `ByID`, `Save`, `Query`, `Delete`, `IDs` are defined on `*Thing[T]`.
-    -   `Save` handles both creation (ID=0 or `isNewRecord` flag) and updates. The `Create` method is removed.
-    -   `ByID`, `Save`, `Query` return instance pointers (`*T` or `[]*T`) upon success.
-6.  **Internal Logic:** Internal helper methods (e.g., `byIDInternal`, `saveInternal`) handle the core reflection, SQL building, and DB/Cache interaction, using the instance's `db`/`cache` and the context passed down from the public methods.
+- **Dependency Management:** Correctly setting up Google Wire for injecting dependencies like DB adapters and cache clients.
+- **Driver Abstraction:** Designing the `DBAdapter` interface and implementing it for different databases (starting with SQLite) in a way that's easy to extend.
+- **Testing:** Establishing a robust test suite that can run against a real (in-memory) database and potentially mocks.
+- **API Design:** Ensuring the `thing` API (`New`, `Use`, `Configure`, model interactions) is intuitive and functional.
+- **Environment Setup:** Ensuring necessary tools (`wire`, Go environment) are correctly installed and configured in the user's environment.
 
 ## High-level Task Breakdown
 
-1.  [x] Analyze initial `thing.go` structure and tests.
-2.  [x] Discuss and iterate on API design alternatives (package functions, generics, GORM style).
-3.  [x] Finalize agreed-upon design (Global Configure, Generic `Thing[T]`, `Use[T]`, etc.).
-4.  [x] Attempt automated refactoring of `thing.go` (Failed due to complexity).
-5.  [x] Update `thing_test.go` to match the target API structure.
-6.  [ ] **Manually refactor `thing.go`** to fully implement the final agreed-upon design. <--(Current Step)
-7.  [ ] Compile `thing.go` locally to verify syntax and structure.
-8.  [ ] Run tests in `thing_test.go` and fix any logic errors.
-9.  [ ] Add comprehensive tests for Save (update), Delete, and edge cases.
-10. [ ] Review and finalize.
+1.  **Initial Setup & SQLite Driver:**
+    *   Define `DBAdapter` and `CacheClient` interfaces.
+    *   Implement `SQLiteAdapter`.
+    *   Set up basic example (`examples/main.go`) using manual instantiation. (Partially done, evolved with Wire)
+2.  **Introduce Dependency Injection (Wire):**
+    *   Install `wire` tool.
+    *   Create `wire.go` in `examples` with providers for `DBAdapter`, `CacheClient`, and repositories.
+    *   Define an `Application` struct to hold injected dependencies.
+    *   Create an injector function (`initializeApplication`).
+    *   Run `wire gen ./...` to generate `wire_gen.go`.
+    *   Update `examples/main.go` to use the Wire injector.
+3.  **Refactor Driver Structure:**
+    *   Move SQLite adapter implementation into a dedicated `drivers/sqlite` package.
+    *   Update imports and calls in `examples/wire.go`.
+    *   Ensure `wire gen` still works.
+4.  **Refine Testing:**
+    *   Set up `TestMain` for package-level setup/teardown.
+    *   Implement `setupTestDB` using an in-memory SQLite DB.
+    *   Configure `thing` globally for tests using `thing.Configure`.
+    *   Refactor tests to use `thing.Use` instead of `thing.New`.
+    *   Ensure all tests pass using `go test ./...`.
 
 ## Project Status Board
 
--   [X] Define `Configure` function and global config variables.
--   [ ] Define `Thing[T any]` generic struct.
--   [ ] Define `Use[T any]()` generic function.
--   [ ] Implement `WithContext` method on `*Thing[T]`.
--   [ ] Implement public methods (`ByID`, `Save`, `Delete`, `Query`, `IDs`) on `*Thing[T]`.
--   [ ] Implement internal helper methods (`byIDInternal`, `saveInternal`, etc.) on `*Thing[T]`.
--   [ ] Remove old non-generic `Thing` struct and methods.
--   [ ] Remove old package-level functions (`ByID`, `Save`, etc.).
--   [ ] Remove old `DefaultThing` global variable.
--   [ ] Adjust helper functions (`withLock`, etc.) as needed.
--   [X] Update `thing_test.go` structure and calls (requires `thing.go` fixes to pass).
--   [X] Remove `TestCreate` and add `TestSave_Create`, `TestSave_Update`, `TestDelete` stubs/implementations.
-
-## Current Status / Progress Tracking
-
--   We have finalized the target API design, mimicking GORM's context handling while using generics for type-specific ORM instances (`Thing[T]`) obtained via `thing.Use[T]()`.
--   Automated refactoring of `thing.go` proved problematic. Partial edits were applied, but the file is currently in an inconsistent state with numerous linter errors.
--   `thing_test.go` has been updated to use the intended final API, but cannot compile/run due to the state of `thing.go`.
--   The immediate next step is the manual refactoring of `thing.go`.
+- [x] Install `wire` tool and configure PATH.
+- [x] Define `DBAdapter` and `CacheClient` interfaces (implicitly done through usage).
+- [x] Implement initial `SQLiteAdapter` (within `drivers` initially).
+- [x] Set up basic `examples/main.go`.
+- [x] Create `examples/wire.go` with providers and injector.
+- [x] Generate `wire_gen.go`.
+- [x] Update `examples/main.go` to use Wire.
+- [x] Refactor SQLite driver to `drivers/sqlite` package.
+- [x] Update `examples/wire.go` for the new driver package structure.
+- [x] Successfully run `wire gen ./...` after driver refactor.
+- [x] Set up basic test structure in `tests/thing_test.go` with `TestMain` and `setupTestDB`.
+- [x] Configure `thing` globally in test setup using `thing.Configure`.
+- [x] Refactor `tests/thing_test.go` to use `thing.Use`.
+- [x] Run `go test ./...` successfully.
 
 ## Executor's Feedback or Assistance Requests
 
--   None currently. Waiting for manual refactoring of `thing.go`.
+*(No current requests)*
 
 ## Lessons
 
--   Automated refactoring tools can struggle with large, complex changes involving generics, interface modifications, and moving logic between package-level functions and methods. Manual refactoring is often necessary for such tasks.
--   Go (1.18+) allows generic types (`type Thing[T any] struct{}`) and generic functions (`func Use[T any]()`).
--   Go **does not** allow methods on non-generic types to introduce their own type parameters (`func (t *NonGeneric) Method[T any]()` is invalid).
--   Methods on generic types can use the type parameters defined by the receiver (`func (t *Thing[T]) Method() T`).
--   Relying on argument reflection (like GORM often does, e.g., `db.First(&user)`) is a valid alternative when generic methods are not suitable, but it means results often need to be passed via pointer arguments rather than returned directly.
--   Combining a global configuration entry point (`Configure`) with a generic factory function (`Use[T]`) provides a way to get type-safe ORM handlers without passing DB/Cache clients repeatedly. 
+- Ensure Go tools installed via `go install` are in the system `$PATH` (e.g., add `$HOME/go/bin`).
+- Run `go mod tidy` after changing package structures or dependencies.
+- Terminal file operations (`mv`, `git mv`) might fail unexpectedly; manual intervention by the user might be needed sometimes. Verify file existence with `ls` or equivalent if `mv` reports "No such file or directory" despite prior confirmation.
+- Double-check code edits to avoid introducing unused variables, especially during refactoring.
+- Go test files are often located in a separate `tests/` directory or using `_test.go` suffix within the package directory. `go test ./...` is useful for running tests across the project.
+- Using `thing.Configure` in test setup allows simplifying individual tests by using `thing.Use`.
+- When refactoring driver locations, remember to update test setup files (`tests/thing_test.go` in this case) that might directly import the driver implementation.
+
+## Current Status / Progress Tracking
+
+Core logic for object caching (`ByID`, `Save`, `Delete`) and query ID caching (`IDs`, used by `Query`) has been integrated into `thing.go` using the `CacheClient` interface. The example application uses the Redis implementation. The next critical step is to refine and thoroughly test this caching functionality within `tests/thing_test.go`, including handling TTL configuration and query cache invalidation. 
