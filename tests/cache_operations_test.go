@@ -1,6 +1,8 @@
 package thing_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -83,6 +85,67 @@ func TestThing_ByID_Cache_Hit(t *testing.T) {
 	assert.Equal(t, user.ID, foundUser.ID)
 	assert.Equal(t, user.Name, foundUser.Name)
 	assert.Equal(t, user.Email, foundUser.Email)
+}
+
+func TestThing_ByID_Cache_NoneResult(t *testing.T) {
+	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	defer cleanup()
+
+	// 1. Create user
+	user := &User{Name: "NoneResult User", Email: "noneresult@example.com"}
+	err := th.Save(user)
+	require.NoError(t, err)
+	require.NotZero(t, user.ID)
+	userID := user.ID
+
+	// 2. Fetch once to ensure it exists
+	_, err = th.ByID(userID)
+	require.NoError(t, err)
+
+	// 3. Delete the user (this should invalidate the object cache)
+	err = th.Delete(user)
+	require.NoError(t, err)
+
+	// Reset mock cache call counts for clarity
+	mockCache.ResetCounts()
+
+	// 4. Fetch again - should miss cache, miss DB, cache NoneResult, return ErrNotFound
+	_, err = th.ByID(userID)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after delete")
+
+	// Verify cache operations for the first fetch after delete
+	assert.Equal(t, 1, mockCache.GetModelCalls, "Should attempt cache get (miss)")
+	assert.Equal(t, 1, mockCache.SetCalls, "Should set NoneResult in cache") // Check Set, not SetModel
+	assert.Equal(t, 0, mockCache.SetModelCalls, "Should NOT set model after delete")
+	// Verify DB was checked (via fetchModelsByIDsInternal)
+	// We don't have a direct counter for DB calls, rely on cache misses/sets.
+
+	// Check that NoneResult was actually cached
+	cacheKey := "users:" + mockCache.FormatID(userID)
+	rawVal, rawErr := mockCache.Get(context.Background(), cacheKey)
+	require.NoError(t, rawErr, "Should be able to get raw value from cache")
+	assert.Equal(t, thing.NoneResult, rawVal, "Cache should contain NoneResult string")
+
+	// Record counts before the final fetch
+	getCallsBeforeFinal := mockCache.GetModelCalls
+	setCallsBeforeFinal := mockCache.SetCalls
+	setModelCallsBeforeFinal := mockCache.SetModelCalls
+
+	// 5. Fetch one more time - should hit NoneResult in cache, return ErrNotFound immediately
+	_, err = th.ByID(userID)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound again")
+
+	// Verify cache operations for the second fetch after delete
+	assert.Equal(t, getCallsBeforeFinal+1, mockCache.GetModelCalls, "Should attempt cache get again (hit NoneResult)")
+	assert.Equal(t, setCallsBeforeFinal, mockCache.SetCalls, "Should NOT set NoneResult again")
+	assert.Equal(t, setModelCallsBeforeFinal, mockCache.SetModelCalls, "Should NOT set model again")
+	// Crucially, DB should NOT have been queried this time. We verify by checking no new Set* calls happened.
+
+	// Check Set calls AFTER ResetCounts
+	// Set should NOT have been called again, as NoneResult should prevent DB lookup
+	mockCache.AssertSetCalls(t, 0, "Should NOT set NoneResult again") // Expect 0 Set calls after ResetCounts
 }
 
 func TestThing_Query_Cache(t *testing.T) {

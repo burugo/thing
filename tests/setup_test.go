@@ -50,10 +50,14 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	cache := &mockCacheClient{}
 
 	cleanup := func() {
+		tb.Logf("--- setupTestDB: Running cleanup function ---")
 		err := adapter.Close()
 		if err != nil {
 			tb.Logf("Error closing test DB adapter: %v", err)
+			// Optionally panic or fail test if Close fails critically
+			// tb.Fatalf("CRITICAL: Failed to close test DB adapter: %v", err)
 		}
+		tb.Logf("--- setupTestDB: Cleanup function finished ---")
 	}
 
 	return adapter, cache, cleanup
@@ -78,14 +82,19 @@ func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, th
 
 // TestMain handles global test setup and teardown
 func TestMain(m *testing.M) {
+	log.Println("--- TestMain START ---")
 	// Set up any global test state here
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
+	log.Println("--- TestMain: Running m.Run() ---")
 	// Run tests
 	exitCode := m.Run()
+	log.Printf("--- TestMain: m.Run() finished with exitCode: %d ---", exitCode)
 
 	// Perform any global cleanup here
+	log.Println("--- TestMain: Performing global cleanup (if any) ---")
 
 	// Exit with appropriate code
+	log.Printf("--- TestMain: Exiting with code: %d ---", exitCode)
 	os.Exit(exitCode)
 }

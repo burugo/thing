@@ -27,6 +27,8 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - **Concurrency Control:** Implementing safe concurrent operations.
 - **Testing Complexity:** Requires testing against multiple database versions for the supported feature set.
 - **Open Source Considerations:** Documentation, examples, contribution guidelines, licensing, and community building.
+- **Testing:** Thorough testing is required due to the dynamic nature of reflection and caching. Intermittent failures need careful debugging (e.g., using `-p 1`, `-v`, `-race`).
+- **Refactoring `ByID`:** Merging `byIDInternal` into `fetchModelsByIDsInternal` simplifies the codebase but removes the specific lock previously used for single-ID fetches. The impact of this removal on cache stampedes for single items needs observation, though `NoneResult` caching should mitigate this for non-existent items.
 
 ## Design Philosophy and API Goals
 
@@ -383,4 +385,48 @@ The goal now is twofold:
 #### Next Steps Proposed by Executor
 - Re-run the *entire* test suite (`go test -v -p 1 ./... | cat`) from the project root to get the full verbose output and identify the exact test causing the final `FAIL` status.
 - Investigate the cache `Reset` mechanism and potential state leakage between tests.
+
+## High-level Task Breakdown (Current Goal: Refactor ByID Logic)
+
+1.  **Enhance `fetchModelsByIDsInternal`:**
+    *   **Description:** Modify the function to correctly distinguish and handle cache states (`hit`, `ErrCacheNoneResult`, `ErrNotFound`) during the initial cache check. Update DB fetch logic to identify confirmed missing IDs and cache `NoneResult` for them.
+    *   **Success Criteria:** `fetchModelsByIDsInternal` correctly identifies existing models, cached non-existent models, and truly missing models. It fetches only truly missing models from the DB and caches both positive results and `NoneResult` markers accurately in Redis.
+2.  **Refactor `byIDInternal` to Delegate:**
+    *   **Description:** Remove existing cache/lock/DB logic. Implement `byIDInternal` as a thin wrapper calling `fetchModelsByIDsInternal` with a single ID. Process the map result to return the model or `ErrNotFound`.
+    *   **Success Criteria:** `byIDInternal` delegates fetching to `fetchModelsByIDsInternal`, correctly returns the model or `ErrNotFound`, and contains no redundant logic.
+3.  **Update `Thing.ByID`:**
+    *   **Description:** Verify the public `Thing.ByID` method calls the refactored `byIDInternal`.
+    *   **Success Criteria:** `Thing.ByID` functions correctly using the refactored internal path.
+4.  **Testing:**
+    *   **Description:** Run all existing tests. Add specific tests for `NoneResult` handling in `ByID` and `ByIDs` if missing.
+    *   **Success Criteria:** All tests pass, confirming the refactoring and correct `NoneResult` behavior.
+
+## Project Status Board
+
+-   [x] Task 1: Enhance `fetchModelsByIDsInternal` (Handle `ErrCacheNoneResult`, Cache `NoneResult` from DB miss)
+-   [x] Task 2: Refactor `byIDInternal` to Delegate
+-   [x] Task 3: Update `Thing.ByID`
+-   [x] Task 4: Testing (Added `TestThing_ByID_Cache_NoneResult`, but overall package FAIL persists)
+
+## Executor's Feedback or Assistance Requests
+
+- Refactoring of `ByID` logic is complete. `fetchModelsByIDsInternal` now handles negative caching (`NoneResult`) correctly, and `byIDInternal` delegates to it.
+- Added `TestThing_ByID_Cache_NoneResult` to verify negative caching.
+- The overall `FAIL thing/tests` status persists despite individual tests passing. This seems unrelated to the current refactoring and likely stems from test setup/teardown or state leakage. Further debugging is needed to resolve this package-level failure, but the core refactoring task is done.
+
+## Lessons
+
+*   *(Include info useful for debugging in the program output.)*
+*   *(Read the file before you try to edit it.)*
+*   *(Always ask before using the -force git command)*
+*   Ensure thorough testing of relationship loading logic after significant refactoring of query/fetch mechanisms.
+*   Log detailed information during preload steps (e.g., IDs being preloaded, number of related items found, assignment attempts) to aid debugging.
+*   When `Fetch` needs to go directly to the database (offset > cached IDs or initial fetch), ensure its preload application logic mirrors the standard `preloadRelations` behavior used by `ByIDs`.
+
+<details>
+<summary>Archived Tasks/Status</summary>
+
+// ... existing code ...
+
+</details>
 

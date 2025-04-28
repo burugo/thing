@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"testing"
 	"time"
 
 	"thing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // --- Cache Mock Implementation ---
@@ -96,6 +99,28 @@ func (m *mockCacheClient) Reset() {
 		return true
 	})
 	log.Printf("DEBUG Reset: Cache cleared. Keys remaining: %d", keyCount)
+}
+
+// ResetCounts only resets the call counters, not the cache content.
+func (m *mockCacheClient) ResetCounts() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Reset counters
+	m.GetModelCalls = 0
+	m.SetModelCalls = 0
+	m.DeleteModelCalls = 0
+	m.GetQueryIDsCalls = 0
+	m.SetQueryIDsCalls = 0
+	m.DeleteQueryIDsCalls = 0
+	m.AcquireLockCalls = 0
+	m.ReleaseLockCalls = 0
+	m.DeleteByPrefixCalls = 0
+	m.InvalidateQueriesContainingIDCalls = 0
+	m.GetCalls = 0
+	m.SetCalls = 0
+	m.DeleteCalls = 0
+	log.Printf("DEBUG ResetCounts: Call counters reset.")
 }
 
 // Exists checks if a non-expired key is present in the mock cache store.
@@ -510,4 +535,20 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// AssertSetCalls checks if Set was called the expected number of times.
+func (m *mockCacheClient) AssertSetCalls(t *testing.T, expected int, msgAndArgs ...interface{}) {
+	t.Helper()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	assert.Equal(t, expected, m.SetCalls, msgAndArgs...)
+}
+
+// AssertSetModelCalls checks if SetModel was called the expected number of times.
+func (m *mockCacheClient) AssertSetModelCalls(t *testing.T, expected int, msgAndArgs ...interface{}) {
+	t.Helper()
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	assert.Equal(t, expected, m.SetModelCalls, msgAndArgs...)
 }

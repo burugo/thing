@@ -263,37 +263,36 @@ func (b *BaseModel) SetNewRecordFlag(isNew bool) {
 // handling cache checks, database queries for misses, and caching results.
 // It requires the concrete modelType to instantiate objects and slices correctly.
 func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapter, modelInfo *ModelInfo, modelType reflect.Type, ids []int64) (map[int64]reflect.Value, error) {
+	resultMap := make(map[int64]reflect.Value)
 	if len(ids) == 0 {
-		return map[int64]reflect.Value{}, nil
-	}
-	if modelInfo == nil || modelInfo.TableName == "" || modelInfo.pkName == "" {
-		log.Printf("Error: fetchModelsByIDsInternal called with incomplete modelInfo: %+v", modelInfo)
-		return nil, errors.New("fetchModelsByIDsInternal: incomplete model info")
-	}
-	// Ensure modelType is valid
-	if modelType == nil || modelType.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("fetchModelsByIDsInternal requires a valid struct type, got %v", modelType)
+		return resultMap, nil
 	}
 
-	resultMap := make(map[int64]reflect.Value, len(ids))
-	var missingIDs []int64
+	missingIDs := []int64{} // Initialize explicitly
 
-	// 1. Try to get all models from cache first
+	// 1. Try fetching from cache
 	if cache != nil {
-		for _, id := range ids {
-			instancePtrVal := reflect.New(modelType) // Use the passed modelType
+		for _, id := range ids { // Iterate through original ids
 			cacheKey := generateCacheKey(modelInfo.TableName, id)
-			err := cache.GetModel(ctx, cacheKey, instancePtrVal.Interface()) // Pass pointer interface
+			instancePtrVal := reflect.New(modelType) // Create pointer *T
+
+			// Pass pointer interface, e.g., *User
+			err := cache.GetModel(ctx, cacheKey, instancePtrVal.Interface())
 
 			if err == nil {
 				// Found in cache
 				setNewRecordFlagIfBaseModel(instancePtrVal.Interface(), false)
-				resultMap[id] = instancePtrVal // Store the reflect.Value pointer
+				resultMap[id] = instancePtrVal                 // Store the reflect.Value pointer
+				log.Printf("DEBUG CACHE HIT for %s", cacheKey) // Added log
+			} else if errors.Is(err, ErrCacheNoneResult) {
+				// Found NoneResult marker - this ID is handled, DO NOT add to missingIDs.
+				log.Printf("DEBUG CACHE HIT (NoneResult) for %s", cacheKey) // Added log
 			} else if errors.Is(err, ErrNotFound) {
-				// Not found in cache, add to list to fetch from DB
+				// True cache miss
+				log.Printf("DEBUG CACHE MISS for %s", cacheKey) // Added log
 				missingIDs = append(missingIDs, id)
 			} else {
-				// Unexpected error
+				// Unexpected cache error
 				log.Printf("WARN: Cache error during batch fetch for key %s: %v", cacheKey, err)
 				missingIDs = append(missingIDs, id) // Treat as missing if error
 			}
@@ -302,7 +301,7 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 		missingIDs = ids // No cache, all IDs are missing
 	}
 
-	// 2. If all found in cache, return early
+	// 2. If all found in cache (or marked as NoneResult), return early
 	if len(missingIDs) == 0 {
 		return resultMap, nil
 	}
@@ -318,6 +317,9 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 		if len(batchIDs) == 0 {
 			continue
 		}
+
+		// Keep track of IDs actually found in this batch DB query
+		fetchedIDsInBatch := make(map[int64]bool)
 
 		// Create placeholders for SQL IN clause
 		placeholders := strings.Repeat("?,", len(batchIDs))
@@ -372,13 +374,33 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 					log.Printf("WARN: Failed to cache model %s:%d after batch fetch: %v", modelInfo.TableName, id, errCache)
 				}
 			}
+			// Mark this ID as successfully fetched from DB in this batch
+			fetchedIDsInBatch[id] = true
 		}
+
+		// --- Cache NoneResult for IDs not found in this batch ---
+		if cache != nil {
+			for _, batchID := range batchIDs {
+				if !fetchedIDsInBatch[batchID] {
+					// This ID was queried but not returned by DB
+					cacheKey := generateCacheKey(modelInfo.TableName, batchID)
+					log.Printf("DEBUG DB NOT FOUND for %s (in batch %v). Caching NoneResult.", cacheKey, batchIDs)
+					errCacheSet := cache.Set(ctx, cacheKey, NoneResult, NegativeCacheTTL)
+					if errCacheSet != nil {
+						log.Printf("WARN: Failed to set NoneResult in cache for key %s: %v", cacheKey, errCacheSet)
+					}
+				}
+			}
+		}
+		// --- End Cache NoneResult ---
+
 	}
 
 	return resultMap, nil
 }
 
-// byIDInternal fetches a single model by its ID, checking cache first.
+// byIDInternal fetches a single model by its ID, now acting as a wrapper
+// around fetchModelsByIDsInternal.
 // The dest argument must be a pointer to the struct type (e.g., *User).
 func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest interface{}) error {
 	if id <= 0 {
@@ -396,130 +418,33 @@ func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest interface{})
 			reflect.TypeOf(*new(T)).Name(), destElemType.String())
 	}
 
-	cacheKey := generateCacheKey(t.info.TableName, id)
+	// Get the concrete type T for the internal helper
+	modelType := reflect.TypeOf((*T)(nil)).Elem()
 
-	// --- Initial Cache Check (Outside Lock) ---
-	cacheStart := time.Now()
-	err := t.cache.GetModel(ctx, cacheKey, dest)
-	cacheDuration := time.Since(cacheStart)
-
-	if err == nil {
-		log.Printf("DEBUG CACHE HIT for %s (%s)", cacheKey, cacheDuration)
-		setNewRecordFlagIfBaseModel(dest, false)
-		return nil // Success from cache
+	// Call the internal multi-fetch helper with a single ID
+	idsToFetch := []int64{id}
+	resultsMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, t.info, modelType, idsToFetch)
+	if err != nil {
+		// Propagate errors from the internal fetch
+		return fmt.Errorf("fetchModelsByIDsInternal failed for ID %d: %w", id, err)
 	}
 
-	// --- Handle distinct cache results ---
-	if errors.Is(err, ErrCacheNoneResult) {
-		log.Printf("DEBUG CACHE HIT (NoneResult) for %s (%s). Record confirmed non-existent.", cacheKey, cacheDuration)
-		return ErrNotFound // Confirmed not found by cache marker, return immediately.
-	}
-
-	// If it's a true cache miss (ErrNotFound) or another unexpected error, proceed to lock.
-	if errors.Is(err, ErrNotFound) {
-		log.Printf("DEBUG CACHE MISS for %s (%s). Will attempt DB fetch within lock.", cacheKey, cacheDuration)
+	// Check if the requested ID was found in the results
+	if modelVal, ok := resultsMap[id]; ok {
+		// Found the model. Need to copy the value into the destination.
+		// Ensure dest is settable and types match.
+		if destVal.Elem().CanSet() {
+			// modelVal is reflect.Value of type *T
+			destVal.Elem().Set(modelVal.Elem()) // Set the value T into dest (*T)
+			return nil                          // Success
+		} else {
+			// This should generally not happen if dest validation passed
+			return fmt.Errorf("internal error: destination cannot be set for ID %d", id)
+		}
 	} else {
-		// Log unexpected cache errors, but still attempt lock/DB fetch
-		log.Printf("WARN: Initial Cache GetModel error for %s (will try lock/DB): %v (%s)", cacheKey, err, cacheDuration)
+		// ID not found in the results map (could be DB miss or cached NoneResult)
+		return ErrNotFound
 	}
-
-	// --- DB Fetch --- (Inside Lock)
-	lockKey := "lock:" + cacheKey
-	dbFetchErr := withLock(ctx, t.cache, lockKey, func(lctx context.Context) error {
-		// Double-check cache within the lock
-		doubleCheckStart := time.Now()
-		doubleCheckErr := t.cache.GetModel(lctx, cacheKey, dest)
-		doubleCheckDuration := time.Since(doubleCheckStart)
-
-		if doubleCheckErr == nil {
-			log.Printf("DEBUG CACHE HIT (Double Check) for %s (%s)", cacheKey, doubleCheckDuration)
-			setNewRecordFlagIfBaseModel(dest, false)
-			return nil // Found by another goroutine
-		}
-
-		// --- Handle distinct cache results within lock ---
-		if errors.Is(doubleCheckErr, ErrCacheNoneResult) {
-			log.Printf("DEBUG CACHE HIT (Double Check - NoneResult) for %s (%s). Record confirmed non-existent.", cacheKey, doubleCheckDuration)
-			return ErrNotFound // Confirmed not found by cache marker.
-		}
-
-		// If it's not nil, not NoneResult, and not ErrNotFound, it's some other cache error.
-		if !errors.Is(doubleCheckErr, ErrNotFound) {
-			log.Printf("WARN: Cache GetModel error (Double Check) for %s: %v (%s). Aborting DB fetch.", cacheKey, doubleCheckErr, doubleCheckDuration)
-			return fmt.Errorf("cache double-check failed for %s: %w", cacheKey, doubleCheckErr)
-		}
-
-		// If we reach here, doubleCheckErr IS ErrNotFound (a true cache miss).
-		// Proceed to DB Fetch.
-		log.Printf("DEBUG CACHE MISS (Double Check confirmed) for %s (%s). Fetching from DB.", cacheKey, doubleCheckDuration)
-
-		// --- DB Fetch (This block is now only reached if the double-check confirmed ErrNotFound) ---
-		dbStart := time.Now()
-		query := buildSelectSQL(t.info) + " WHERE " + t.info.pkName + " = ?"
-		// Use db.Select which is designed to scan into structs/slices
-		dbErr := t.db.Select(lctx, dest, query, id) // Use Select and pass dest directly
-		dbDuration := time.Since(dbStart)
-
-		if dbErr != nil {
-			// Handle sql.ErrNoRows specifically
-			if errors.Is(dbErr, sql.ErrNoRows) {
-				log.Printf("DEBUG DB NOT FOUND for %s (%s)", cacheKey, dbDuration)
-				// Cache the fact that the record was not found
-				cacheNegStart := time.Now()
-				// --- FIX: Use defined constant ---
-				errCacheSet := t.cache.Set(lctx, cacheKey, NoneResult, NegativeCacheTTL)
-				cacheNegDuration := time.Since(cacheNegStart)
-				if errCacheSet != nil {
-					log.Printf("WARN: Failed to set NoneResult in cache for key %s: %v (%s)", cacheKey, errCacheSet, cacheNegDuration)
-				}
-				return ErrNotFound // Standard not found error
-			}
-			// Handle other database errors
-			log.Printf("ERROR DB Fetch for %s: %v (%s)", cacheKey, dbErr, dbDuration)
-			return fmt.Errorf("database query failed: %w", dbErr)
-		}
-
-		// If Select succeeds without error, data is scanned into dest.
-		log.Printf("DEBUG DB FOUND and Scanned for %s (%s)", cacheKey, dbDuration)
-
-		// Set internal flags after successful DB fetch & scan
-		setNewRecordFlagIfBaseModel(dest, false) // Record from DB is never new
-
-		// Cache the newly fetched model
-		cachePosStart := time.Now()
-		// --- FIX: Use defined constant ---
-		errCacheSet := t.cache.SetModel(lctx, cacheKey, dest, DefaultCacheTTL)
-		cachePosDuration := time.Since(cachePosStart)
-		if errCacheSet != nil {
-			// Log error but don't fail the whole operation
-			log.Printf("WARN: Failed to set model in cache for key %s: %v (%s)", cacheKey, errCacheSet, cachePosDuration)
-		}
-
-		return nil // DB fetch successful
-		// --- End of DB Fetch Block ---
-
-		// --- Query Cache Invalidation (Targeted: Delete queries containing this ID) ---
-		queryPrefix := fmt.Sprintf("query:%s:", t.info.TableName) // Renamed: tableName -> TableName
-		qcDelStart := time.Now()
-		errQcDel := t.cache.InvalidateQueriesContainingID(lctx, queryPrefix, id) // Pass model ID
-		qcDelDuration := time.Since(qcDelStart)
-		if errQcDel != nil {
-			log.Printf("WARN: Failed to invalidate queries containing ID %d with prefix '%s': %v (%s)", id, queryPrefix, errQcDel, qcDelDuration)
-		}
-		// --- End Query Cache Invalidation ---
-
-		return nil // Lock action successful
-	})
-
-	// Check the final error from the lock/DB fetch block
-	if dbFetchErr != nil {
-		if errors.Is(dbFetchErr, ErrNotFound) {
-			return ErrNotFound // Propagate not found error
-		}
-		return fmt.Errorf("failed to fetch from DB within lock: %w", dbFetchErr)
-	}
-
-	return nil // Should have returned earlier (cache hit or db fetch success/error)
 }
 
 // saveInternal handles both creating and updating records.

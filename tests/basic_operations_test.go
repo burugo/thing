@@ -11,16 +11,14 @@ import (
 
 func TestThing_ByID_Found(t *testing.T) {
 	// Set up test DB and cache
-	db, _, cleanup := setupTestDB(t)
+	th, _, _, cleanup := setupCacheTest[User](t)
 	defer cleanup()
-	th, err := thing.New[User](db, nil)
-	require.NoError(t, err)
 
 	// Create a test user
 	user := &User{Name: "Test User", Email: "test@example.com"}
 
 	// Save the user to get an ID
-	err = th.Save(user)
+	err := th.Save(user)
 	require.NoError(t, err)
 	require.NotZero(t, user.ID, "User ID should be set after Save")
 
@@ -34,24 +32,20 @@ func TestThing_ByID_Found(t *testing.T) {
 
 func TestThing_ByID_NotFound(t *testing.T) {
 	// Set up test DB and cache
-	db, _, cleanup := setupTestDB(t)
+	th, _, _, cleanup := setupCacheTest[User](t)
 	defer cleanup()
-	th, err := thing.New[User](db, nil)
-	require.NoError(t, err)
 
 	// Try to retrieve a non-existent user
 	nonExistentID := int64(999)
-	_, err = th.ByID(nonExistentID)
+	_, err := th.ByID(nonExistentID)
 	assert.Error(t, err)
 	assert.Equal(t, thing.ErrNotFound, err)
 }
 
 func TestThing_Save_Create(t *testing.T) {
 	// Set up test DB and cache
-	db, _, cleanup := setupTestDB(t)
+	th, _, _, cleanup := setupCacheTest[User](t)
 	defer cleanup()
-	th, err := thing.New[User](db, nil)
-	require.NoError(t, err)
 
 	// Create a new user
 	user := &User{
@@ -63,7 +57,7 @@ func TestThing_Save_Create(t *testing.T) {
 	assert.Zero(t, user.ID, "New user should have zero ID")
 
 	// Save the user (create operation)
-	err = th.Save(user)
+	err := th.Save(user)
 	require.NoError(t, err)
 
 	// Verify ID was assigned
@@ -79,10 +73,8 @@ func TestThing_Save_Create(t *testing.T) {
 
 func TestThing_Save_Update(t *testing.T) {
 	// Set up test DB and cache
-	db, _, cleanup := setupTestDB(t)
+	th, _, _, cleanup := setupCacheTest[User](t)
 	defer cleanup()
-	th, err := thing.New[User](db, nil)
-	require.NoError(t, err)
 
 	// Create a new user
 	user := &User{
@@ -91,7 +83,7 @@ func TestThing_Save_Update(t *testing.T) {
 	}
 
 	// Save the user initially
-	err = th.Save(user)
+	err := th.Save(user)
 	require.NoError(t, err)
 	originalID := user.ID
 	require.NotZero(t, originalID, "User should have ID after initial save")
@@ -116,10 +108,8 @@ func TestThing_Save_Update(t *testing.T) {
 
 func TestThing_Delete(t *testing.T) {
 	// Set up test DB and cache
-	db, _, cleanup := setupTestDB(t)
+	th, _, _, cleanup := setupCacheTest[User](t)
 	defer cleanup()
-	th, err := thing.New[User](db, nil)
-	require.NoError(t, err)
 
 	// Create a new user
 	user := &User{
@@ -128,7 +118,7 @@ func TestThing_Delete(t *testing.T) {
 	}
 
 	// Save the user
-	err = th.Save(user)
+	err := th.Save(user)
 	require.NoError(t, err)
 	require.NotZero(t, user.ID, "User should have ID after save")
 
@@ -148,10 +138,8 @@ func TestThing_Delete(t *testing.T) {
 
 func TestThing_Query(t *testing.T) {
 	// Set up test DB and cache
-	db, _, cleanup := setupTestDB(t)
+	th, _, _, cleanup := setupCacheTest[User](t)
 	defer cleanup()
-	th, err := thing.New[User](db, nil)
-	require.NoError(t, err)
 
 	// Create multiple users
 	users := []*User{
