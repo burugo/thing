@@ -9,8 +9,10 @@ import (
 	"errors"
 	"fmt"
 	"log" // For placeholder logging
+
+	// Added for environment variables
 	"reflect"
-	"sort"
+	"sort" // Added for parsing env var
 	"strings"
 	"sync"
 	"time"
@@ -21,14 +23,6 @@ import (
 const (
 	// Represents a non-existent entry in the cache, similar to PHP's NoneResult
 	NoneResult = "NoneResult"
-	// Cache duration for non-existent entries to prevent cache penetration
-	NoneResultCacheDuration = 1 * time.Minute
-	// Default cache duration for existing entries (adjust as needed)
-	DefaultCacheDuration = 1 * time.Hour
-	// Cache duration for non-existent entries (used in byIDInternal)
-	NegativeCacheTTL = 5 * time.Minute // Define missing constant
-	// Default cache duration for models (used in byIDInternal)
-	DefaultCacheTTL = 1 * time.Hour // Define missing constant
 	// Lock duration
 	LockDuration   = 5 * time.Second
 	LockRetryDelay = 50 * time.Millisecond
@@ -63,27 +57,51 @@ var (
 	globalCache  CacheClient // Set via Configure
 	isConfigured bool
 	configMutex  sync.RWMutex
+	// Global cache TTL, determined at startup
+	globalCacheTTL time.Duration
 )
 
-// Configure sets up the package-level database and cache clients.
+// Configure sets up the package-level database and cache clients, and the global cache TTL.
 // This MUST be called once during application initialization before using Use[T].
-func Configure(db DBAdapter, cache CacheClient) error {
+// It accepts an optional time.Duration argument to set the global cache TTL.
+// If no TTL is provided, it defaults to 8 hours.
+func Configure(db DBAdapter, cache CacheClient, ttl ...time.Duration) error { // Added optional ttl parameter
 	configMutex.Lock()
 	defer configMutex.Unlock()
-	if !isConfigured { // Prevent re-configuration? Or allow? For now, allow.
-		if db == nil {
-			return errors.New("DBAdapter must be non-nil")
+
+	defaultTTL := 8 * time.Hour // Define default TTL
+
+	// --- Configure Global TTL ---
+	if len(ttl) > 0 {
+		// Use the first provided TTL value if it's positive
+		if ttl[0] > 0 {
+			globalCacheTTL = ttl[0]
+			log.Printf("Configuring global cache TTL: %s (from argument)", globalCacheTTL)
+		} else {
+			globalCacheTTL = defaultTTL
+			log.Printf("Warning: Provided TTL is not positive (%s). Using default: %s", ttl[0], globalCacheTTL)
 		}
-		if cache == nil {
-			return errors.New("CacheClient must be non-nil")
-		}
-		globalDB = db
-		globalCache = cache
-		isConfigured = true
-		log.Println("Thing package configured globally.")
 	} else {
-		log.Println("Thing package already configured.")
+		// No TTL provided, use the default
+		globalCacheTTL = defaultTTL
+		log.Printf("Configuring global cache TTL: %s (default)", globalCacheTTL)
 	}
+	// --- End Configure Global TTL ---
+	// if isConfigured {
+	// 	log.Println("Thing package already configured. Re-configuring...")
+	// }
+
+	if db == nil {
+		return errors.New("DBAdapter must be non-nil")
+	}
+	if cache == nil {
+		return errors.New("CacheClient must be non-nil")
+	}
+	globalDB = db
+	globalCache = cache
+	isConfigured = true
+	log.Println("Thing package configured globally with DB and Cache adapters.")
+
 	return nil
 }
 
@@ -95,7 +113,7 @@ type Thing[T any] struct {
 	db    DBAdapter
 	cache CacheClient
 	ctx   context.Context
-	info  *ModelInfo // Pre-computed metadata for type T // Renamed: modelInfo -> ModelInfo
+	info  *ModelInfo // Pre-computed metadata for type T
 }
 
 // --- Thing Constructors & Accessors ---
@@ -159,59 +177,6 @@ func (t *Thing[T]) WithContext(ctx context.Context) *Thing[T] { // Returns *Thin
 	return &newThing   // Return pointer to the copy
 }
 
-// ByID retrieves a single record of type T by its primary key.
-func (t *Thing[T]) ByID(id int64) (*T, error) {
-	instance := new(T)
-	err := t.byIDInternal(t.ctx, id, instance) // Calls internal method
-	if err != nil {
-		return nil, err
-	}
-	return instance, nil
-}
-
-// Save updates an existing record or creates a new one if its primary key is zero
-// or it's explicitly marked as new. Also updates timestamps.
-func (t *Thing[T]) Save(value *T) error {
-	// Delegate directly to the internal save logic
-	return t.saveInternal(t.ctx, value) // Calls internal method
-}
-
-// Delete removes a record of type T.
-func (t *Thing[T]) Delete(value *T) error {
-	return t.deleteInternal(t.ctx, value) // Calls internal method
-}
-
-// Query prepares a query based on QueryParams and returns a *CachedResult[T] for lazy execution.
-// The actual database query happens when Count() or Fetch() is called on the result.
-// It returns the CachedResult instance and a nil error, assuming basic validation passed.
-// Error handling for query execution is done within CachedResult methods.
-func (t *Thing[T]) Query(params QueryParams) (*CachedResult[T], error) {
-	// TODO: Add validation for params if necessary?
-	return &CachedResult[T]{
-		thing:  t,
-		params: params,
-		// cachedIDs, cachedCount, hasLoadedIDs, hasLoadedCount, hasLoadedAll, all initialized to zero values
-	}, nil
-}
-
-// QueryResult returns a CachedResult that will lazily execute the query.
-// The actual database query happens when IDs() or Fetch() is called on the result.
-func (t *Thing[T]) QueryResult(params QueryParams) *CachedResult[T] {
-	return &CachedResult[T]{
-		thing:  t,
-		params: params,
-		// ids and idsFetched are zero/false by default
-	}
-}
-
-// Load explicitly loads relationships for a given model instance using the Thing's context.
-// model must be a pointer to a struct of type T.
-// relations are the string names of the fields representing the relationships to load.
-func (t *Thing[T]) Load(model *T, relations ...string) error {
-	// Use the context stored in the Thing instance
-	return t.loadInternal(t.ctx, model, relations...)
-}
-
 // --- BaseModel Struct ---
 
 // BaseModel provides common fields and functionality for database models.
@@ -262,6 +227,7 @@ func (b *BaseModel) SetNewRecordFlag(isNew bool) {
 // fetchModelsByIDsInternal is the core logic for fetching models by their primary keys,
 // handling cache checks, database queries for misses, and caching results.
 // It requires the concrete modelType to instantiate objects and slices correctly.
+// REMOVED TTL arguments
 func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapter, modelInfo *ModelInfo, modelType reflect.Type, ids []int64) (map[int64]reflect.Value, error) {
 	resultMap := make(map[int64]reflect.Value)
 	if len(ids) == 0 {
@@ -370,7 +336,7 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 			// Cache the model
 			if cache != nil {
 				cacheKey := generateCacheKey(modelInfo.TableName, id)
-				if errCache := cache.SetModel(ctx, cacheKey, modelInterface, DefaultCacheDuration); errCache != nil {
+				if errCache := cache.SetModel(ctx, cacheKey, modelInterface, globalCacheTTL); errCache != nil { // USE globalCacheTTL
 					log.Printf("WARN: Failed to cache model %s:%d after batch fetch: %v", modelInfo.TableName, id, errCache)
 				}
 			}
@@ -385,7 +351,7 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 					// This ID was queried but not returned by DB
 					cacheKey := generateCacheKey(modelInfo.TableName, batchID)
 					log.Printf("DEBUG DB NOT FOUND for %s (in batch %v). Caching NoneResult.", cacheKey, batchIDs)
-					errCacheSet := cache.Set(ctx, cacheKey, NoneResult, NegativeCacheTTL)
+					errCacheSet := cache.Set(ctx, cacheKey, NoneResult, globalCacheTTL) // USE globalCacheTTL
 					if errCacheSet != nil {
 						log.Printf("WARN: Failed to set NoneResult in cache for key %s: %v", cacheKey, errCacheSet)
 					}
@@ -423,7 +389,7 @@ func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest interface{})
 
 	// Call the internal multi-fetch helper with a single ID
 	idsToFetch := []int64{id}
-	resultsMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, t.info, modelType, idsToFetch)
+	resultsMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, t.info, modelType, idsToFetch) // REMOVED TTLs
 	if err != nil {
 		// Propagate errors from the internal fetch
 		return fmt.Errorf("fetchModelsByIDsInternal failed for ID %d: %w", id, err)
@@ -533,7 +499,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 			// --- Cache Set on Create ---
 			cacheKey := generateCacheKey(t.info.TableName, newID) // Renamed: tableName -> TableName
 			cacheSetStart := time.Now()
-			errCacheSet := t.cache.SetModel(ctx, cacheKey, value, DefaultCacheDuration)
+			errCacheSet := t.cache.SetModel(ctx, cacheKey, value, globalCacheTTL) // USE globalCacheTTL
 			cacheSetDuration := time.Since(cacheSetStart)
 			if errCacheSet != nil {
 				log.Printf("WARN: Failed to cache model after create for key %s: %v (%s)", cacheKey, errCacheSet, cacheSetDuration)
@@ -555,7 +521,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 
 		// Need to fetch the original record to find changed fields
 		original := reflect.New(modelValue.Elem().Type()).Interface().(*T)
-		if errFetch := t.byIDInternal(ctx, id, original); errFetch != nil {
+		if errFetch := t.byIDInternal(ctx, id, original); errFetch != nil { // byIDInternal now passes TTLs
 			return fmt.Errorf("failed to fetch original record for update (ID: %d): %w", id, errFetch)
 		}
 
@@ -1021,51 +987,7 @@ func buildSelectIDsSQL(info *ModelInfo, params QueryParams) (string, []interface
 		query.WriteString(" ORDER BY ")
 		query.WriteString(params.Order)
 	}
-	// LIMIT and OFFSET removed - pagination handled by CachedResult.Fetch
-	// if params.Limit > 0 {
-	// 	query.WriteString(" LIMIT ?")
-	// 	args = append(args, params.Limit)
-	// }
-	// if params.Start > 0 {
-	// 	query.WriteString(" OFFSET ?")
-	// 	args = append(args, params.Start)
-	// }
 	return query.String(), args
-}
-
-// buildSelectSQLWithParams constructs SELECT SQL query including WHERE, ORDER.
-// LIMIT and OFFSET are removed as they are now handled by CachedResult.Fetch.
-func buildSelectSQLWithParams(info *ModelInfo, params QueryParams) (string, []interface{}) {
-	baseQuery := buildSelectSQL(info) // Use existing helper for SELECT ... FROM ...
-
-	var whereClause string
-	// Keep a copy of args before potentially adding limit/offset
-	args := make([]interface{}, len(params.Args))
-	copy(args, params.Args)
-	if params.Where != "" {
-		whereClause = " WHERE " + params.Where
-	}
-
-	var orderClause string
-	if params.Order != "" {
-		orderClause = " ORDER BY " + params.Order
-	}
-
-	// LIMIT and OFFSET removed - pagination handled by CachedResult.Fetch
-	// var limitClause string
-	// if params.Limit > 0 {
-	// 	// Use placeholders for limit/offset for broader DB compatibility
-	// 	limitClause = " LIMIT ?"
-	// 	args = append(args, params.Limit)
-	// 	if params.Start > 0 {
-	// 		limitClause += " OFFSET ?"
-	// 		args = append(args, params.Start)
-	// 	}
-	// }
-
-	finalQuery := baseQuery + whereClause + orderClause                        // + limitClause (removed)
-	log.Printf("Built SQL (no limit/offset): %s | Args: %v", finalQuery, args) // Debug log
-	return finalQuery, args
 }
 
 // --- Reflection & Value Helpers --- (Moved Down)
@@ -1155,39 +1077,6 @@ func setUpdatedAtTimestamp(value interface{}, t time.Time) {
 func generateCacheKey(tableName string, id int64) string {
 	// Format: {tableName}:{id}
 	return fmt.Sprintf("%s:%d", tableName, id)
-}
-
-// generateListCacheKey generates a cache key for a query result list based on parameters.
-// It ensures that different query parameters result in different cache keys.
-// NOTE: This version uses JSON marshaling for simplicity, which might not be the
-// most performant or canonical way for complex argument types.
-func generateListCacheKey(tableName string, params QueryParams) (string, error) {
-	// Create a canonical representation of the query parameters
-	// Sort Args slice if elements are comparable? For now, rely on order.
-	// Consider hashing complex args or using a more robust serialization.
-
-	// Normalize args for consistent hashing (convert to string)
-	normalizedArgs := make([]interface{}, len(params.Args))
-	for i, arg := range params.Args {
-		// Basic normalization, more complex types might need specific handling
-		normalizedArgs[i] = fmt.Sprintf("%v", arg)
-	}
-	keyGenParams := params             // Make a copy
-	keyGenParams.Args = normalizedArgs // Use normalized args for key generation
-
-	paramsBytes, err := json.Marshal(keyGenParams)
-	if err != nil {
-		log.Printf("Error marshaling params for cache key: %v", err)
-		return "", fmt.Errorf("failed to marshal query params for cache key: %w", err)
-	}
-
-	hasher := sha256.New()
-	hasher.Write([]byte(tableName))
-	hasher.Write(paramsBytes)
-	hash := hex.EncodeToString(hasher.Sum(nil))
-
-	// Format: list:{tableName}:{sha256_hash_of_params}
-	return fmt.Sprintf("list:%s:%s", tableName, hash), nil
 }
 
 // withLock acquires a lock, executes the action, and releases the lock.
@@ -1616,12 +1505,12 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 		if t.cache != nil && listCacheKey != "" {
 			if len(relatedIDs) > 0 {
 				log.Printf("Caching %d fetched IDs for query key %s", len(relatedIDs), listCacheKey)
-				if qcErr := t.cache.SetQueryIDs(ctx, listCacheKey, relatedIDs, DefaultCacheDuration); qcErr != nil {
+				if qcErr := t.cache.SetQueryIDs(ctx, listCacheKey, relatedIDs, globalCacheTTL); qcErr != nil {
 					log.Printf("WARN: Failed to cache query IDs for key %s: %v", listCacheKey, qcErr)
 				}
 			} else {
 				log.Printf("Caching NoneResult for query key %s", listCacheKey)
-				if qcErr := t.cache.Set(ctx, listCacheKey, NoneResult, NoneResultCacheDuration); qcErr != nil {
+				if qcErr := t.cache.Set(ctx, listCacheKey, NoneResult, globalCacheTTL); qcErr != nil {
 					log.Printf("WARN: Failed to cache NoneResult for query key %s: %v", listCacheKey, qcErr)
 				}
 			}
@@ -1739,6 +1628,7 @@ const ByIDBatchSize = 100 // Or make configurable
 // ByIDs retrieves multiple records by their primary keys and optionally preloads relations.
 func (t *Thing[T]) ByIDs(ids []int64, preloads ...string) (map[int64]*T, error) {
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
+	// REMOVED TTLs from call
 	resultsMapReflect, err := fetchModelsByIDsInternal(t.ctx, t.cache, t.db, t.info, modelType, ids)
 	if err != nil {
 		return nil, fmt.Errorf("ByIDs failed during internal fetch: %w", err)
@@ -1769,4 +1659,47 @@ func (t *Thing[T]) ByIDs(ids []int64, preloads ...string) (map[int64]*T, error) 
 	}
 
 	return resultsMapTyped, nil
+}
+
+// ByID retrieves a single record of type T by its primary key.
+func (t *Thing[T]) ByID(id int64) (*T, error) {
+	instance := new(T)
+	err := t.byIDInternal(t.ctx, id, instance) // Calls internal method
+	if err != nil {
+		return nil, err
+	}
+	return instance, nil
+}
+
+// Save updates an existing record or creates a new one if its primary key is zero
+// or it's explicitly marked as new. Also updates timestamps.
+func (t *Thing[T]) Save(value *T) error {
+	// Delegate directly to the internal save logic
+	return t.saveInternal(t.ctx, value) // Calls internal method
+}
+
+// Delete removes a record of type T.
+func (t *Thing[T]) Delete(value *T) error {
+	return t.deleteInternal(t.ctx, value) // Calls internal method
+}
+
+// Query prepares a query based on QueryParams and returns a *CachedResult[T] for lazy execution.
+// The actual database query happens when Count() or Fetch() is called on the result.
+// It returns the CachedResult instance and a nil error, assuming basic validation passed.
+// Error handling for query execution is done within CachedResult methods.
+func (t *Thing[T]) Query(params QueryParams) (*CachedResult[T], error) {
+	// TODO: Add validation for params if necessary?
+	return &CachedResult[T]{
+		thing:  t,
+		params: params,
+		// cachedIDs, cachedCount, hasLoadedIDs, hasLoadedCount, hasLoadedAll, all initialized to zero values
+	}, nil
+}
+
+// Load explicitly loads relationships for a given model instance using the Thing's context.
+// model must be a pointer to a struct of type T.
+// relations are the string names of the fields representing the relationships to load.
+func (t *Thing[T]) Load(model *T, relations ...string) error {
+	// Use the context stored in the Thing instance
+	return t.loadInternal(t.ctx, model, relations...)
 }

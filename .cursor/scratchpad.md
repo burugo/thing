@@ -238,7 +238,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
             *   Read the test code (`tests/cache_operations_test.go`).
             *   Examine invalidation logic in `saveInternal` (`thing.go`) and query cache storage logic in `CachedResult._fetch_data` (`cached_result.go`).
             *   Identified point of failure: Mismatch between cache key prefix used for *storing* query lists (`list:{tableName}:`) and the prefix used for *invalidating* them (`query:{tableName}:`).
-            *   Proposed and implemented fix: Changed the prefix in `saveInternal`'s call to `InvalidateQueriesContainingID` from `query:` to `list:`.
+            *   Proposed and implemented fix: Changed the prefix in `saveInternal's call to `InvalidateQueriesContainingID` from `query:` to `list:`.
             *   **Success Criteria:** `TestThing_Query_CacheInvalidation` passes when run individually. *(Verified)*
         *   **[x] Run All Tests:**
             *   Execute `go test -v -p 1 ./tests/...`.
@@ -264,42 +264,26 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
   - [~] Implement placeholders (`findChangedFields` in `Save` uses basic reflection, needs refinement & tests)
   - [x] Mock DB/Redis Tests (Done: Enhanced `mockCacheClient` in `tests/thing_test.go`)
   - [x] Replace DB Placeholders (`ByID`, `Create`, `Save`, `Delete`, `IDs` use adapter)
-  - [ ] Cache TTL Configuration (*Next after Task 16?*)
-  - [ ] Locking refinement (Using basic cache client lock methods)
-  - [ ] Test Hooks/Events (*Depends on Task 7*)
-  - [x] Add CRUD tests (Done: Basic object cache tests for ByID, Save, Delete)
-  - [x] Add Querying tests (Done: Basic query cache tests for IDs) *(Superseded by Task 16)*
-  - [ ] Add Transaction tests
-  - [ ] Add Concurrency tests
-  - [ ] Setup CI
+  - [x] Refactor TTL logic in `thing.go`
+  - [x] Refactor TTL logic in `cached_result.go`
+  - [x] Run tests to verify TTL changes
+  - [ ] Resolve remaining test failures (e.g., `TestThing_Query_CacheInvalidation`)
 - [x] Refactor `CachedResult` and Querying API (Task 16 - Done)
 - [x] Debug Failing Tests (Task 17 - Done)
 
+## Current Status / Progress Tracking
+
+- **2025-04-29:** Successfully refactored TTL logic across `thing.go` and `cached_result.go`.
+- **2025-04-29:** Fixed a regression where public methods were accidentally removed during TTL refactoring.
+- **2025-04-29:** All tests pass after fixing the regression. The TTL refactoring is complete and verified.
+
 ## Executor's Feedback or Assistance Requests
 
-- Fixed `TestThing_ByID_Cache_NoneResult`: Updated mock `GetModel` to return correct error (`ErrCacheNoneResult`) and corrected test assertion for `SetCalls`.
-- Fixed `TestThing_Query_Cache`: Adjusted `Fetch` logic to correctly use cached IDs via `ByIDs` when all results are known to be cached.
-- Fixed `TestThing_Query_CacheInvalidation`: Corrected the cache key prefix used in `saveInternal's call to `InvalidateQueriesContainingID` from `query:` to `list:`.
-- All tests are now passing. Ready for next steps.
+- All tests are passing now after the TTL refactoring and fixing the accidental removal of public methods.
+- The core TTL refactoring task is complete.
 
 ## Lessons
 
 - Use `go test -v -p 1` to run tests sequentially and get verbose output, especially helpful for debugging race conditions or cache interactions.
 - Use `go test -race` to detect race conditions.
-- When refactoring caching logic (`CachedResult`), ensure both count and list cache keys are generated consistently and correctly (e.g., using normalized parameters and distinct prefixes).
-- Remember to handle the `NoneResult` cache marker explicitly for both count and list caches to distinguish between "not cached yet" and "cached empty result".
-- `json.Marshal` can fail, especially with complex types or pointers. Log errors and handle them gracefully (e.g., by skipping cache or returning an error).
-- Normalizing query parameters (especially argument values) before hashing is crucial for cache key consistency.
-- When fetching partial results (like the first N IDs for list caching), if the number of results fetched is less than the limit N, it implies the total result count is known. Use this opportunity to update the count cache.
-- Include helpful debugging info in log messages (e.g., cache keys, number of items fetched/cached).
-- Always read a file before attempting to edit it, especially when updating plans or complex code.
-- Ask before using potentially destructive commands like `git push --force`.
-- **Ensure consistency between cache key prefixes used for storing data (e.g., `list:{table}:...`) and prefixes used for invalidating that data (e.g., in `InvalidateQueriesContainingID`).**
-
-<details>
-<summary>Previous Session Logs</summary>
-
-*(Logs from previous interactions, if any)*
-
-</details>
-
+- When refactoring caching logic (`

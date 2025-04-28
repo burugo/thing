@@ -143,7 +143,7 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 	cr.cachedCount = dbCount
 	cr.hasLoadedCount = true
 
-	cacheSetErr := cr.thing.cache.Set(ctx, cacheKey, strconv.FormatInt(dbCount, 10), DefaultCacheDuration) // Use appropriate TTL
+	cacheSetErr := cr.thing.cache.Set(ctx, cacheKey, strconv.FormatInt(dbCount, 10), globalCacheTTL) // USE globalCacheTTL
 	if cacheSetErr != nil {
 		log.Printf("WARN: Failed to cache count for key %s: %v", cacheKey, cacheSetErr)
 	}
@@ -232,14 +232,14 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	if len(fetchedIDs) == 0 {
 		// Store NoneResult marker in cache
 		log.Printf("DB HIT (Zero Results): List Key: %s. Caching NoneResult.", listCacheKey)
-		cacheSetErr := cr.thing.cache.Set(ctx, listCacheKey, NoneResult, NoneResultCacheDuration)
+		cacheSetErr := cr.thing.cache.Set(ctx, listCacheKey, NoneResult, globalCacheTTL) // USE globalCacheTTL
 		if cacheSetErr != nil {
 			log.Printf("WARN: Failed to cache NoneResult for key %s: %v", listCacheKey, cacheSetErr)
 		}
 		// Also ensure count cache is updated or set to 0 if possible
 		countCacheKey, keyErr := cr.generateCountCacheKey()
 		if keyErr == nil {
-			countSetErr := cr.thing.cache.Set(ctx, countCacheKey, "0", DefaultCacheDuration) // Use longer duration for count? Or NoneResult duration?
+			countSetErr := cr.thing.cache.Set(ctx, countCacheKey, "0", globalCacheTTL) // USE globalCacheTTL
 			if countSetErr != nil {
 				log.Printf("WARN: Failed to update count cache to 0 for key %s: %v", countCacheKey, countSetErr)
 			}
@@ -250,7 +250,7 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	} else {
 		// Store actual fetched IDs in Cache
 		log.Printf("DB HIT: List Key: %s, Fetched %d IDs (Limit %d). Caching IDs.", listCacheKey, len(fetchedIDs), cacheListCountLimit)
-		cacheSetErr := cr.thing.cache.SetQueryIDs(ctx, listCacheKey, fetchedIDs, DefaultCacheDuration)
+		cacheSetErr := cr.thing.cache.SetQueryIDs(ctx, listCacheKey, fetchedIDs, globalCacheTTL) // USE globalCacheTTL
 		if cacheSetErr != nil {
 			log.Printf("WARN: Failed to cache list IDs for key %s: %v", listCacheKey, cacheSetErr)
 		}
@@ -260,7 +260,7 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 			countCacheKey, keyErr := cr.generateCountCacheKey()
 			if keyErr == nil {
 				countStr := strconv.FormatInt(int64(len(fetchedIDs)), 10)
-				countSetErr := cr.thing.cache.Set(ctx, countCacheKey, countStr, DefaultCacheDuration)
+				countSetErr := cr.thing.cache.Set(ctx, countCacheKey, countStr, globalCacheTTL) // USE globalCacheTTL
 				if countSetErr != nil {
 					log.Printf("WARN: Failed to update count cache (key: %s) after partial list fetch: %v", countCacheKey, countSetErr)
 				} else {
