@@ -13,7 +13,8 @@ import (
 )
 
 // setupTestDB creates a new in-memory SQLite database for testing.
-func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient) {
+// It returns the DBAdapter, a mock CacheClient, and a cleanup function.
+func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	// Use in-memory DB for all connections in this test
 	dsn := ":memory:"
 	adapter, err := sqlite.NewSQLiteAdapter(dsn)
@@ -48,12 +49,20 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient) {
 	// Initialize mock cache
 	cache := &mockCacheClient{}
 
-	return adapter, cache
+	cleanup := func() {
+		err := adapter.Close()
+		if err != nil {
+			tb.Logf("Error closing test DB adapter: %v", err)
+		}
+	}
+
+	return adapter, cache, cleanup
 }
 
 // setupCacheTest creates test setup specifically for cache tests.
-func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, thing.DBAdapter) {
-	db, cacheClient := setupTestDB(tb)
+// It returns the Thing instance, the mock cache, the DB adapter, and a cleanup function.
+func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, thing.DBAdapter, func()) {
+	db, cacheClient, cleanup := setupTestDB(tb)
 	mockCache, ok := cacheClient.(*mockCacheClient)
 	require.True(tb, ok, "Cache client is not a mockCacheClient")
 
@@ -64,7 +73,7 @@ func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, th
 	thingInstance, err := thing.New[T](db, mockCache)
 	require.NoError(tb, err, "Failed to create Thing instance")
 
-	return thingInstance, mockCache, db
+	return thingInstance, mockCache, db, cleanup
 }
 
 // TestMain handles global test setup and teardown

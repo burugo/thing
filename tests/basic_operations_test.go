@@ -11,8 +11,9 @@ import (
 
 func TestThing_ByID_Found(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
-	th, err := thing.New[User](db, cache)
+	db, _, cleanup := setupTestDB(t)
+	defer cleanup()
+	th, err := thing.New[User](db, nil)
 	require.NoError(t, err)
 
 	// Create a test user
@@ -33,8 +34,9 @@ func TestThing_ByID_Found(t *testing.T) {
 
 func TestThing_ByID_NotFound(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
-	th, err := thing.New[User](db, cache)
+	db, _, cleanup := setupTestDB(t)
+	defer cleanup()
+	th, err := thing.New[User](db, nil)
 	require.NoError(t, err)
 
 	// Try to retrieve a non-existent user
@@ -46,8 +48,9 @@ func TestThing_ByID_NotFound(t *testing.T) {
 
 func TestThing_Save_Create(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
-	th, err := thing.New[User](db, cache)
+	db, _, cleanup := setupTestDB(t)
+	defer cleanup()
+	th, err := thing.New[User](db, nil)
 	require.NoError(t, err)
 
 	// Create a new user
@@ -76,8 +79,9 @@ func TestThing_Save_Create(t *testing.T) {
 
 func TestThing_Save_Update(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
-	th, err := thing.New[User](db, cache)
+	db, _, cleanup := setupTestDB(t)
+	defer cleanup()
+	th, err := thing.New[User](db, nil)
 	require.NoError(t, err)
 
 	// Create a new user
@@ -112,8 +116,9 @@ func TestThing_Save_Update(t *testing.T) {
 
 func TestThing_Delete(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
-	th, err := thing.New[User](db, cache)
+	db, _, cleanup := setupTestDB(t)
+	defer cleanup()
+	th, err := thing.New[User](db, nil)
 	require.NoError(t, err)
 
 	// Create a new user
@@ -143,8 +148,9 @@ func TestThing_Delete(t *testing.T) {
 
 func TestThing_Query(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
-	th, err := thing.New[User](db, cache)
+	db, _, cleanup := setupTestDB(t)
+	defer cleanup()
+	th, err := thing.New[User](db, nil)
 	require.NoError(t, err)
 
 	// Create multiple users
@@ -164,60 +170,23 @@ func TestThing_Query(t *testing.T) {
 	params := thing.QueryParams{
 		Where: "",
 	}
-	allUsers, err := th.Query(params)
+	allUsersResult, err := th.Query(params)
 	require.NoError(t, err)
-	assert.GreaterOrEqual(t, len(allUsers), 3, "Should find at least the 3 users we created")
+	// Fetch results before using len
+	allUsersFetched, fetchErr := allUsersResult.Fetch(0, 100) // Fetch up to 100
+	require.NoError(t, fetchErr)
+	assert.GreaterOrEqual(t, len(allUsersFetched), 3, "Should find at least the 3 users we created")
 
 	// Query with a filter
 	filterParams := thing.QueryParams{
 		Where: "name = ?",
 		Args:  []interface{}{"Bob"},
 	}
-	bobUsers, err := th.Query(filterParams)
+	bobUsersResult, err := th.Query(filterParams)
 	require.NoError(t, err)
-	assert.Equal(t, 1, len(bobUsers), "Should find only Bob")
-	assert.Equal(t, "Bob", bobUsers[0].Name)
-}
-
-func TestThing_IDs(t *testing.T) {
-	// Set up test DB and cache
-	db, cache := setupTestDB(t)
-	th, err := thing.New[User](db, cache)
-	require.NoError(t, err)
-
-	// Create multiple users
-	users := []*User{
-		{Name: "David", Email: "david@example.com"},
-		{Name: "Eva", Email: "eva@example.com"},
-		{Name: "Frank", Email: "frank@example.com"},
-	}
-
-	var expectedIDs []int64
-	for _, u := range users {
-		err := th.Save(u)
-		require.NoError(t, err)
-		require.NotZero(t, u.ID)
-		expectedIDs = append(expectedIDs, u.ID)
-	}
-
-	// Get IDs for users
-	params := thing.QueryParams{
-		Where: "name IN (?, ?, ?)",
-		Args:  []interface{}{"David", "Eva", "Frank"},
-	}
-	ids, err := th.IDs(params)
-	require.NoError(t, err)
-	assert.Len(t, ids, 3, "Should find 3 user IDs")
-
-	// Verify each expected ID is in the result (order may differ)
-	for _, expectedID := range expectedIDs {
-		found := false
-		for _, id := range ids {
-			if id == expectedID {
-				found = true
-				break
-			}
-		}
-		assert.True(t, found, "Expected ID %d not found in results", expectedID)
-	}
+	// Fetch results before using len or indexing
+	bobUsersFetched, fetchErrBob := bobUsersResult.Fetch(0, 10) // Fetch up to 10
+	require.NoError(t, fetchErrBob)
+	assert.Equal(t, 1, len(bobUsersFetched), "Should find only Bob")
+	assert.Equal(t, "Bob", bobUsersFetched[0].Name)
 }

@@ -11,7 +11,9 @@ import (
 
 func TestThing_Query_Preload_BelongsTo(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
+	db, cache, cleanup := setupTestDB(t)
+	defer cleanup()
+
 	userThing, err := thing.New[User](db, cache)
 	require.NoError(t, err)
 
@@ -43,20 +45,25 @@ func TestThing_Query_Preload_BelongsTo(t *testing.T) {
 		Preloads: []string{"User"},
 	}
 
-	books, err := bookThing.Query(params)
+	booksResult, err := bookThing.Query(params)
 	require.NoError(t, err)
-	require.Len(t, books, 1)
+	// Fetch before len/indexing
+	fetchedBooks, fetchErr := booksResult.Fetch(0, 10)
+	require.NoError(t, fetchErr)
+	require.Len(t, fetchedBooks, 1)
 
 	// Verify the relationship was loaded correctly
-	assert.NotNil(t, books[0].User)
-	assert.Equal(t, user.ID, books[0].User.ID)
-	assert.Equal(t, user.Name, books[0].User.Name)
-	assert.Equal(t, user.Email, books[0].User.Email)
+	assert.NotNil(t, fetchedBooks[0].User)
+	assert.Equal(t, user.ID, fetchedBooks[0].User.ID)
+	assert.Equal(t, user.Name, fetchedBooks[0].User.Name)
+	assert.Equal(t, user.Email, fetchedBooks[0].User.Email)
 }
 
 func TestThing_Query_Preload_HasMany(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
+	db, cache, cleanup := setupTestDB(t)
+	defer cleanup()
+
 	userThing, err := thing.New[User](db, cache)
 	require.NoError(t, err)
 
@@ -92,17 +99,20 @@ func TestThing_Query_Preload_HasMany(t *testing.T) {
 		Preloads: []string{"Books"},
 	}
 
-	users, err := userThing.Query(params)
+	usersResult, err := userThing.Query(params)
 	require.NoError(t, err)
-	require.Len(t, users, 1)
+	// Fetch before len/indexing
+	fetchedUsers, fetchErr := usersResult.Fetch(0, 10)
+	require.NoError(t, fetchErr)
+	require.Len(t, fetchedUsers, 1)
 
 	// Verify the relationship was loaded correctly
-	assert.NotNil(t, users[0].Books)
-	assert.Len(t, users[0].Books, 3)
+	assert.NotNil(t, fetchedUsers[0].Books)
+	assert.Len(t, fetchedUsers[0].Books, 3)
 
 	// Verify book properties
 	titles := make(map[string]bool)
-	for _, b := range users[0].Books {
+	for _, b := range fetchedUsers[0].Books {
 		assert.Equal(t, user.ID, b.UserID)
 		titles[b.Title] = true
 	}
@@ -114,7 +124,9 @@ func TestThing_Query_Preload_HasMany(t *testing.T) {
 
 func TestThing_Load_BelongsTo(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
+	db, cache, cleanup := setupTestDB(t)
+	defer cleanup()
+
 	userThing, err := thing.New[User](db, cache)
 	require.NoError(t, err)
 
@@ -157,7 +169,9 @@ func TestThing_Load_BelongsTo(t *testing.T) {
 
 func TestThing_Load_HasMany(t *testing.T) {
 	// Set up test DB and cache
-	db, cache := setupTestDB(t)
+	db, cache, cleanup := setupTestDB(t)
+	defer cleanup()
+
 	userThing, err := thing.New[User](db, cache)
 	require.NoError(t, err)
 

@@ -58,18 +58,54 @@ func NewClient(opts Options) (thing.CacheClient, func(), error) {
 	return &client{redisClient: rdb}, cleanup, nil
 }
 
+// Get retrieves a raw string value from Redis.
+func (c *client) Get(ctx context.Context, key string) (string, error) {
+	val, err := c.redisClient.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return "", thing.ErrNotFound // Use standard not found error
+	} else if err != nil {
+		return "", fmt.Errorf("redis Get error for key '%s': %w", key, err)
+	}
+	return val, nil
+}
+
+// Set stores a raw string value in Redis.
+func (c *client) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+	err := c.redisClient.Set(ctx, key, value, expiration).Err()
+	if err != nil {
+		return fmt.Errorf("redis Set error for key '%s': %w", key, err)
+	}
+	return nil
+}
+
+// Delete removes a key from Redis.
+func (c *client) Delete(ctx context.Context, key string) error {
+	err := c.redisClient.Del(ctx, key).Err()
+	if err != nil && err != redis.Nil { // Don't error if key didn't exist
+		return fmt.Errorf("redis Del error for key '%s': %w", key, err)
+	}
+	return nil
+}
+
 // GetModel retrieves a model from Redis.
 func (c *client) GetModel(ctx context.Context, key string, dest interface{}) error {
-	val, err := c.redisClient.Get(ctx, key).Bytes()
+	val, err := c.redisClient.Get(ctx, key).Result() // Use Result() to get string value
 	if err == redis.Nil {
-		return thing.ErrNotFound // Use standard not found error
+		return thing.ErrNotFound // Key truly not found in Redis
 	} else if err != nil {
 		return fmt.Errorf("redis Get error for key '%s': %w", key, err)
 	}
-	err = json.Unmarshal(val, dest)
+
+	// Check for NoneResult marker AFTER checking for redis.Nil
+	if val == thing.NoneResult {
+		return thing.ErrCacheNoneResult // Return specific error for NoneResult
+	}
+
+	// If not NoneResult, attempt to unmarshal as the destination type
+	err = json.Unmarshal([]byte(val), dest) // Unmarshal from string value bytes
 	if err != nil {
 		// Consider logging the problematic data: log.Printf("Unmarshal error for key '%s', data: %s", key, string(val))
-		return fmt.Errorf("redis Unmarshal error for key '%s': %w", key, err)
+		return fmt.Errorf("redis Unmarshal error for key '%s' (value: '%s'): %w", key, val, err)
 	}
 	return nil
 }
@@ -97,17 +133,26 @@ func (c *client) DeleteModel(ctx context.Context, key string) error {
 }
 
 // GetQueryIDs retrieves a list of IDs from Redis.
+// It now checks for the NoneResult marker and returns ErrQueryCacheNoneResult if found.
 func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
-	val, err := c.redisClient.Get(ctx, queryKey).Bytes()
+	val, err := c.redisClient.Get(ctx, queryKey).Result() // Use Result() to get string directly
 	if err == redis.Nil {
 		return nil, thing.ErrNotFound
 	} else if err != nil {
 		return nil, fmt.Errorf("redis Get error for query key '%s': %w", queryKey, err)
 	}
+
+	// Check for NoneResult marker *before* trying to unmarshal
+	if val == thing.NoneResult {
+		return nil, thing.ErrQueryCacheNoneResult
+	}
+
+	// If not NoneResult, attempt to unmarshal as list of IDs
 	var ids []int64
-	err = json.Unmarshal(val, &ids)
+	err = json.Unmarshal([]byte(val), &ids) // Unmarshal from string value
 	if err != nil {
-		return nil, fmt.Errorf("redis Unmarshal error for query key '%s': %w", queryKey, err)
+		// If unmarshaling fails, it might be unexpected data. Return error.
+		return nil, fmt.Errorf("redis Unmarshal error for query key '%s' (value: '%s'): %w", queryKey, val, err)
 	}
 	return ids, nil
 }

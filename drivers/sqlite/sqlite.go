@@ -3,8 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,6 +111,109 @@ func (a *SQLiteAdapter) Exec(ctx context.Context, query string, args ...interfac
 	lastInsertID, _ := result.LastInsertId()
 	log.Printf("DB Exec: %s [%v] (Affected: %d, LastInsertID: %d) (%s)", query, args, rowsAffected, lastInsertID, duration)
 	return result, nil
+}
+
+// GetCount executes a SELECT COUNT(*) query based on the provided parameters.
+func (a *SQLiteAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params thing.QueryParams) (int64, error) {
+	if a.isClosed() {
+		return 0, fmt.Errorf("adapter is closed")
+	}
+	if info == nil || info.TableName == "" {
+		return 0, errors.New("GetCount: model info or table name is missing")
+	}
+
+	// Build query: SELECT COUNT(*) FROM table WHERE ...
+	var queryBuilder strings.Builder
+	queryBuilder.WriteString("SELECT COUNT(*) FROM ")
+	queryBuilder.WriteString(info.TableName)
+
+	args := params.Args // Keep a copy
+	if params.Where != "" {
+		queryBuilder.WriteString(" WHERE ")
+		queryBuilder.WriteString(params.Where)
+	}
+
+	query := queryBuilder.String()
+	var count int64
+
+	log.Printf("DB GetCount: %s [%v]", query, args)
+	start := time.Now()
+	err := a.db.GetContext(ctx, &count, query, args...)
+	duration := time.Since(start)
+
+	if err != nil {
+		// GetContext might return ErrNoRows if the WHERE clause matches nothing, but COUNT should always return 0 in that case.
+		// However, handle potential driver differences or actual errors.
+		log.Printf("DB GetCount Error: %s [%v] (%s) - %v", query, args, duration, err)
+		return 0, fmt.Errorf("sqlite GetCount error: %w", err)
+	}
+
+	log.Printf("DB GetCount Result: %d (%s)", count, duration)
+	return count, nil
+}
+
+// SelectPaginated executes a query including WHERE, ORDER BY, LIMIT, and OFFSET clauses.
+func (a *SQLiteAdapter) SelectPaginated(ctx context.Context, dest interface{}, info *thing.ModelInfo, params thing.QueryParams, offset int, limit int) error {
+	if a.isClosed() {
+		return fmt.Errorf("adapter is closed")
+	}
+	if info == nil || info.TableName == "" || len(info.Columns) == 0 {
+		return errors.New("SelectPaginated: model info, table name, or columns list is missing")
+	}
+
+	// Build base SELECT part (duplicate logic from thing.buildSelectSQL)
+	quotedColumns := make([]string, len(info.Columns))
+	for i, col := range info.Columns {
+		quotedColumns[i] = fmt.Sprintf("\"%s\"", col)
+	}
+	baseQuery := fmt.Sprintf("SELECT %s FROM %s", strings.Join(quotedColumns, ", "), info.TableName)
+
+	// Build clauses
+	var queryBuilder strings.Builder
+	queryBuilder.WriteString(baseQuery)
+
+	args := make([]interface{}, len(params.Args))
+	copy(args, params.Args)
+
+	if params.Where != "" {
+		queryBuilder.WriteString(" WHERE ")
+		queryBuilder.WriteString(params.Where)
+	}
+
+	if params.Order != "" {
+		queryBuilder.WriteString(" ORDER BY ")
+		queryBuilder.WriteString(params.Order)
+	}
+
+	// Add LIMIT and OFFSET
+	if limit > 0 {
+		queryBuilder.WriteString(" LIMIT ?")
+		args = append(args, limit)
+		if offset > 0 {
+			queryBuilder.WriteString(" OFFSET ?")
+			args = append(args, offset)
+		}
+	} else if offset > 0 {
+		// OFFSET without LIMIT might not be standard or efficient, but handle if needed.
+		// SQLite requires LIMIT for OFFSET, use -1 for effectively no limit.
+		queryBuilder.WriteString(" LIMIT -1 OFFSET ?")
+		args = append(args, offset)
+	}
+
+	query := queryBuilder.String()
+
+	log.Printf("DB SelectPaginated: %s [%v]", query, args)
+	start := time.Now()
+	err := a.db.SelectContext(ctx, dest, query, args...)
+	duration := time.Since(start)
+
+	if err != nil {
+		log.Printf("DB SelectPaginated Error: %s [%v] (%s) - %v", query, args, duration, err)
+		return fmt.Errorf("sqlite SelectContext (paginated) error: %w", err)
+	}
+
+	log.Printf("DB SelectPaginated Success (%s)", duration)
+	return nil
 }
 
 // BeginTx starts a new transaction.

@@ -36,6 +36,10 @@ type mockCacheClient struct {
 	ReleaseLockCalls                   int
 	DeleteByPrefixCalls                int
 	InvalidateQueriesContainingIDCalls int
+	// Add counters for new methods
+	GetCalls    int
+	SetCalls    int
+	DeleteCalls int
 }
 
 // Reset clears the mock cache's internal store and counters.
@@ -79,6 +83,10 @@ func (m *mockCacheClient) Reset() {
 	m.ReleaseLockCalls = 0
 	m.DeleteByPrefixCalls = 0
 	m.InvalidateQueriesContainingIDCalls = 0
+	// Reset new counters
+	m.GetCalls = 0
+	m.SetCalls = 0
+	m.DeleteCalls = 0
 
 	// Verify the cache is empty after reset
 	keyCount = 0
@@ -165,6 +173,58 @@ func unmarshalFromMock(stored []byte, dest interface{}) error {
 	return json.Unmarshal(stored, dest)
 }
 
+// Get retrieves a raw string value from the mock cache.
+func (m *mockCacheClient) Get(ctx context.Context, key string) (string, error) {
+	m.mu.Lock()
+	m.GetCalls++
+	m.mu.Unlock()
+
+	log.Printf("DEBUG Get: Checking key: %s", key)
+	// Use GetValue helper which includes expiry check
+	storedBytes, ok := m.GetValue(key)
+	if !ok {
+		log.Printf("DEBUG Get: Key %s NOT FOUND in cache", key)
+		return "", thing.ErrNotFound
+	}
+
+	// Assuming the value stored by Set is the raw string
+	// For mock purposes, we stored bytes, so convert back
+	val := string(storedBytes)
+	log.Printf("DEBUG Get: Key %s FOUND in cache, value: '%s'", key, val)
+	return val, nil
+}
+
+// Set stores a raw string value in the mock cache.
+func (m *mockCacheClient) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+	m.mu.Lock()
+	m.SetCalls++
+	m.mu.Unlock()
+
+	log.Printf("DEBUG Set: Setting key: %s with value: '%s', expiration: %v", key, value, expiration)
+	// Store as bytes to be consistent with GetValue helper
+	m.store.Store(key, []byte(value))
+	if expiration > 0 {
+		expiryTime := time.Now().Add(expiration)
+		m.expiryStore.Store(key, expiryTime)
+		log.Printf("DEBUG Set: Set key %s with expiry at %v", key, expiryTime)
+	} else {
+		log.Printf("DEBUG Set: Set key %s with no expiry", key)
+	}
+	return nil
+}
+
+// Delete removes a key from the mock cache.
+func (m *mockCacheClient) Delete(ctx context.Context, key string) error {
+	m.mu.Lock()
+	m.DeleteCalls++
+	m.mu.Unlock()
+
+	log.Printf("DEBUG Delete: Deleting key: %s", key)
+	m.store.Delete(key)
+	m.expiryStore.Delete(key)
+	return nil
+}
+
 func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr interface{}) error {
 	m.mu.Lock()
 	m.GetModelCalls++
@@ -182,6 +242,12 @@ func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr int
 	if !ok {
 		log.Printf("DEBUG GetModel: Key %s NOT FOUND in cache", key)
 		return thing.ErrNotFound
+	}
+
+	// Check for NoneResult marker BEFORE trying to unmarshal
+	if string(storedBytes) == thing.NoneResult {
+		log.Printf("DEBUG GetModel: Found NoneResult marker for key %s", key)
+		return thing.ErrNotFound // Return standard not found error
 	}
 
 	log.Printf("DEBUG GetModel: Key %s FOUND in cache, unmarshaling...", key)
@@ -229,6 +295,8 @@ func (m *mockCacheClient) DeleteModel(ctx context.Context, key string) error {
 	return nil
 }
 
+// GetQueryIDs retrieves a list of IDs associated with a query cache key.
+// It now checks for the NoneResult marker and returns ErrQueryCacheNoneResult if found.
 func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
 	m.mu.Lock()
 	m.GetQueryIDsCalls++
@@ -246,9 +314,21 @@ func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]i
 		return nil, thing.ErrNotFound
 	}
 
+	// Check for NoneResult marker
+	if string(storedBytes) == thing.NoneResult {
+		log.Printf("DEBUG GetQueryIDs: Found NoneResult marker for query key %s", queryKey)
+		m.mu.Lock()
+		m.lastQueryCacheHit = true // Considered a hit, even though it's empty
+		m.mu.Unlock()
+		return nil, thing.ErrQueryCacheNoneResult // Return the specific error
+	}
+
 	var ids []int64
 	if err := unmarshalFromMock(storedBytes, &ids); err != nil {
 		log.Printf("DEBUG GetQueryIDs: Error unmarshaling for query key %s: %v", queryKey, err)
+		m.mu.Lock()
+		m.lastQueryCacheHit = false // Treat unmarshal error as a miss
+		m.mu.Unlock()
 		return nil, fmt.Errorf("mock cache unmarshal error for query key '%s': %w", queryKey, err)
 	}
 

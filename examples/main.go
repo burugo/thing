@@ -99,8 +99,14 @@ func main() {
 		log.Fatalf("Failed to query books: %v", err)
 	}
 
-	fmt.Printf("Found %d books for user %d:\n", len(userBooks), newUser.ID)
-	for _, book := range userBooks {
+	// Fetch the results from CachedResult
+	fetchedBooks, fetchErr := userBooks.Fetch(0, 10) // Fetch first 10 (adjust limit as needed)
+	if fetchErr != nil {
+		log.Fatalf("Failed to fetch books from CachedResult: %v", fetchErr)
+	}
+
+	fmt.Printf("Found %d books for user %d:\n", len(fetchedBooks), newUser.ID)
+	for _, book := range fetchedBooks {
 		fmt.Printf("  - ID: %d, Title: %s\n", book.ID, book.Title)
 	}
 
