@@ -243,6 +243,34 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[x] Run All Tests:**
             *   Execute `go test -v -p 1 ./tests/...`.
             *   **Success Criteria:** All tests in `thing/tests` pass. *(Verified)*
+18. **[ ] Implement JSON Serialization Features:** *(New Task)*
+    *   **Goal:** Add flexible JSON serialization capabilities to Thing ORM models, inspired by Mongoose's approach.
+    *   **Sub-tasks:**
+        *   **[ ] Implement Basic JSON Serialization:**
+            *   Add a `ToJSON()` method to `BaseModel` that automatically serializes models to JSON.
+            *   Ensure proper handling of time fields, nil values, and custom types.
+            *   Make models work well with Go's `json.Marshal()` out of the box.
+            *   **Success Criteria:** Models can be easily serialized to JSON with a simple method call or via standard `json.Marshal()`.
+        *   **[ ] Implement Field Inclusion/Exclusion:**
+            *   Add support for specifying which fields should be included or excluded in JSON serialization.
+            *   Support both static configuration (via struct tags) and dynamic configuration (at runtime).
+            *   **Success Criteria:** Users can control which fields appear in JSON output, both via struct tags and at serialization time.
+        *   **[ ] Support Virtual Properties:**
+            *   Add support for "virtual" properties in JSON output - computed fields that don't exist in the database.
+            *   Implement getter methods for virtual properties.
+            *   **Success Criteria:** Models can include computed properties in their JSON output.
+        *   **[ ] Handle Nested Objects and Relationships:**
+            *   Ensure proper serialization of nested structs and relationship fields.
+            *   Add options to control the depth of relationship serialization.
+            *   **Success Criteria:** Models with relationships can be serialized with control over relationship inclusion depth.
+        *   **[ ] Add Serialization Hooks:**
+            *   Implement pre/post serialization hooks to allow for customization of the serialization process.
+            *   **Success Criteria:** Users can register hooks to run before or after JSON serialization to modify the output.
+        *   **[ ] Add Tests:**
+            *   Create comprehensive tests for all serialization features.
+            *   Test with various model types, field types, and configurations.
+            *   **Success Criteria:** All serialization features are well-tested with high coverage.
+    *   **Success Criteria:** Thing ORM models can be easily serialized to JSON with flexible control over the output format, similar to Mongoose's capabilities.
 
 ## Project Status Board
 
@@ -261,29 +289,123 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - [ ] Relationship Management (Phase 2: ManyToMany) - *Note: Keep simple, reuse core funcs.* *(Dependency on Task 16)*
 - [ ] Schema Definition & Migration Tools (Basic)
 - [~] Testing, Benchmarking, and Refinement (Partial: Initial test setup, basic cache tests added. *Refined plan added.*) *(Query cache tests superseded by Task 16)*
-  - [~] Implement placeholders (`findChangedFields` in `Save` uses basic reflection, needs refinement & tests)
+  - [~] Implement placeholders (`findChangedFields` in `Save` uses basic reflection, needs refinement & tests) ⟵ **Current Focus**
   - [x] Mock DB/Redis Tests (Done: Enhanced `mockCacheClient` in `tests/thing_test.go`)
   - [x] Replace DB Placeholders (`ByID`, `Create`, `Save`, `Delete`, `IDs` use adapter)
   - [x] Refactor TTL logic in `thing.go`
   - [x] Refactor TTL logic in `cached_result.go`
   - [x] Run tests to verify TTL changes
-  - [ ] Resolve remaining test failures (e.g., `TestThing_Query_CacheInvalidation`)
+  - [x] Resolve remaining test failures (Task 17 - Done)
 - [x] Refactor `CachedResult` and Querying API (Task 16 - Done)
 - [x] Debug Failing Tests (Task 17 - Done)
+- [ ] Implement JSON Serialization Features (Task 18)
+  - [ ] Basic JSON serialization
+  - [ ] Field inclusion/exclusion
+  - [ ] Virtual properties
+  - [ ] Nested object handling
+  - [ ] Serialization hooks
+  - [ ] Comprehensive tests
 
 ## Current Status / Progress Tracking
 
 - **2025-04-29:** Successfully refactored TTL logic across `thing.go` and `cached_result.go`.
 - **2025-04-29:** Fixed a regression where public methods were accidentally removed during TTL refactoring.
 - **2025-04-29:** All tests pass after fixing the regression. The TTL refactoring is complete and verified.
+- **2025-04-30:** Analysis completed for improving the `findChangedFields` implementation. Detailed plan created with subtasks.
+- **2025-04-30:** Executor started Task 13: Improving `findChangedFields`. Added `findChangedFieldsAdvanced` function skeleton in `thing.go`.
 
 ## Executor's Feedback or Assistance Requests
 
 - All tests are passing now after the TTL refactoring and fixing the accidental removal of public methods.
 - The core TTL refactoring task is complete.
+- Ready to begin work on improving the `findChangedFields` implementation as per the detailed plan.
+- Added the basic structure for `findChangedFieldsAdvanced`. Next step is to design and implement the metadata caching for efficient field comparison.
 
 ## Lessons
 
 - Use `go test -v -p 1` to run tests sequentially and get verbose output, especially helpful for debugging race conditions or cache interactions.
 - Use `go test -race` to detect race conditions.
 - When refactoring caching logic (`
+
+## Planner's Next Task Analysis (2025-04-30)
+
+After reviewing the current state of the project, I can see that we've successfully completed Tasks 16 (Refactor `CachedResult` and Querying API) and 17 (Debug Failing Tests). The TTL refactoring has also been completed and verified. Looking at the Project Status Board, the next logical tasks to focus on are:
+
+1. **Continue with Task 13 (Testing, Benchmarking, and Refinement)**: 
+   - We need to implement and test `findChangedFields` in `Save` which currently uses basic reflection and needs refinement.
+   - Add comprehensive tests for cache interactions across CRUD operations.
+   - Implement and test the query cache invalidation strategy based on Task 16's cache structure.
+   - Add configuration for cache TTLs.
+
+2. **Complete Task 7 (Hooks/Events System)**:
+   - This is partially done but needs testing and refinement.
+   - We should focus on completing this before moving to the more complex relationship tasks.
+
+3. **Begin Task 9 (Adding Support for More Databases)**:
+   - We already have SQLite support, but need to implement adapters for MySQL and PostgreSQL.
+   - This involves creating specific database adapters that implement the common interface.
+
+**Recommended Next Task: Task 13 - Improve `findChangedFields` Implementation**
+
+I recommend we focus first on improving the `findChangedFields` implementation within the `Save` method. This is a core part of the ORM that affects update operations and needs to be robust and efficient. After reviewing the current implementation in `thing.go`, I've found several areas for improvement:
+
+### Current Implementation Analysis:
+1. The current implementation uses recursive reflection to compare all fields in two structs (original and updated).
+2. It generates excessive debug logging which could impact performance in production.
+3. It handles `UpdatedAt` as a special case but in a limited way.
+4. It lacks proper handling for:
+   - Nested structs (non-embedded)
+   - Custom type comparisons
+   - Pointer fields
+   - Slices and maps (relies on reflect.DeepEqual)
+   - Zero value detection (distinguishing between zero value and unchanged value)
+5. There is no field metadata caching - reflection is performed repeatedly.
+
+### Sub-tasks:
+1. **Optimize Reflection with Metadata Caching:**
+   - Create a cache for reflection metadata indexed by type
+   - Store field information, column mappings, and comparison logic
+   - Avoid repeating reflection operations for the same type
+
+2. **Improve Field Comparison Logic:**
+   - Integrate `utils.NormalizeValue` or similar functionality for consistent comparison
+   - Implement specialized comparisons for different types (times, pointers, custom types)
+   - Handle nil pointers vs zero values correctly
+   - Add proper support for comparing slices, maps, and custom types
+
+3. **Handle Special Cases:**
+   - Expand UpdatedAt handling
+   - Add options to ignore certain fields during comparison 
+   - Provide proper support for nested struct fields (not just embedded ones)
+   - Handle fields implementing custom interfaces (e.g., Equalable or sql.Scanner)
+
+4. **Performance Improvements:**
+   - Remove excessive debug logging or gate it behind configuration
+   - Use direct field access when possible instead of reflection
+   - Implement object pooling for temporary data structures
+
+5. **Add Comprehensive Tests:**
+   - Basic field changes (string, int, bool, etc.)
+   - Pointer field changes (including nil vs. zero value cases)
+   - Struct field changes (embedded and non-embedded)
+   - Slice and map changes
+   - Custom type changes
+   - Time field changes (including time zone differences)
+   - UpdatedAt handling
+
+### Success Criteria:
+- The implementation correctly identifies changed fields across various data types
+- Edge cases are properly handled (nil pointers, zero values, custom types)
+- Test coverage is comprehensive
+- Performance is improved over the current implementation (benchmark results)
+- The code is clean, well-documented, and follows Go best practices
+
+### Implementation Approach:
+1. Start by creating a replacement function `findChangedFieldsAdvanced` while keeping the original
+2. Implement the field metadata caching system
+3. Develop the improved field comparison logic
+4. Add comprehensive tests for both versions
+5. Benchmark both implementations
+6. Once verified superior, replace the original implementation
+
+Let's prioritize this task to ensure the core update functionality is solid before moving on to other features.

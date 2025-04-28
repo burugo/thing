@@ -11,6 +11,7 @@ import (
 	"log" // For placeholder logging
 
 	// Added for environment variables
+	"os"
 	"reflect"
 	"sort" // Added for parsing env var
 	"strings"
@@ -526,12 +527,12 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 		}
 
 		// Find changed fields using reflection helper (keys are DB column names)
-		changedFields, err = findChangedFieldsReflection(original, value, t.info) // Uses helper defined later
+		changedFields, err = findChangedFields(original, value) // Uses helper defined later
 		if err != nil {
 			return fmt.Errorf("failed to find changed fields for update: %w", err)
 		}
 
-		// If no fields changed (excluding UpdatedAt logic handled in findChangedFieldsReflection), skip DB update
+		// If no fields changed (excluding UpdatedAt logic handled in findChangedFieldsAdvanced), skip DB update
 		if len(changedFields) == 0 {
 			log.Printf("Skipping update for %s %d: No relevant fields changed", t.info.TableName, id)
 			if errHook := triggerEvent(ctx, EventTypeAfterSave, value, changedFields); errHook != nil { // Uses helper defined later
@@ -764,15 +765,28 @@ func triggerEvent(ctx context.Context, eventType EventType, model interface{}, e
 
 // --- Model Metadata Cache --- (Moved Down)
 
+// ComparableFieldInfo holds pre-computed metadata for a single field used during comparisons.
+type ComparableFieldInfo struct {
+	GoName       string                     // Go field name
+	DBColumn     string                     // Database column name
+	Index        []int                      // Index for fast field access via FieldByIndex
+	IsZero       func(v reflect.Value) bool // Function to check if value is zero/empty
+	Kind         reflect.Kind               // Field kind (string, int, struct, etc.)
+	Type         reflect.Type               // Field type (for more detailed type checking)
+	IsEmbedded   bool                       // Whether this is from an embedded struct
+	IgnoreInDiff bool                       // Whether to ignore this field during diffing (e.g., tags like db:"-")
+}
+
 // ModelInfo holds cached reflection results for a specific Model type.
 // Renamed: modelInfo -> ModelInfo
 type ModelInfo struct {
-	TableName        string            // Renamed: tableName -> TableName
-	pkName           string            // Database name of the primary key field (kept unexported for now)
-	Columns          []string          // Renamed: columns -> Columns
-	fields           []string          // Corresponding Go struct field names (order matches columns, kept unexported)
-	fieldToColumnMap map[string]string // Map Go field name to its corresponding DB column name (kept unexported)
-	columnToFieldMap map[string]string // Map DB column name to its corresponding Go field name (kept unexported)
+	TableName        string                // Renamed: tableName -> TableName
+	pkName           string                // Database name of the primary key field (kept unexported for now)
+	Columns          []string              // Renamed: columns -> Columns
+	fields           []string              // Corresponding Go struct field names (order matches columns, kept unexported)
+	fieldToColumnMap map[string]string     // Map Go field name to its corresponding DB column name (kept unexported)
+	columnToFieldMap map[string]string     // Map DB column name to its corresponding Go field name (kept unexported)
+	compareFields    []ComparableFieldInfo // Fields to compare during diff operations (new)
 }
 
 // modelCache stores ModelInfo structs, keyed by reflect.Type.
@@ -797,6 +811,7 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 	info := ModelInfo{ // Using renamed struct
 		fieldToColumnMap: make(map[string]string),
 		columnToFieldMap: make(map[string]string),
+		compareFields:    make([]ComparableFieldInfo, 0),
 	}
 	pkDbName := ""
 
@@ -804,53 +819,123 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 	info.Columns = make([]string, 0, numFields) // Using renamed field
 	info.fields = make([]string, 0, numFields)
 
-	var processFields func(structType reflect.Type)
-	processFields = func(structType reflect.Type) {
+	var processFields func(structType reflect.Type, parentIndex []int, isEmbedded bool)
+	processFields = func(structType reflect.Type, parentIndex []int, isEmbedded bool) {
 		for i := 0; i < structType.NumField(); i++ {
 			field := structType.Field(i)
 			dbTag := field.Tag.Get("db")
+			diffTag := field.Tag.Get("diff") // Optional diff tag
 
+			// If field is embedded struct, process its fields recursively
 			if field.Anonymous && field.Type.Kind() == reflect.Struct {
+				// For BaseModel, process fields directly since they're important
 				if field.Type == reflect.TypeOf(BaseModel{}) {
 					baseModelType := field.Type
 					for j := 0; j < baseModelType.NumField(); j++ {
 						baseField := baseModelType.Field(j)
 						baseDbTag := baseField.Tag.Get("db")
+						baseDiffTag := baseField.Tag.Get("diff") // Optional diff tag for BaseModel fields
+
 						if baseDbTag == "-" || !baseField.IsExported() {
 							continue
 						}
+
 						colName := baseDbTag
 						if colName == "" {
 							colName = strings.ToLower(baseField.Name)
 						}
+
+						// Build the field index by appending to the parent index
+						fieldIndex := append(append([]int{}, parentIndex...), i, j)
+
 						info.Columns = append(info.Columns, colName) // Using renamed field
 						info.fields = append(info.fields, baseField.Name)
 						info.fieldToColumnMap[baseField.Name] = colName
 						info.columnToFieldMap[colName] = baseField.Name
+
+						// Skip adding PK to comparable fields
 						if colName == "id" {
 							pkDbName = colName
+							continue
 						}
+
+						// Skip fields marked to be ignored in diff
+						if baseDiffTag == "-" {
+							continue
+						}
+
+						// Add to compareFields if not explicitly ignored
+						cfInfo := ComparableFieldInfo{
+							GoName:       baseField.Name,
+							DBColumn:     colName,
+							Index:        fieldIndex,
+							Kind:         baseField.Type.Kind(),
+							Type:         baseField.Type,
+							IsEmbedded:   true,
+							IgnoreInDiff: false,
+						}
+
+						// Add specialized zero-value checker based on field type
+						cfInfo.IsZero = getZeroChecker(baseField.Type)
+
+						info.compareFields = append(info.compareFields, cfInfo)
 					}
 				} else {
-					processFields(field.Type)
+					// Process other embedded structs recursively
+					newIndex := append(append([]int{}, parentIndex...), i)
+					processFields(field.Type, newIndex, true)
 				}
 				continue
 			}
 
-			if dbTag == "-" || dbTag == "" || !field.IsExported() {
+			// Skip unexported fields and fields marked with db:"-"
+			if dbTag == "-" || !field.IsExported() {
 				continue
 			}
+
 			colName := dbTag
-			if colName == "id" && pkDbName == "" {
-				pkDbName = colName
+			if colName == "" {
+				// Skip fields without db tag
+				continue
 			}
+
+			// Build the field index by appending to the parent index
+			fieldIndex := append(append([]int{}, parentIndex...), i)
+
 			info.Columns = append(info.Columns, colName) // Using renamed field
 			info.fields = append(info.fields, field.Name)
 			info.fieldToColumnMap[field.Name] = colName
 			info.columnToFieldMap[colName] = field.Name
+
+			if colName == "id" && pkDbName == "" {
+				pkDbName = colName
+				continue // Skip adding PK to comparable fields
+			}
+
+			// Skip fields marked to be ignored in diff
+			if diffTag == "-" {
+				continue
+			}
+
+			// Add to compareFields if not explicitly ignored
+			cfInfo := ComparableFieldInfo{
+				GoName:       field.Name,
+				DBColumn:     colName,
+				Index:        fieldIndex,
+				Kind:         field.Type.Kind(),
+				Type:         field.Type,
+				IsEmbedded:   isEmbedded,
+				IgnoreInDiff: false,
+			}
+
+			// Add specialized zero-value checker based on field type
+			cfInfo.IsZero = getZeroChecker(field.Type)
+
+			info.compareFields = append(info.compareFields, cfInfo)
 		}
 	}
-	processFields(modelType)
+
+	processFields(modelType, []int{}, false)
 
 	if pkDbName == "" {
 		return nil, fmt.Errorf("primary key column (assumed 'id') not found via 'db:\"id\"' tag in struct %s or its embedded BaseModel", modelType.Name())
@@ -865,10 +950,94 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 	return actualInfo.(*ModelInfo), nil
 }
 
+// getZeroChecker returns a function that checks if a value is the zero value for its type
+func getZeroChecker(t reflect.Type) func(v reflect.Value) bool {
+	switch t.Kind() {
+	case reflect.Bool:
+		return func(v reflect.Value) bool { return !v.Bool() }
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return func(v reflect.Value) bool { return v.Int() == 0 }
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return func(v reflect.Value) bool { return v.Uint() == 0 }
+	case reflect.Float32, reflect.Float64:
+		return func(v reflect.Value) bool { return v.Float() == 0 }
+	case reflect.Complex64, reflect.Complex128:
+		return func(v reflect.Value) bool { return v.Complex() == complex(0, 0) }
+	case reflect.Array:
+		return func(v reflect.Value) bool {
+			// For arrays, check if all elements are zero
+			for i := 0; i < v.Len(); i++ {
+				if !reflect.DeepEqual(v.Index(i).Interface(), reflect.Zero(v.Index(i).Type()).Interface()) {
+					return false
+				}
+			}
+			return true
+		}
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return func(v reflect.Value) bool { return v.IsNil() }
+	case reflect.String:
+		return func(v reflect.Value) bool { return v.String() == "" }
+	case reflect.Struct:
+		// Special case for time.Time
+		if t == reflect.TypeOf(time.Time{}) {
+			zeroTime := time.Time{}
+			return func(v reflect.Value) bool {
+				// Check if this is a zero time, which can be tricky due to location/monotonic data
+				t := v.Interface().(time.Time)
+				return t.IsZero() || t.Equal(zeroTime)
+			}
+		}
+		// For other structs, use reflection to check if all fields are zero
+		return func(v reflect.Value) bool {
+			return reflect.DeepEqual(v.Interface(), reflect.Zero(t).Interface())
+		}
+	default:
+		return func(v reflect.Value) bool {
+			return reflect.DeepEqual(v.Interface(), reflect.Zero(t).Interface())
+		}
+	}
+}
+
 // --- Change Detection --- (Moved Down)
+
+// findChangedFields compares two structs and returns a map of column names to changed values.
+// It will always skip private fields, primary key fields, and fields tagged with `db:"-"`.
+func findChangedFields[T any](original, updated *T) (map[string]interface{}, error) {
+	// Get type information
+	t := reflect.TypeOf(original).Elem()
+	typename := t.Name()
+
+	// Try to retrieve cached model info for this type
+	info, _ := GetCachedModelInfo(t)
+
+	// If we have cached model info with comparison metadata, use the optimized simple path
+	if info != nil && len(info.compareFields) > 0 {
+		startTime := time.Now()
+		result, err := findChangedFieldsSimple(original, updated, info)
+		if err == nil {
+			if os.Getenv("DEBUG_DIFF") != "" {
+				log.Printf("DEBUG: [%s] Simple comparison took %v for %d fields",
+					typename, time.Since(startTime), len(info.compareFields))
+			}
+			return result, nil
+		}
+		// If simple comparison fails, fall back to reflection
+		log.Printf("WARNING: Simple comparison failed for %s: %v. Falling back to reflection.",
+			typename, err)
+	}
+
+	// Fall back to reflection-based approach if no cached info or simple comparison failed
+	startTime := time.Now()
+	result, err := findChangedFieldsReflection(original, updated, info)
+	if os.Getenv("DEBUG_DIFF") != "" {
+		log.Printf("DEBUG: [%s] Reflection comparison took %v", typename, time.Since(startTime))
+	}
+	return result, err
+}
 
 // findChangedFieldsReflection compares two structs (original and updated)
 // and returns a map of column names to the changed values from the updated struct.
+// DEPRECATED in favor of findChangedFieldsAdvanced once implemented and tested.
 func findChangedFieldsReflection[T any](original, updated *T, info *ModelInfo) (map[string]interface{}, error) {
 	changed := make(map[string]interface{})
 	originalVal := reflect.ValueOf(original).Elem()
@@ -954,9 +1123,9 @@ func findChangedFieldsReflection[T any](original, updated *T, info *ModelInfo) (
 	return changed, nil
 }
 
-// --- SQL Builder Helpers --- (Moved Down)
-
-// buildSelectSQL constructs a SELECT statement.
+// findChangedFieldsAdvanced compares two structs (original and updated) using cached metadata
+// and optimized comparison logic. Returns a map of column names to the changed values.
+// DEPRECATED: Use findChangedFieldsSimple instead, which is more efficient for typical database models.
 func buildSelectSQL(info *ModelInfo) string {
 	if info.TableName == "" || len(info.Columns) == 0 {
 		log.Printf("Error: buildSelectSQL called with incomplete modelInfo: %+v", info)
@@ -1702,4 +1871,93 @@ func (t *Thing[T]) Query(params QueryParams) (*CachedResult[T], error) {
 func (t *Thing[T]) Load(model *T, relations ...string) error {
 	// Use the context stored in the Thing instance
 	return t.loadInternal(t.ctx, model, relations...)
+}
+
+// findChangedFieldsSimple is a simplified version of field comparison that focuses on
+// common database column types rather than handling complex structures.
+func findChangedFieldsSimple[T any](original, updated *T, info *ModelInfo) (map[string]interface{}, error) {
+	changed := make(map[string]interface{})
+	originalVal := reflect.ValueOf(original).Elem()
+	updatedVal := reflect.ValueOf(updated).Elem()
+
+	if originalVal.Type() != updatedVal.Type() {
+		return nil, errors.New("original and updated values must be of the same type")
+	}
+
+	// Get the UpdatedAt field name for special handling later
+	var updatedAtDBColName string
+	updatedAtGoFieldName := "UpdatedAt"
+	if col, ok := info.fieldToColumnMap[updatedAtGoFieldName]; ok {
+		updatedAtDBColName = col
+	}
+
+	// Only enable detailed debug logging if DEBUG_DIFF environment variable is set
+	debugEnabled := os.Getenv("DEBUG_DIFF") != ""
+
+	// Use compareFields from cached metadata for efficient field comparison
+	for _, field := range info.compareFields {
+		// Use the pre-computed field index for fast access
+		originalFieldVal := originalVal.FieldByIndex(field.Index)
+		updatedFieldVal := updatedVal.FieldByIndex(field.Index)
+
+		if !originalFieldVal.IsValid() || !updatedFieldVal.IsValid() {
+			if debugEnabled {
+				log.Printf("DEBUG: Field not valid, skipping: %s", field.GoName)
+			}
+			continue
+		}
+
+		// Simple comparison based on field type
+		var fieldsEqual bool
+
+		// Special handling for time.Time - this is common in DB models
+		if field.Type == reflect.TypeOf(time.Time{}) {
+			if !originalFieldVal.IsZero() && !updatedFieldVal.IsZero() {
+				oTime := originalFieldVal.Interface().(time.Time)
+				uTime := updatedFieldVal.Interface().(time.Time)
+				fieldsEqual = oTime.Equal(uTime)
+			} else {
+				fieldsEqual = originalFieldVal.IsZero() == updatedFieldVal.IsZero()
+			}
+		} else {
+			// For basic types, use simple equality check
+			// This works for strings, numbers, booleans and other basic types
+			fieldsEqual = originalFieldVal.Interface() == updatedFieldVal.Interface()
+		}
+
+		if !fieldsEqual {
+			if debugEnabled {
+				log.Printf("DEBUG: Change detected in %s: %v -> %v",
+					field.GoName, originalFieldVal.Interface(), updatedFieldVal.Interface())
+			}
+			// Add the changed field to the result using its DB column name
+			changed[field.DBColumn] = updatedFieldVal.Interface()
+		}
+	}
+
+	// Handle UpdatedAt field specially
+	if updatedAtDBColName != "" && len(changed) > 0 {
+		if len(changed) == 1 {
+			if _, isOnlyChange := changed[updatedAtDBColName]; isOnlyChange {
+				if debugEnabled {
+					log.Printf("DEBUG: Removing '%s' from changed map as it's the only change.", updatedAtDBColName)
+				}
+				delete(changed, updatedAtDBColName)
+			}
+		} else {
+			// If UpdatedAt changed alongside other fields, ensure it's using the latest timestamp
+			if _, ok := changed[updatedAtDBColName]; ok {
+				// If UpdatedAt was detected as changed, ensure we use the *actual* updated value
+				updatedFieldVal := updatedVal.FieldByName(updatedAtGoFieldName)
+				if updatedFieldVal.IsValid() {
+					changed[updatedAtDBColName] = updatedFieldVal.Interface()
+					if debugEnabled {
+						log.Printf("DEBUG: Ensuring '%s' uses the latest timestamp value in changed map.", updatedAtDBColName)
+					}
+				}
+			}
+		}
+	}
+
+	return changed, nil
 }
