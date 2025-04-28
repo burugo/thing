@@ -637,7 +637,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 			}
 
 			// --- Query Cache Invalidation (Targeted: Delete queries containing this ID) ---
-			queryPrefix := fmt.Sprintf("query:%s:", t.info.TableName) // Renamed: tableName -> TableName
+			queryPrefix := fmt.Sprintf("list:%s:", t.info.TableName) // Renamed: tableName -> TableName // CORRECTED PREFIX
 			qcDelStart := time.Now()
 			errQcDel := t.cache.InvalidateQueriesContainingID(lctx, queryPrefix, id) // Pass model ID
 			qcDelDuration := time.Since(qcDelStart)
@@ -1426,8 +1426,13 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 				if relatedModelPtr, found := relatedMap[fkValueInt64]; found {
 					relationField := owningModelElem.FieldByName(field.Name) // Get the *User field
 					if relationField.IsValid() && relationField.CanSet() {
-						relationField.Set(relatedModelPtr) // Set post.Author = userPtr (*R)
+						log.Printf("DEBUG Preload Set: Setting %s.%s (FK: %d) to %v", owningModelElem.Type().Name(), field.Name, fkValueInt64, relatedModelPtr.Interface()) // DEBUG LOG
+						relationField.Set(relatedModelPtr)                                                                                                                  // Set post.Author = userPtr (*R)
+					} else {
+						log.Printf("WARN Preload Set: Relation field %s.%s is not valid or settable", owningModelElem.Type().Name(), field.Name) // DEBUG LOG
 					}
+				} else {
+					log.Printf("DEBUG Preload Set: Related model for FK %d not found in map", fkValueInt64) // DEBUG LOG
 				}
 			} // else: FK was not convertible or was zero, do nothing
 		}
@@ -1731,33 +1736,37 @@ func (t *Thing[T]) loadInternal(ctx context.Context, model *T, relations ...stri
 
 const ByIDBatchSize = 100 // Or make configurable
 
-// ByIDs retrieves multiple records by their IDs in a batch operation.
-// Returns a map of ID to model instance.
-func (t *Thing[T]) ByIDs(ids []int64) (map[int64]*T, error) {
-	if len(ids) == 0 {
-		return map[int64]*T{}, nil
-	}
-
-	// Get the concrete type T for the internal helper
+// ByIDs retrieves multiple records by their primary keys and optionally preloads relations.
+func (t *Thing[T]) ByIDs(ids []int64, preloads ...string) (map[int64]*T, error) {
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
-
-	// Call the internal helper
-	internalMap, err := fetchModelsByIDsInternal(t.ctx, t.cache, t.db, t.info, modelType, ids)
+	resultsMapReflect, err := fetchModelsByIDsInternal(t.ctx, t.cache, t.db, t.info, modelType, ids)
 	if err != nil {
-		return nil, fmt.Errorf("ByIDs failed: %w", err)
+		return nil, fmt.Errorf("ByIDs failed during internal fetch: %w", err)
 	}
 
-	// Convert the result map from reflect.Value to *T
-	resultMap := make(map[int64]*T, len(internalMap))
-	for id, val := range internalMap {
-		if modelPtr, ok := val.Interface().(*T); ok {
-			resultMap[id] = modelPtr
+	// Convert map[int64]reflect.Value (containing *T) to map[int64]*T
+	resultsMapTyped := make(map[int64]*T, len(resultsMapReflect))
+	// Also collect results in a slice for preloading
+	resultsSliceForPreload := make([]*T, 0, len(resultsMapReflect))
+	for id, modelVal := range resultsMapReflect {
+		if typedModel, ok := modelVal.Interface().(*T); ok {
+			resultsMapTyped[id] = typedModel
+			resultsSliceForPreload = append(resultsSliceForPreload, typedModel)
 		} else {
-			// This should ideally not happen if fetchModelsByIDsInternal worked correctly
-			log.Printf("WARN: ByIDs internal fetch returned unexpected type for ID %d: %T", id, val.Interface())
+			log.Printf("WARN: ByIDs: Could not assert type for ID %d", id)
 		}
 	}
-	return resultMap, nil
 
-	// Original implementation removed
+	// Apply preloads if requested
+	if len(preloads) > 0 && len(resultsSliceForPreload) > 0 {
+		for _, preloadName := range preloads {
+			if preloadErr := t.preloadRelations(t.ctx, resultsSliceForPreload, preloadName); preloadErr != nil {
+				// Log error but return results obtained so far
+				log.Printf("WARN: ByIDs: failed to apply preload '%s': %v", preloadName, preloadErr)
+				// Optionally return error: return nil, fmt.Errorf("failed to apply preload '%s': %w", preloadName, preloadErr)
+			}
+		}
+	}
+
+	return resultsMapTyped, nil
 }

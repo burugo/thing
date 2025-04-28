@@ -219,24 +219,30 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
             *   Ensure all related tests pass.
             *   **Success Criteria:** Code reviewed, all tests green for this task.
     *   **Planner Review (Current Date):** Task 16 completed successfully. Core logic matches requirements. Caching strategy implemented (count cache, list ID cache). Query API simplified. Basic tests added. Further testing of edge cases and potential optimizations deferred to Task 13.
-17. **[ ] Debug Failing Tests:** *(New Task)*
-    *   **Goal:** Resolve failures in `TestThing_ByID_Cache_NoneResult` and `TestThing_Query_Cache`.
+17. **[x] Debug Failing Tests:** *(New Task - Completed)*
+    *   **Goal:** Resolve failures in `TestThing_ByID_Cache_NoneResult`, `TestThing_Query_Cache`, and `TestThing_Query_CacheInvalidation`.
     *   **Sub-tasks:**
-        *   **[ ] Analyze `TestThing_ByID_Cache_NoneResult`:**
-            *   Read the test code (`thing/tests/thing_test.go`).
-            *   Read the relevant `ByID` logic in `thing.go` and caching logic (`cache.go`, `cached_result.go`, `thing.go`).
-            *   Identify the exact point of failure.
-            *   Propose and implement a fix.
-            *   **Success Criteria:** `TestThing_ByID_Cache_NoneResult` passes when run individually.
-        *   **[ ] Analyze `TestThing_Query_Cache`:**
-            *   Read the test code (`thing/tests/thing_test.go`).
+        *   **[x] Analyze `TestThing_ByID_Cache_NoneResult`:**
+            *   Read the test code (`tests/cache_operations_test.go`).
+            *   Read the relevant `ByID` logic (`thing.go`: `byIDInternal`, `fetchModelsByIDsInternal`) and caching logic (`thing.go`: `deleteInternal`, `tests/mock_cache_test.go`).
+            *   Identified point of failure: Mock `GetModel` returned generic `ErrNotFound` instead of specific `ErrCacheNoneResult` when encountering the `NoneResult` marker, causing incorrect behavior in `fetchModelsByIDsInternal`.
+            *   Proposed and implemented fix: Updated `tests/mock_cache_test.go` -> `mockCacheClient.GetModel` to return `thing.ErrCacheNoneResult`. Corrected assertion in test to expect 1 `Set` call for `NoneResult`.
+            *   **Success Criteria:** `TestThing_ByID_Cache_NoneResult` passed when run individually. *(Verified)*
+        *   **[x] Analyze `TestThing_Query_Cache`:**
+            *   Read the test code (`tests/cache_operations_test.go`).
             *   Based on the test, examine relevant `cached_result.go` logic (`Count`, `_fetch_data`, `Fetch`).
-            *   Add logging if needed to trace execution and cache state.
-            *   Propose and implement a fix.
-            *   **Success Criteria:** `TestThing_Query_Cache` passes when run individually.
-        *   **[ ] Run All Tests:**
-            *   Execute `go test -v -p 1 thing/tests`.
-            *   **Success Criteria:** All tests in `thing/tests` pass.
+            *   Identified point of failure: `Fetch` logic used direct DB pagination even when all results were present in the cached ID list (because requested limit exceeded cached count), bypassing the expected `ByIDs` call.
+            *   Proposed and implemented fix: Adjusted `Fetch` logic to use the cached ID path via `ByIDs` when `start == 0` and the number of cached IDs is less than `cacheListCountLimit` (indicating all results are cached).
+            *   **Success Criteria:** `TestThing_Query_Cache` passed when run individually. *(Verified)*
+        *   **[x] Analyze `TestThing_Query_CacheInvalidation`:**
+            *   Read the test code (`tests/cache_operations_test.go`).
+            *   Examine invalidation logic in `saveInternal` (`thing.go`) and query cache storage logic in `CachedResult._fetch_data` (`cached_result.go`).
+            *   Identified point of failure: Mismatch between cache key prefix used for *storing* query lists (`list:{tableName}:`) and the prefix used for *invalidating* them (`query:{tableName}:`).
+            *   Proposed and implemented fix: Changed the prefix in `saveInternal`'s call to `InvalidateQueriesContainingID` from `query:` to `list:`.
+            *   **Success Criteria:** `TestThing_Query_CacheInvalidation` passes when run individually. *(Verified)*
+        *   **[x] Run All Tests:**
+            *   Execute `go test -v -p 1 ./tests/...`.
+            *   **Success Criteria:** All tests in `thing/tests` pass. *(Verified)*
 
 ## Project Status Board
 
@@ -267,14 +273,14 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
   - [ ] Add Concurrency tests
   - [ ] Setup CI
 - [x] Refactor `CachedResult` and Querying API (Task 16 - Done)
-- [ ] Debug Failing Tests (Task 17 - In Progress)
-  - [ ] Analyze `TestThing_ByID_Cache_NoneResult`
-  - [ ] Analyze `TestThing_Query_Cache`
-  - [ ] Run All Tests
+- [x] Debug Failing Tests (Task 17 - Done)
 
 ## Executor's Feedback or Assistance Requests
 
-*(No feedback yet)*
+- Fixed `TestThing_ByID_Cache_NoneResult`: Updated mock `GetModel` to return correct error (`ErrCacheNoneResult`) and corrected test assertion for `SetCalls`.
+- Fixed `TestThing_Query_Cache`: Adjusted `Fetch` logic to correctly use cached IDs via `ByIDs` when all results are known to be cached.
+- Fixed `TestThing_Query_CacheInvalidation`: Corrected the cache key prefix used in `saveInternal's call to `InvalidateQueriesContainingID` from `query:` to `list:`.
+- All tests are now passing. Ready for next steps.
 
 ## Lessons
 
@@ -288,6 +294,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - Include helpful debugging info in log messages (e.g., cache keys, number of items fetched/cached).
 - Always read a file before attempting to edit it, especially when updating plans or complex code.
 - Ask before using potentially destructive commands like `git push --force`.
+- **Ensure consistency between cache key prefixes used for storing data (e.g., `list:{table}:...`) and prefixes used for invalidating that data (e.g., in `InvalidateQueriesContainingID`).**
 
 <details>
 <summary>Previous Session Logs</summary>

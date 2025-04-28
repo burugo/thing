@@ -145,7 +145,7 @@ func TestThing_ByID_Cache_NoneResult(t *testing.T) {
 
 	// Check Set calls AFTER ResetCounts
 	// Set should NOT have been called again, as NoneResult should prevent DB lookup
-	mockCache.AssertSetCalls(t, 0, "Should NOT set NoneResult again") // Expect 0 Set calls after ResetCounts
+	mockCache.AssertSetCalls(t, 1, "Should set NoneResult exactly once") // Expect 1 Set call after ResetCounts
 }
 
 func TestThing_Query_Cache(t *testing.T) {

@@ -306,15 +306,26 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 
 	end := start + limit
 
-	// 3a. If requested range is within cached IDs (simple case)
-	if end <= len(cr.cachedIDs) {
+	// 3a. If requested range is within cached IDs
+	// OR if we start at 0 and have fetched all possible results (< cacheListCountLimit)
+	canUseCache := end <= len(cr.cachedIDs)
+	if !canUseCache && start == 0 && len(cr.cachedIDs) > 0 && len(cr.cachedIDs) < cacheListCountLimit {
+		log.Printf("Fetch: Using cached IDs because start=0 and all results (%d < %d) are cached.", len(cr.cachedIDs), cacheListCountLimit)
+		canUseCache = true
+		// Adjust end to not exceed available cached IDs if necessary (though ByIDs handles missing ones)
+		if end > len(cr.cachedIDs) {
+			end = len(cr.cachedIDs)
+		}
+	}
+
+	if canUseCache {
 		idsToFetch := cr.cachedIDs[start:end]
 		if len(idsToFetch) == 0 {
 			return []*T{}, nil
 		}
 		log.Printf("Fetch: Using cached IDs range [%d:%d] (%d IDs)", start, end, len(idsToFetch))
-		// Use ByIDs for efficient fetching
-		recordMap, err := cr.thing.ByIDs(idsToFetch) // Assumes ByIDs exists and works
+		// Use ByIDs for efficient fetching, passing preloads
+		recordMap, err := cr.thing.ByIDs(idsToFetch, cr.params.Preloads...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to fetch records by cached IDs: %w", err)
 		}
@@ -328,40 +339,53 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 		return orderedRecords, nil
 	}
 
-	// 3b. Requested range exceeds cached IDs OR offset is large
-	// Requires fetching directly from DB with pagination.
-	// Initial simpler implementation: Query directly for the requested page.
-	log.Printf("Fetch: Range [%d:%d] exceeds cached IDs (%d). Fetching page directly from DB.", start, end, len(cr.cachedIDs))
+	// 3b. Requested range exceeds cached IDs OR offset is large.
+	// Fetch the specific page IDs from DB, then use ByIDs to leverage object cache.
+	log.Printf("Fetch: Range [%d:%d] requires DB lookup for page IDs.", start, end)
 
-	// We need a way to select a specific page of *full objects* directly.
-	// Assume a DBAdapter method like SelectPaginated exists.
-	// SelectPaginated(ctx context.Context, dest interface{}, info *modelInfo, params QueryParams, offset int, limit int) error
+	pageIDs := []int64{}
+	query, args := buildSelectIDsSQL(cr.thing.info, cr.params)
 
-	var results []*T
-	// Assumes SelectPaginated exists on DBAdapter interface
-	err := cr.thing.db.SelectPaginated(ctx, &results, cr.thing.info, cr.params, offset, limit)
+	// Append LIMIT and OFFSET to the ID query
+	// Note: DBAdapter needs to support this syntax. Assume SQLite/MySQL/Postgres compatible for now.
+	query += " LIMIT ? OFFSET ?"
+	args = append(args, limit, offset)
+
+	log.Printf("Fetch: Querying page IDs: %s %v", query, args)
+	err := cr.thing.db.Select(ctx, &pageIDs, query, args...)
 	if err != nil {
 		// Don't return ErrNotFound here, Select should return empty slice on no rows
-		log.Printf("DB ERROR: Fetching page offset=%d, limit=%d failed: %v", offset, limit, err)
-		return nil, fmt.Errorf("database query for page failed (offset=%d, limit=%d): %w", offset, limit, err)
+		log.Printf("DB ERROR: Fetching page IDs offset=%d, limit=%d failed: %v", offset, limit, err)
+		return nil, fmt.Errorf("database query for page IDs failed (offset=%d, limit=%d): %w", offset, limit, err)
 	}
 
-	// **** ADDED: Apply preloads if necessary ****
-	if len(cr.params.Preloads) > 0 && len(results) > 0 {
-		log.Printf("Fetch: Applying preloads (%v) to directly fetched page", cr.params.Preloads)
-		for _, preloadName := range cr.params.Preloads {
-			if preloadErr := cr.thing.preloadRelations(ctx, results, preloadName); preloadErr != nil {
-				// Log the error but return the results fetched so far
-				log.Printf("Warning: failed to apply preload '%s' to directly fetched page: %v", preloadName, preloadErr)
-				// Decide whether to return error or partial results. Returning partial for now.
-				// return nil, fmt.Errorf("failed to apply preload '%s': %w", preloadName, preloadErr)
-			}
+	if len(pageIDs) == 0 {
+		log.Printf("Fetch: No IDs found for page offset=%d, limit=%d.", offset, limit)
+		return []*T{}, nil
+	}
+
+	log.Printf("Fetch: Found %d IDs for page. Fetching objects via ByIDs.", len(pageIDs))
+
+	// Use ByIDs for efficient fetching, passing preloads
+	recordMap, err := cr.thing.ByIDs(pageIDs, cr.params.Preloads...)
+	if err != nil {
+		// Error during ByIDs likely means DB or cache issue for specific objects
+		return nil, fmt.Errorf("failed to fetch records by page IDs via ByIDs: %w", err)
+	}
+
+	// Order results according to pageIDs order
+	orderedRecords := make([]*T, 0, len(pageIDs))
+	for _, id := range pageIDs {
+		if record, ok := recordMap[id]; ok {
+			orderedRecords = append(orderedRecords, record)
+		} else {
+			// This might happen if an object was deleted between the ID query and ByIDs fetch
+			log.Printf("WARN: ID %d fetched for page but not found in ByIDs result map.", id)
 		}
 	}
-	// **** END ADDED SECTION ****
 
-	log.Printf("Fetch: Successfully fetched page offset=%d, limit=%d directly from DB (%d results)", offset, limit, len(results))
-	return results, nil
+	log.Printf("Fetch: Successfully fetched page offset=%d, limit=%d via ByIDs (%d results)", offset, limit, len(orderedRecords))
+	return orderedRecords, nil
 }
 
 // All retrieves all records matching the query.

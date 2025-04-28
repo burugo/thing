@@ -272,7 +272,7 @@ func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr int
 	// Check for NoneResult marker BEFORE trying to unmarshal
 	if string(storedBytes) == thing.NoneResult {
 		log.Printf("DEBUG GetModel: Found NoneResult marker for key %s", key)
-		return thing.ErrNotFound // Return standard not found error
+		return thing.ErrCacheNoneResult // <-- FIX: Return specific error
 	}
 
 	log.Printf("DEBUG GetModel: Key %s FOUND in cache, unmarshaling...", key)
