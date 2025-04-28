@@ -391,6 +391,11 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 // All retrieves all records matching the query.
 // It first gets the total count and then fetches all records using Fetch.
 func (cr *CachedResult[T]) All() ([]*T, error) {
+	// 0. Check if already loaded
+	if cr.hasLoadedAll {
+		return cr.all, nil
+	}
+
 	// 1. Get the total count
 	count, err := cr.Count()
 	if err != nil {
@@ -411,5 +416,8 @@ func (cr *CachedResult[T]) All() ([]*T, error) {
 	}
 
 	log.Printf("All: Successfully fetched %d records.", len(results))
+	// Store the results and mark as loaded
+	cr.all = results
+	cr.hasLoadedAll = true
 	return results, nil
 }
