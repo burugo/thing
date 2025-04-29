@@ -1961,3 +1961,17 @@ func findChangedFieldsSimple[T any](original, updated *T, info *ModelInfo) (map[
 
 	return changed, nil
 }
+
+// ClearCacheByID removes the cache entry for a specific model instance by its ID.
+func (t *Thing[T]) ClearCacheByID(ctx context.Context, id int64) error {
+	cacheKey := generateCacheKey(t.info.TableName, id) // Use the helper function
+	log.Printf("CACHE DEL MODEL: Key: %s", cacheKey)
+	err := t.cache.DeleteModel(ctx, cacheKey)
+	if err != nil {
+		// Log the error but don't necessarily fail the operation if cache delete fails
+		log.Printf("Warning: Failed to delete model cache for key %s: %v", cacheKey, err)
+		// Optionally return the error if cache clearing is critical
+		// return fmt.Errorf("failed to clear cache for key %s: %w", cacheKey, err)
+	}
+	return nil // Or return err if you want to propagate cache errors
+}

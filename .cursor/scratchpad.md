@@ -243,7 +243,20 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[x] Run All Tests:**
             *   Execute `go test -v -p 1 ./tests/...`.
             *   **Success Criteria:** All tests in `thing/tests` pass. *(Verified)*
-18. **[ ] Refactor SQLite Adapter to Remove `sqlx`:** *(New Task)*
+18. **[x] Task: Implement and Test Basic Transaction Methods (`Get`, `Select`, `Exec`, `Commit`, `Rollback`)
+    *   Goal: Provide core transaction capabilities via the `thing.Tx` interface using the SQLite driver.
+    *   Sub-tasks:
+        *   [x] Implement `SQLiteAdapter.BeginTx`
+        *   [x] Implement `SQLiteTx.Get`
+        *   [x] Implement `SQLiteTx.Select`
+        *   [x] Implement `SQLiteTx.Exec`
+        *   [x] Implement `SQLiteTx.Commit`
+        *   [x] Implement `SQLiteTx.Rollback`
+        *   [x] Write tests for Commit (`TestTransaction_Commit`)
+        *   [x] Write tests for Rollback (`TestTransaction_Rollback`)
+        *   [x] Write tests for Select within Tx (`TestTransaction_Select`)
+    *   Success Criteria: All methods are implemented, and corresponding tests in `tests/transaction_test.go` pass without errors. **All tests passed after adding `ClearCacheByID` for manual invalidation.**
+19. **[ ] Refactor SQLite Adapter to Remove `sqlx`:** *(New Task)*
     *   **Goal:** Replace `sqlx` dependency in `drivers/sqlite/sqlite.go` with standard `database/sql` library.
     *   **Motivation:** Reduce external dependencies, understand the lower-level database interaction details required.
     *   **Sub-tasks:**
@@ -258,7 +271,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[ ] Update Tests:** Ensure existing or new tests cover the adapter functionality after removing `sqlx`. *(Remaining - Including Tx Tests)*
         *   **[x] Cleanup:** Removed unused `SelectPaginated` method from interface and implementation.
         *   **Success Criteria:** `sqlx` is no longer imported or used in `drivers/sqlite/sqlite.go`. All methods use `database/sql` types and functions. Manual scanning logic is implemented correctly. *(Partially met - Tests remaining)*
-19. **[ ] Implement JSON Serialization Features:** *(New Task)*
+20. **[ ] Implement JSON Serialization Features:** *(New Task)*
     *   **Goal:** Add flexible JSON serialization capabilities to Thing ORM models, inspired by Mongoose's approach.
     *   **Sub-tasks:**
         *   **[ ] Implement Basic JSON Serialization:**
@@ -286,6 +299,14 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
             *   Test with various model types, field types, and configurations.
             *   **Success Criteria:** All serialization features are well-tested with high coverage.
     *   **Success Criteria:** Thing ORM models can be easily serialized to JSON with flexible control over the output format, similar to Mongoose's capabilities.
+21. **[ ] Implement `WithTransaction` Pattern:** *(New Task)*
+    *   **Goal:** Provide a higher-level, safer way to manage transactions, ensuring automatic rollback on error and commit on success, potentially handling cache invalidation automatically.
+    *   **Sub-tasks:**
+        *   **[ ] Define API:** Design `func (t *Thing[T]) WithTransaction(ctx context.Context, fn func(tx Tx) error) error`.
+        *   **[ ] Implement Logic:** Implement the function to handle `BeginTx`, `Commit` on success, and `Rollback` on error or panic within the provided `fn`.
+        *   **[ ] Add Tests:** Create tests verifying successful commits, rollbacks on errors, and rollbacks on panics.
+        *   **(Optional) Deferred Cache Handling:** Explore if this pattern allows deferring cache invalidations/updates until successful commit.
+    *   **Success Criteria:** `WithTransaction` helper is implemented, tested, and provides a safer way to handle transactions compared to manual `BeginTx`/`Commit`/`Rollback`.
 
 ## Project Status Board
 
@@ -308,8 +329,9 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - [ ] Task 15: Open Source Release Preparation
 - [x] Task 16: Refactor `CachedResult` and Querying API
 - [x] Task 17: Debug Failing Tests
-- [ ] Task 18: Refactor SQLite Adapter to Remove `sqlx` *(New)*
+- [x] Task 18: Refactor SQLite Adapter to Remove `sqlx` *(Partially Done - Tx Implemented, Tests Remaining)*
 - [ ] Task 19: Implement JSON Serialization Features *(New)*
+- [ ] Task 20: Implement `WithTransaction` Pattern *(New)*
 
 
 ## Executor's Feedback or Assistance Requests
@@ -318,6 +340,12 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   **(Previous)** Requesting review of Task 16 completion and confirmation to proceed with testing/debugging (Task 17).
 *   **(Previous)** Task 17 (Debugging) completed. All tests in `thing/tests` pass. Requesting confirmation before potentially moving to other tasks like testing refinement (Task 13) or documentation (Task 14).
 *   Ready for the next task. Awaiting instructions on whether to proceed with Task 18 (Remove sqlx) or Task 19 (JSON Serialization).
+*   Completed implementation of `SQLiteTx.Get`, `SQLiteTx.Select`. Removed unused `SelectPaginated`. Added initial tests for transaction commit/rollback/select.
+*   Clarified that `thing.Save` called within a manual `BeginTx`/`Rollback` block will cause cache inconsistency. Recommended adding `WithTransaction` pattern (Task 20) and documenting the correct usage of manual transactions.
+*   Ready to run tests.
+*   **Manual Cache Invalidation with Tx.Exec:** When modifying data directly using `Tx.Exec` (instead of ORM methods like `Save` or `Delete`), the cache is not automatically invalidated upon `Commit`. Manual cache invalidation (e.g., using `ClearCacheByID`) is required after the commit to prevent reading stale data from the cache. The `WithTransaction` pattern aims to address this.
+*   **`db:"-"` Tag for Relationships:** To prevent `getFieldPointers` from trying to scan database columns into struct fields representing relationships (like `has_many` or `belongs_to`), add the `db:"-"` tag to those fields in the model struct definition.
+*   **SQLite `Select` with Basic Types:** The `SQLiteAdapter.Select` method needs specific handling for scanning results into slices of basic Go types (e.g., `[]int64`, `[]string`) as the standard `Scan` might expect struct fields.
 
 
 ## Lessons Learned
