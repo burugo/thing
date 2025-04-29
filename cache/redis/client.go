@@ -3,7 +3,6 @@ package redis
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -250,6 +249,7 @@ func (c *client) DeleteByPrefix(ctx context.Context, prefix string) error {
 	return nil
 }
 
+/* // InvalidateQueriesContainingID is no longer used
 // InvalidateQueriesContainingID finds and deletes query cache keys matching the prefix
 // whose stored ID list contains the specified idToInvalidate.
 // Uses SCAN for safe iteration.
@@ -324,3 +324,4 @@ func (c *client) InvalidateQueriesContainingID(ctx context.Context, prefix strin
 
 	return nil
 }
+*/

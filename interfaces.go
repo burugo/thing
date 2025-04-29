@@ -41,10 +41,12 @@ type CacheClient interface {
 	// Implementations should use efficient ways to find keys (e.g., SCAN in Redis).
 	DeleteByPrefix(ctx context.Context, prefix string) error
 
+	/* // InvalidateQueriesContainingID is no longer used
 	// InvalidateQueriesContainingID finds query cache entries matching the prefix
 	// and deletes any entry whose cached ID list contains the specified id.
 	// Implementations should use efficient ways to find keys (e.g., SCAN in Redis).
 	InvalidateQueriesContainingID(ctx context.Context, prefix string, id int64) error
+	*/
 
 	// Potentially add methods for atomic operations if needed (e.g., Incr)
 }

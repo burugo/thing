@@ -43,12 +43,7 @@ const (
 // --- Errors ---
 
 var (
-	ErrNotFound        = errors.New("record not found")
-	ErrLockNotAcquired = errors.New("could not acquire lock")
-	// ErrQueryCacheNoneResult indicates that the cache holds the marker for an empty query result set.
-	ErrQueryCacheNoneResult = errors.New("cached query result indicates no matching records")
-	// ErrCacheNoneResult indicates the cache key exists but holds the NoneResult marker.
-	ErrCacheNoneResult = errors.New("cache indicates record does not exist (NoneResult marker found)")
+// Definitions moved to errors.go
 )
 
 // --- Global Configuration ---
@@ -448,6 +443,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 	var err error
 	var result sql.Result
 	var changedFields map[string]interface{} // Only used for update
+	var original *T                          // Declare original here for broader scope
 
 	if isNew {
 		// --- CREATE Path ---
@@ -527,7 +523,8 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 		}
 
 		// Need to fetch the original record to find changed fields
-		original := reflect.New(modelValue.Elem().Type()).Interface().(*T)
+		// Assign to the already declared original variable
+		original = reflect.New(modelValue.Elem().Type()).Interface().(*T)
 		if errFetch := t.byIDInternal(ctx, id, original); errFetch != nil { // byIDInternal now passes TTLs
 			return fmt.Errorf("failed to fetch original record for update (ID: %d): %w", id, errFetch)
 		}
@@ -609,16 +606,6 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 				log.Printf("WARN: Failed to delete model from cache during update lock for key %s: %v (%s)", cacheKey, errCacheDel, cacheDelDuration)
 			}
 
-			// --- Query Cache Invalidation (Targeted: Delete queries containing this ID) ---
-			queryPrefix := fmt.Sprintf("list:%s:", t.info.TableName) // Renamed: tableName -> TableName // CORRECTED PREFIX
-			qcDelStart := time.Now()
-			errQcDel := t.cache.InvalidateQueriesContainingID(lctx, queryPrefix, id) // Pass model ID
-			qcDelDuration := time.Since(qcDelStart)
-			if errQcDel != nil {
-				log.Printf("WARN: Failed to invalidate queries containing ID %d with prefix '%s': %v (%s)", id, queryPrefix, errQcDel, qcDelDuration)
-			}
-			// --- End Query Cache Invalidation ---
-
 			return nil // Lock action successful
 		})
 		// --- End Lock ---
@@ -630,6 +617,13 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 	}
 
 	baseModelPtr.SetNewRecordFlag(false)
+
+	// --- Update Query Caches (Incremental) ---
+	if isNew {
+		t.updateAffectedQueryCaches(ctx, value, nil, isNew) // Call as method, pass nil for original
+	} else {
+		t.updateAffectedQueryCaches(ctx, value, original, isNew) // Call as method
+	}
 
 	// --- Trigger AfterSave hook (for both create and update) ---
 	if errHook := triggerEvent(ctx, EventTypeAfterSave, value, changedFields); errHook != nil { // Uses helper defined later
@@ -705,6 +699,14 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value interface{}) error 
 			return ErrNotFound // Propagate not found error
 		}
 		return fmt.Errorf("delete operation failed (lock or db/cache exec): %w", err)
+	}
+
+	// --- Update Query Caches (Incremental) ---
+	// Type assertion needed because value is interface{}
+	if model, ok := value.(*T); ok {
+		t.handleDeleteInQueryCaches(ctx, model) // Call as method
+	} else {
+		log.Printf("WARN: Could not assert type %T for incremental delete cache update in deleteInternal", value)
 	}
 
 	// --- Trigger AfterDelete hook (only if lock and DB/Cache action succeeded) ---
@@ -2002,4 +2004,300 @@ func (t *Thing[T]) ClearCacheByID(ctx context.Context, id int64) error {
 		// return fmt.Errorf("failed to clear cache for key %s: %w", cacheKey, err)
 	}
 	return nil // Or return err if you want to propagate cache errors
+}
+
+// --- Incremental Cache Update Methods ---
+
+// updateAffectedQueryCaches is called after a Save operation
+// to incrementally update relevant list and count caches.
+// It's now a method of Thing[T].
+func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, originalModel *T, isCreate bool) {
+	if t.cache == nil {
+		return // No cache configured
+	}
+	baseModelPtr := getBaseModelPtr(model)
+	if baseModelPtr == nil || baseModelPtr.ID == 0 {
+		log.Printf("WARN: updateAffectedQueryCaches skipped for model without BaseModel or ID")
+		return
+	}
+
+	id := baseModelPtr.ID
+	tableName := t.info.TableName
+
+	// 1. Get potentially affected query keys from the index
+	queryCacheKeys := globalCacheIndex.GetPotentiallyAffectedQueries(tableName)
+	if len(queryCacheKeys) == 0 {
+		log.Printf("DEBUG: No query caches registered for table '%s', skipping incremental update for ID %d", tableName, id)
+		return
+	}
+
+	log.Printf("DEBUG: Found %d potential query caches to update for table '%s' after change to ID %d", len(queryCacheKeys), tableName, id)
+
+	// 2. Iterate through each potentially affected query cache key
+	for _, cacheKey := range queryCacheKeys {
+		// Determine if it's a list key or count key based on prefix
+		isListKey := strings.HasPrefix(cacheKey, "list:")
+		isCountKey := strings.HasPrefix(cacheKey, "count:")
+
+		if !isListKey && !isCountKey {
+			log.Printf("WARN: Skipping unknown cache key format in index: %s", cacheKey)
+			continue
+		}
+
+		// Get the QueryParams associated with this cache key
+		params, found := globalCacheIndex.GetQueryParamsForKey(cacheKey)
+		if !found {
+			log.Printf("WARN: QueryParams not found for registered cache key '%s'. Cannot perform incremental update.", cacheKey)
+			continue // Cannot proceed without params
+		}
+
+		// 3. Check if the model matches the query conditions
+		var matchesCurrent, matchesOriginal bool
+		var matchErr error
+
+		// Check current model state
+		// Note: Call CheckQueryMatch as a method t.CheckQueryMatch
+		matchesCurrent, matchErr = t.CheckQueryMatch(model, params)
+		if matchErr != nil {
+			log.Printf("WARN: Error checking query match for current model (key: %s): %v. Skipping incremental update for this key.", cacheKey, matchErr)
+			continue
+		}
+
+		// Check original model state (only relevant for updates)
+		if !isCreate && originalModel != nil {
+			matchesOriginal, matchErr = t.CheckQueryMatch(originalModel, params)
+			if matchErr != nil {
+				log.Printf("WARN: Error checking query match for original model (key: %s): %v. Skipping incremental update for this key.", cacheKey, matchErr)
+				continue
+			}
+		}
+
+		// 4. Determine action based on match results
+		needsAdd := false
+		needsRemove := false
+
+		if isCreate {
+			if matchesCurrent {
+				needsAdd = true
+				log.Printf("DEBUG Cache Update (%s): Create matches query. Needs Add.", cacheKey)
+			}
+		} else { // Update
+			if matchesCurrent && !matchesOriginal {
+				needsAdd = true
+				log.Printf("DEBUG Cache Update (%s): Update now matches query (didn't before). Needs Add.", cacheKey)
+			} else if !matchesCurrent && matchesOriginal {
+				needsRemove = true
+				log.Printf("DEBUG Cache Update (%s): Update no longer matches query (did before). Needs Remove.", cacheKey)
+			} else {
+				// No change in match status (both true or both false)
+				log.Printf("DEBUG Cache Update (%s): Update didn't change match status (%v -> %v). No cache change needed.", cacheKey, matchesOriginal, matchesCurrent)
+				continue // No cache update needed for this key
+			}
+		}
+
+		// **NEW CHECK:** If the item is now soft-deleted, ensure it's removed
+		// regardless of whether it matches the WHERE clause.
+		if !baseModelPtr.KeepItem() {
+			log.Printf("DEBUG Cache Update (%s): Model is soft-deleted (KeepItem=false). Ensuring removal.", cacheKey)
+			needsRemove = true
+			needsAdd = false // Cannot be added if it's deleted
+		}
+
+		// 5. Perform Cache Update (with locking)
+		if needsAdd || needsRemove {
+			// Lock the specific cache key before modifying
+			locker := globalCacheKeyLocker // Assumes global locker exists
+			locker.Lock(cacheKey)
+			log.Printf("DEBUG Cache Update (%s): Acquired lock.", cacheKey)
+
+			var updateErr error
+			if isListKey {
+				// Update List Cache
+				cachedIDs, err := getCachedListIDs(ctx, t.cache, cacheKey)
+				if err != nil {
+					updateErr = fmt.Errorf("failed to get cached list IDs for update: %w", err)
+				} else {
+					var updatedIDs []int64
+					if needsAdd {
+						// TODO: Handle sorting based on params.Order if necessary.
+						// Simple approach: Add to end (or beginning?). Adding to end for now.
+						updatedIDs = addIDToListIfNotExists(cachedIDs, id)
+						log.Printf("DEBUG Cache Update (%s): Adding ID %d. List size %d -> %d", cacheKey, id, len(cachedIDs), len(updatedIDs))
+					} else { // needsRemove
+						updatedIDs = removeIDFromList(cachedIDs, id)
+						log.Printf("DEBUG Cache Update (%s): Removing ID %d. List size %d -> %d", cacheKey, id, len(cachedIDs), len(updatedIDs))
+					}
+					// Only write back if the list actually changed
+					if len(updatedIDs) != len(cachedIDs) || needsAdd { // needsAdd check covers adding existing ID case
+						err = setCachedListIDs(ctx, t.cache, cacheKey, updatedIDs, globalCacheTTL)
+						if err != nil {
+							updateErr = fmt.Errorf("failed to set updated list IDs: %w", err)
+						} else {
+							log.Printf("DEBUG Cache Update (%s): Successfully updated cached ID list.", cacheKey)
+						}
+					} else {
+						log.Printf("DEBUG Cache Update (%s): List content didn't change, skipping set.", cacheKey)
+					}
+				}
+			} else if isCountKey {
+				// Update Count Cache
+				count, err := getCachedCount(ctx, t.cache, cacheKey)
+				if err != nil {
+					updateErr = fmt.Errorf("failed to get cached count for update: %w", err)
+				} else {
+					newCount := count
+					if needsAdd {
+						newCount++
+						log.Printf("DEBUG Cache Update (%s): Incrementing count %d -> %d", cacheKey, count, newCount)
+					} else { // needsRemove
+						if newCount > 0 { // Avoid negative counts
+							newCount--
+							log.Printf("DEBUG Cache Update (%s): Decrementing count %d -> %d", cacheKey, count, newCount)
+						} else {
+							log.Printf("DEBUG Cache Update (%s): Count already zero, cannot decrement further.", cacheKey)
+						}
+					}
+					// Only write back if the count actually changed
+					if newCount != count {
+						err = setCachedCount(ctx, t.cache, cacheKey, newCount, globalCacheTTL)
+						if err != nil {
+							updateErr = fmt.Errorf("failed to set updated count: %w", err)
+						} else {
+							log.Printf("DEBUG Cache Update (%s): Successfully updated cached count.", cacheKey)
+						}
+					} else {
+						log.Printf("DEBUG Cache Update (%s): Count didn't change, skipping set.", cacheKey)
+					}
+				}
+			}
+
+			// Unlock the key
+			locker.Unlock(cacheKey)
+			log.Printf("DEBUG Cache Update (%s): Released lock.", cacheKey)
+
+			if updateErr != nil {
+				log.Printf("ERROR: Failed incremental cache update for key %s: %v", cacheKey, updateErr)
+				// TODO: Consider invalidating the key entirely on error?
+			}
+		}
+	}
+}
+
+// handleDeleteInQueryCaches is called after a Delete operation
+// to incrementally update relevant list and count caches by removing the deleted item.
+// It's now a method of Thing[T].
+func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
+	if t.cache == nil {
+		return // No cache configured
+	}
+	baseModelPtr := getBaseModelPtr(model)
+	if baseModelPtr == nil || baseModelPtr.ID == 0 {
+		log.Printf("WARN: handleDeleteInQueryCaches skipped for model without BaseModel or ID")
+		return
+	}
+
+	id := baseModelPtr.ID
+	tableName := t.info.TableName
+
+	// 1. Get potentially affected query keys from the index
+	queryCacheKeys := globalCacheIndex.GetPotentiallyAffectedQueries(tableName)
+	if len(queryCacheKeys) == 0 {
+		log.Printf("DEBUG: No query caches registered for table '%s', skipping incremental delete update for ID %d", tableName, id)
+		return
+	}
+
+	log.Printf("DEBUG: Found %d potential query caches to update for table '%s' after delete of ID %d", len(queryCacheKeys), tableName, id)
+
+	// 2. Iterate through each potentially affected query cache key
+	for _, cacheKey := range queryCacheKeys {
+		// Determine if it's a list key or count key based on prefix
+		isListKey := strings.HasPrefix(cacheKey, "list:")
+		isCountKey := strings.HasPrefix(cacheKey, "count:")
+
+		if !isListKey && !isCountKey {
+			log.Printf("WARN: Skipping unknown cache key format in index: %s", cacheKey)
+			continue
+		}
+
+		// Get the QueryParams associated with this cache key
+		params, found := globalCacheIndex.GetQueryParamsForKey(cacheKey)
+		if !found {
+			log.Printf("WARN: QueryParams not found for registered cache key '%s'. Cannot perform incremental delete update.", cacheKey)
+			continue // Cannot proceed without params
+		}
+
+		// 3. Check if the *deleted* model matched the query conditions
+		// Note: Call CheckQueryMatch as a method t.CheckQueryMatch
+		matchesDeleted, matchErr := t.CheckQueryMatch(model, params)
+		if matchErr != nil {
+			log.Printf("WARN: Error checking query match for deleted model (key: %s): %v. Skipping incremental update for this key.", cacheKey, matchErr)
+			continue
+		}
+
+		// 4. If the deleted model matched the query, it needs removal from cache
+		if matchesDeleted {
+			log.Printf("DEBUG Cache Update (%s): Deleted item matches query. Needs Remove.", cacheKey)
+
+			// Lock the specific cache key before modifying
+			locker := globalCacheKeyLocker
+			locker.Lock(cacheKey)
+			log.Printf("DEBUG Cache Update (%s): Acquired lock for delete.", cacheKey)
+
+			var updateErr error
+			if isListKey {
+				// Remove from List Cache
+				cachedIDs, err := getCachedListIDs(ctx, t.cache, cacheKey)
+				if err != nil {
+					updateErr = fmt.Errorf("failed to get cached list IDs for delete update: %w", err)
+				} else {
+					updatedIDs := removeIDFromList(cachedIDs, id)
+					log.Printf("DEBUG Cache Update (%s): Removing deleted ID %d. List size %d -> %d", cacheKey, id, len(cachedIDs), len(updatedIDs))
+					// Only write back if the list actually changed
+					if len(updatedIDs) != len(cachedIDs) {
+						err = setCachedListIDs(ctx, t.cache, cacheKey, updatedIDs, globalCacheTTL)
+						if err != nil {
+							updateErr = fmt.Errorf("failed to set updated list IDs after delete: %w", err)
+						} else {
+							log.Printf("DEBUG Cache Update (%s): Successfully updated cached ID list after delete.", cacheKey)
+						}
+					} else {
+						log.Printf("DEBUG Cache Update (%s): List content didn't change (ID %d likely not present), skipping set.", cacheKey, id)
+					}
+				}
+			} else if isCountKey {
+				// Decrement Count Cache
+				count, err := getCachedCount(ctx, t.cache, cacheKey)
+				if err != nil {
+					updateErr = fmt.Errorf("failed to get cached count for delete update: %w", err)
+				} else {
+					newCount := count
+					if newCount > 0 { // Avoid negative counts
+						newCount--
+						log.Printf("DEBUG Cache Update (%s): Decrementing count %d -> %d due to delete", cacheKey, count, newCount)
+						// Write back the updated count
+						err = setCachedCount(ctx, t.cache, cacheKey, newCount, globalCacheTTL)
+						if err != nil {
+							updateErr = fmt.Errorf("failed to set updated count after delete: %w", err)
+						} else {
+							log.Printf("DEBUG Cache Update (%s): Successfully updated cached count after delete.", cacheKey)
+						}
+					} else {
+						log.Printf("DEBUG Cache Update (%s): Count already zero, cannot decrement further due to delete.", cacheKey)
+						// No need to set count if it didn't change
+					}
+				}
+			}
+
+			// Unlock the key
+			locker.Unlock(cacheKey)
+			log.Printf("DEBUG Cache Update (%s): Released lock after delete.", cacheKey)
+
+			if updateErr != nil {
+				log.Printf("ERROR: Failed incremental cache update for key %s after delete: %v", cacheKey, updateErr)
+			}
+		} else {
+			// Deleted item didn't match this query, no cache update needed
+			log.Printf("DEBUG Cache Update (%s): Deleted item did not match query. No cache change needed.", cacheKey)
+		}
+	}
 }

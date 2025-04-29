@@ -147,6 +147,9 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 		log.Printf("WARN: Failed to cache count for key %s: %v", cacheKey, cacheSetErr)
 	}
 
+	// Register the count key
+	globalCacheIndex.RegisterQuery(cr.thing.info.TableName, cacheKey, cr.params)
+
 	return cr.cachedCount, nil
 }
 
@@ -317,6 +320,8 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 		if cacheSetErr != nil {
 			log.Printf("WARN: Failed to cache NoneResult for key %s: %v", listCacheKey, cacheSetErr)
 		}
+		// Register the key even if caching failed slightly, as the query ran.
+		globalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, cr.params)
 		// Also ensure count cache is updated or set to 0 if possible
 		countCacheKey, keyErr := cr.generateCountCacheKey()
 		if keyErr == nil {
@@ -324,6 +329,8 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 			if countSetErr != nil {
 				log.Printf("WARN: Failed to update count cache to 0 for key %s: %v", countCacheKey, countSetErr)
 			}
+			// Register the count key as well
+			globalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, cr.params)
 		} else {
 			log.Printf("WARN: Failed to generate count cache key for zero result update: %v", keyErr)
 		}
@@ -335,6 +342,8 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 		if cacheSetErr != nil {
 			log.Printf("WARN: Failed to cache list IDs for key %s: %v", listCacheKey, cacheSetErr)
 		}
+		// Register the list key
+		globalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, cr.params)
 
 		// If fetched count < limit, update Count cache as well
 		if len(validIDs) < cacheListCountLimit {
@@ -347,6 +356,8 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 				} else {
 					log.Printf("Updated count cache (key: %s) with count %d after partial list fetch", countCacheKey, len(validIDs))
 				}
+				// Register the count key
+				globalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, cr.params)
 			} else {
 				log.Printf("WARN: Failed to generate count cache key for update after partial list fetch: %v", keyErr)
 			}

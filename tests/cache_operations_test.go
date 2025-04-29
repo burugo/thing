@@ -247,7 +247,6 @@ func TestThing_Query_CacheInvalidation(t *testing.T) {
 
 	// Verify cache invalidation occurred on save
 	assert.GreaterOrEqual(t, mockCache.DeleteModelCalls, 1, "Should invalidate the model in cache")
-	assert.GreaterOrEqual(t, mockCache.InvalidateQueriesContainingIDCalls, 1, "Should invalidate queries containing this ID")
 
 	// Querying for old name should now return no results (cache should be invalidated)
 	oldNameParams := thing.QueryParams{
@@ -335,7 +334,6 @@ func TestThing_Save_Update_Cache(t *testing.T) {
 
 	// Record current invalidation calls
 	deleteModelCalls := mockCache.DeleteModelCalls
-	invalidateQueriesCalls := mockCache.InvalidateQueriesContainingIDCalls
 
 	// Save the changes
 	err = th.Save(user)
@@ -343,7 +341,6 @@ func TestThing_Save_Update_Cache(t *testing.T) {
 
 	// Verify cache invalidation
 	assert.Equal(t, deleteModelCalls+1, mockCache.DeleteModelCalls, "Should invalidate the model in cache")
-	assert.Equal(t, invalidateQueriesCalls+1, mockCache.InvalidateQueriesContainingIDCalls, "Should invalidate queries for this entity")
 
 	// The cache entry for the specific model is invalidated during update, not immediately re-set.
 	// It will be repopulated on the next read.
@@ -376,7 +373,6 @@ func TestThing_Delete_Cache(t *testing.T) {
 
 	// Record current invalidation calls
 	deleteModelCalls := mockCache.DeleteModelCalls
-	invalidateQueriesCalls := mockCache.InvalidateQueriesContainingIDCalls
 
 	// Delete the user
 	err = th.Delete(user)
@@ -384,7 +380,6 @@ func TestThing_Delete_Cache(t *testing.T) {
 
 	// Verify cache invalidation
 	assert.Equal(t, deleteModelCalls+1, mockCache.DeleteModelCalls, "Should invalidate the model in cache")
-	assert.Equal(t, invalidateQueriesCalls+1, mockCache.InvalidateQueriesContainingIDCalls, "Should invalidate queries for this entity")
 
 	// Verify the entity is no longer in cache
 	assert.False(t, mockCache.Exists(modelKey), "Model should be removed from cache")
@@ -393,4 +388,165 @@ func TestThing_Delete_Cache(t *testing.T) {
 // Helper function for string formatting
 func sprintf(format string, args ...interface{}) string {
 	return fmt.Sprintf(format, args...)
+}
+
+// TestThing_Query_IncrementalCacheUpdate verifies that list and count caches
+// are updated incrementally when items matching the query are created, updated,
+// or deleted.
+func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
+	// Use setupCacheTest to get direct instance and mock cache
+	thingUser, cacheClient, _, cleanup := setupCacheTest[User](t)
+	defer cleanup()
+
+	// --- Setup: Initial Query & Caching ---
+	params := thing.QueryParams{
+		Where: "name = ?",
+		Args:  []interface{}{"Test User Incremental"},
+		Order: "id DESC",
+	}
+
+	// 1. Initial query (cache miss for list & count)
+	cr1, err := thingUser.Query(params)
+	require.NoError(t, err)
+	initialCount, err := cr1.Count()
+	require.NoError(t, err)
+	require.Equal(t, int64(0), initialCount, "Initial count should be 0")
+	initialFetch, err := cr1.Fetch(0, 10)
+	require.NoError(t, err)
+	require.Len(t, initialFetch, 0, "Initial fetch should return 0 items")
+
+	// Verify count and list (NoneResult) were attempted to be cached
+	// We can't check store directly, but can check counters
+	assert.GreaterOrEqual(t, cacheClient.Counters["Set"], 1, "Set should be called at least once for count/list cache")
+	// Reset counters AFTER initial cache population attempt
+	cacheClient.ResetCounters()
+
+	// --- Test Case 1: Create an item that matches the query ---
+	user1 := User{BaseModel: thing.BaseModel{}, Name: "Test User Incremental", Email: "inc1@test.com"}
+	err = thingUser.Save(&user1)
+	require.NoError(t, err)
+	require.NotZero(t, user1.ID, "User1 should have an ID after save")
+
+	// Verify caches were updated incrementally via counters
+	assert.Equal(t, 1, cacheClient.Counters["Get"], "Cache Get should be called once for count during incremental update")
+	assert.Equal(t, 1, cacheClient.Counters["Set"], "Cache Set should be called once for count during incremental update")
+	// SetQueryIDs is called internally by the helper setCachedListIDs
+	assert.Equal(t, 1, cacheClient.Counters["SetQueryIDs"], "Cache SetQueryIDs should be called once for list during incremental update")
+
+	// Check updated cache state by re-querying (should hit cache)
+	cacheClient.ResetCounters() // Reset before verification query
+	cr2, err := thingUser.Query(params)
+	require.NoError(t, err)
+	count2, err := cr2.Count() // Should hit count cache
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count2, "Count from cache should be 1")
+	assert.Equal(t, 1, cacheClient.Counters["Get"], "Count query should hit cache (Get)")
+	assert.Equal(t, 0, cacheClient.Counters["Set"], "Count query should not Set cache")
+
+	fetch2, err := cr2.Fetch(0, 10) // Should hit list cache
+	require.NoError(t, err)
+	require.Len(t, fetch2, 1)
+	assert.Equal(t, user1.ID, fetch2[0].ID)
+	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Fetch query should hit list cache (GetQueryIDs)")
+	assert.Equal(t, 0, cacheClient.Counters["SetQueryIDs"], "Fetch query should not Set list cache")
+
+	cacheClient.ResetCounters()
+
+	// --- Test Case 2: Update item to NOT match query ---
+	user1.Name = "Does Not Match Anymore"
+	err = thingUser.Save(&user1)
+	require.NoError(t, err)
+
+	// Verify caches were updated (removed item) via counters
+	assert.Equal(t, 1, cacheClient.Counters["Get"], "Cache Get should be called once for count during non-match update")
+	assert.Equal(t, 1, cacheClient.Counters["Set"], "Cache Set should be called once for count during non-match update")
+	assert.Equal(t, 1, cacheClient.Counters["SetQueryIDs"], "Cache SetQueryIDs should be called once for list during non-match update")
+
+	// Check updated cache state by re-querying
+	cacheClient.ResetCounters()
+	cr3, err := thingUser.Query(params)
+	require.NoError(t, err)
+	count3, err := cr3.Count() // Should hit cache
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count3, "Count from cache should be 0 after update")
+	assert.Equal(t, 1, cacheClient.Counters["Get"], "Count query after non-match update should hit cache (Get)")
+
+	fetch3, err := cr3.Fetch(0, 10) // Should hit cache
+	require.NoError(t, err)
+	assert.Len(t, fetch3, 0, "Fetch after non-match update should return empty")
+	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Fetch query after non-match update should hit list cache (GetQueryIDs)")
+
+	cacheClient.ResetCounters()
+
+	// --- Test Case 3: Update item back to MATCH query ---
+	user1.Name = "Test User Incremental"
+	err = thingUser.Save(&user1)
+	require.NoError(t, err)
+
+	// Verify caches were updated (added item back) via counters
+	assert.Equal(t, 1, cacheClient.Counters["Get"], "Cache Get should be called once for count during match update")
+	assert.Equal(t, 1, cacheClient.Counters["Set"], "Cache Set should be called once for count during match update")
+	assert.Equal(t, 1, cacheClient.Counters["SetQueryIDs"], "Cache SetQueryIDs should be called once for list during match update")
+
+	// Check updated cache state by re-querying
+	cacheClient.ResetCounters()
+	cr4, err := thingUser.Query(params)
+	require.NoError(t, err)
+	count4, err := cr4.Count() // Should hit cache
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count4, "Count from cache should be 1 after second update")
+	fetch4, err := cr4.Fetch(0, 10) // Should hit cache
+	require.NoError(t, err)
+	require.Len(t, fetch4, 1)
+	assert.Equal(t, user1.ID, fetch4[0].ID)
+
+	cacheClient.ResetCounters()
+
+	// --- Test Case 4: Delete the matching item ---
+	err = thingUser.Delete(&user1)
+	require.NoError(t, err)
+
+	// Verify caches were updated (item removed) via counters
+	assert.Equal(t, 1, cacheClient.Counters["Get"], "Cache Get should be called once for count during delete")
+	assert.Equal(t, 1, cacheClient.Counters["Set"], "Cache Set should be called once for count during delete")
+	assert.Equal(t, 1, cacheClient.Counters["SetQueryIDs"], "Cache SetQueryIDs should be called once for list during delete")
+
+	// Check updated cache state by re-querying
+	cacheClient.ResetCounters()
+	cr5, err := thingUser.Query(params)
+	require.NoError(t, err)
+	count5, err := cr5.Count() // Should hit cache
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count5, "Count from cache should be 0 after delete")
+	fetch5, err := cr5.Fetch(0, 10) // Should hit cache
+	require.NoError(t, err)
+	assert.Len(t, fetch5, 0)
+
+	cacheClient.ResetCounters()
+
+	// --- Test Case 5: Create item, then Soft Delete it ---
+	user2 := User{BaseModel: thing.BaseModel{}, Name: "Test User Incremental", Email: "inc2@test.com"}
+	err = thingUser.Save(&user2)
+	require.NoError(t, err)
+	cacheClient.ResetCounters() // Reset after creation
+
+	// Soft delete using the dedicated method
+	err = thingUser.SoftDelete(&user2)
+	require.NoError(t, err)
+
+	// Verify caches were updated (item removed due to KeepItem() check) via counters
+	assert.Equal(t, 1, cacheClient.Counters["Get"], "Cache Get should be called once for count during soft delete save")
+	assert.Equal(t, 1, cacheClient.Counters["Set"], "Cache Set should be called once for count during soft delete save")
+	assert.Equal(t, 1, cacheClient.Counters["SetQueryIDs"], "Cache SetQueryIDs should be called once for list during soft delete save")
+
+	// Check updated cache state by re-querying
+	cacheClient.ResetCounters()
+	cr6, err := thingUser.Query(params)
+	require.NoError(t, err)
+	count6, err := cr6.Count() // Should hit cache
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count6, "Count from cache should be 0 after soft delete")
+	fetch6, err := cr6.Fetch(0, 10) // Should hit cache
+	require.NoError(t, err)
+	assert.Len(t, fetch6, 0, "Fetch after soft delete should return empty")
 }

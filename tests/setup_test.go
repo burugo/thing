@@ -5,19 +5,17 @@ import (
 	"log"
 	"os"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"thing"
 	"thing/drivers/sqlite"
-
-	"github.com/stretchr/testify/require"
 )
 
-// setupTestDB creates a new in-memory SQLite database for testing.
+// setupTestDB creates a new file-based SQLite database for testing.
 // It returns the DBAdapter, a mock CacheClient, and a cleanup function.
 func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
-	// Use in-memory DB for all connections in this test
-	// Add cache=shared to potentially share the in-memory db across connections from the pool
-	// dsn := ":memory:?cache=shared"
 	// Use a file-based DB for testing to rule out :memory: issues
 	dbFile := "test_thing.db"
 	_ = os.Remove(dbFile) // Remove any previous test db file
@@ -27,14 +25,16 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	require.NoError(tb, err, "Failed to create SQLite adapter")
 
 	// Create test tables using the adapter (so it's the same connection)
+	// Updated schema to include base model fields
 	_, err = adapter.Exec(
 		context.Background(),
 		`CREATE TABLE IF NOT EXISTS users (
-			id INTEGER PRIMARY KEY,
-			name TEXT,
-			email TEXT,
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			created_at DATETIME,
-			updated_at DATETIME
+			updated_at DATETIME,
+			deleted BOOLEAN DEFAULT FALSE,
+			name TEXT,
+			email TEXT
 		);`,
 	)
 	require.NoError(tb, err, "Failed to create users table")
@@ -42,11 +42,12 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	_, err = adapter.Exec(
 		context.Background(),
 		`CREATE TABLE IF NOT EXISTS books (
-			id INTEGER PRIMARY KEY,
-			title TEXT,
-			user_id INTEGER,
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			created_at DATETIME,
 			updated_at DATETIME,
+			deleted BOOLEAN DEFAULT FALSE,
+			title TEXT,
+			user_id INTEGER,
 			FOREIGN KEY(user_id) REFERENCES users(id)
 		);`,
 	)
@@ -57,11 +58,11 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 
 	cleanup := func() {
 		tb.Logf("--- setupTestDB: Running cleanup function ---")
-		err := adapter.Close()
-		if err != nil {
-			tb.Logf("Error closing test DB adapter: %v", err)
-			// Optionally panic or fail test if Close fails critically
-			// tb.Fatalf("CRITICAL: Failed to close test DB adapter: %v", err)
+		if adapter != nil {
+			err := adapter.Close()
+			if err != nil {
+				tb.Logf("Error closing test DB adapter: %v", err)
+			}
 		}
 		// Remove the test database file
 		removeErr := os.Remove(dbFile)
@@ -77,18 +78,52 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 // setupCacheTest creates test setup specifically for cache tests.
 // It returns the Thing instance, the mock cache, the DB adapter, and a cleanup function.
 func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, thing.DBAdapter, func()) {
-	db, cacheClient, cleanup := setupTestDB(tb)
+	db, cacheClient, cleanupDB := setupTestDB(tb)
 	mockCache, ok := cacheClient.(*mockCacheClient)
 	require.True(tb, ok, "Cache client is not a mockCacheClient")
 
 	// Reset mock cache state
 	mockCache.Reset()
 
-	// Create Thing instance with the given adapter and cache
+	// Create Thing instance with the given adapter and cache using New
+	// This ensures the instance uses the specific DB/cache we created.
 	thingInstance, err := thing.New[T](db, mockCache)
-	require.NoError(tb, err, "Failed to create Thing instance")
+	require.NoError(tb, err, "Failed to create Thing instance with New()")
+
+	// Configure Thing globally ONLY IF tests specifically need to call thing.Use()
+	// Generally prefer passing the created thingInstance directly.
+	// _ = thing.Configure(db, mockCache, 5*time.Minute)
+
+	cleanup := func() {
+		tb.Logf("--- setupCacheTest: Running cleanup function ---")
+		cleanupDB() // Call the DB cleanup first
+		tb.Logf("--- setupCacheTest: Cleanup function finished ---")
+	}
 
 	return thingInstance, mockCache, db, cleanup
+}
+
+// SetupTestThing initializes a file-based SQLite database, configures Thing globally,
+// and returns a configured Thing instance obtained via thing.Use().
+// Use this helper primarily when testing code paths that rely on the global configuration
+// and the thing.Use() function. For most tests, setupCacheTest is preferred as it
+// provides the specific *thing.Thing instance directly.
+func SetupTestThing[T any](t *testing.T) (*thing.Thing[T], func()) {
+	dbAdapter, cacheClient, cleanupDB := setupTestDB(t)
+	// Ensure cacheClient is the mock type for configuration
+	mockCache, ok := cacheClient.(*mockCacheClient)
+	require.True(t, ok, "Cache client is not a mockCacheClient in SetupTestThing")
+
+	// Configure Thing globally for the test
+	err := thing.Configure(dbAdapter, mockCache, 5*time.Minute)
+	require.NoError(t, err, "Failed to configure Thing globally")
+
+	// Get a Thing instance for the specific type T using Use (relies on global config)
+	thingInstance, err := thing.Use[T]()
+	require.NoError(t, err, "Failed to get Thing instance for type %T via Use()", *new(T))
+
+	// Return the Thing instance and the DB cleanup function
+	return thingInstance, cleanupDB
 }
 
 // TestMain handles global test setup and teardown

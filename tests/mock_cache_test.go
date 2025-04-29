@@ -28,21 +28,15 @@ type mockCacheClient struct {
 	// Simple flag to track if the last GetQueryIDs call was a cache hit
 	lastQueryCacheHit bool
 
-	// Call counters for assertions
-	GetModelCalls                      int
-	SetModelCalls                      int
-	DeleteModelCalls                   int
-	GetQueryIDsCalls                   int
-	SetQueryIDsCalls                   int
-	DeleteQueryIDsCalls                int
-	AcquireLockCalls                   int
-	ReleaseLockCalls                   int
-	DeleteByPrefixCalls                int
-	InvalidateQueriesContainingIDCalls int
-	// Add counters for new methods
-	GetCalls    int
-	SetCalls    int
-	DeleteCalls int
+	// Call counters for assertions (Exported)
+	Counters map[string]int // Made public
+}
+
+// newMockCacheClient creates a new initialized mock cache client.
+func newMockCacheClient() *mockCacheClient {
+	return &mockCacheClient{
+		Counters: make(map[string]int),
+	}
 }
 
 // Reset clears the mock cache's internal store and counters.
@@ -76,20 +70,7 @@ func (m *mockCacheClient) Reset() {
 	m.lastQueryCacheHit = false // Reset flag as well
 
 	// Reset counters
-	m.GetModelCalls = 0
-	m.SetModelCalls = 0
-	m.DeleteModelCalls = 0
-	m.GetQueryIDsCalls = 0
-	m.SetQueryIDsCalls = 0
-	m.DeleteQueryIDsCalls = 0
-	m.AcquireLockCalls = 0
-	m.ReleaseLockCalls = 0
-	m.DeleteByPrefixCalls = 0
-	m.InvalidateQueriesContainingIDCalls = 0
-	// Reset new counters
-	m.GetCalls = 0
-	m.SetCalls = 0
-	m.DeleteCalls = 0
+	m.Counters = make(map[string]int) // Reset map
 
 	// Verify the cache is empty after reset
 	keyCount = 0
@@ -101,26 +82,24 @@ func (m *mockCacheClient) Reset() {
 	log.Printf("DEBUG Reset: Cache cleared. Keys remaining: %d", keyCount)
 }
 
-// ResetCounts only resets the call counters, not the cache content.
-func (m *mockCacheClient) ResetCounts() {
+// ResetCounters only resets the call counters, not the cache content.
+func (m *mockCacheClient) ResetCounters() { // Exported
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Reset counters
-	m.GetModelCalls = 0
-	m.SetModelCalls = 0
-	m.DeleteModelCalls = 0
-	m.GetQueryIDsCalls = 0
-	m.SetQueryIDsCalls = 0
-	m.DeleteQueryIDsCalls = 0
-	m.AcquireLockCalls = 0
-	m.ReleaseLockCalls = 0
-	m.DeleteByPrefixCalls = 0
-	m.InvalidateQueriesContainingIDCalls = 0
-	m.GetCalls = 0
-	m.SetCalls = 0
-	m.DeleteCalls = 0
-	log.Printf("DEBUG ResetCounts: Call counters reset.")
+	m.Counters = make(map[string]int) // Reset map
+	log.Printf("DEBUG ResetCounters: Call counters reset.")
+}
+
+// Helper method to increment a counter safely
+func (m *mockCacheClient) incrementCounter(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.Counters == nil { // Initialize map if nil
+		m.Counters = make(map[string]int)
+	}
+	m.Counters[name]++
 }
 
 // Exists checks if a non-expired key is present in the mock cache store.
@@ -200,8 +179,8 @@ func unmarshalFromMock(stored []byte, dest interface{}) error {
 
 // Get retrieves a raw string value from the mock cache.
 func (m *mockCacheClient) Get(ctx context.Context, key string) (string, error) {
+	m.incrementCounter("Get") // Use helper
 	m.mu.Lock()
-	m.GetCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG Get: Checking key: %s", key)
@@ -221,8 +200,8 @@ func (m *mockCacheClient) Get(ctx context.Context, key string) (string, error) {
 
 // Set stores a raw string value in the mock cache.
 func (m *mockCacheClient) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+	m.incrementCounter("Set") // Use helper
 	m.mu.Lock()
-	m.SetCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG Set: Setting key: %s with value: '%s', expiration: %v", key, value, expiration)
@@ -240,8 +219,8 @@ func (m *mockCacheClient) Set(ctx context.Context, key string, value string, exp
 
 // Delete removes a key from the mock cache.
 func (m *mockCacheClient) Delete(ctx context.Context, key string) error {
+	m.incrementCounter("Delete") // Use helper
 	m.mu.Lock()
-	m.DeleteCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG Delete: Deleting key: %s", key)
@@ -251,8 +230,8 @@ func (m *mockCacheClient) Delete(ctx context.Context, key string) error {
 }
 
 func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr interface{}) error {
+	m.incrementCounter("GetModel") // Use helper
 	m.mu.Lock()
-	m.GetModelCalls++
 	m.mu.Unlock()
 
 	// Debug logging to show all keys in the store when GetModel is called
@@ -285,8 +264,8 @@ func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr int
 }
 
 func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error {
-	m.mu.Lock() // Lock for counter update
-	m.SetModelCalls++
+	m.incrementCounter("SetModel") // Use helper
+	m.mu.Lock()                    // Lock for counter update
 	m.mu.Unlock()
 
 	log.Printf("DEBUG SetModel: Setting key: %s with expiration: %v", key, expiration)
@@ -310,8 +289,8 @@ func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interf
 }
 
 func (m *mockCacheClient) DeleteModel(ctx context.Context, key string) error {
+	m.incrementCounter("DeleteModel") // Use helper
 	m.mu.Lock()
-	m.DeleteModelCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG DeleteModel: Deleting key: %s", key)
@@ -323,8 +302,8 @@ func (m *mockCacheClient) DeleteModel(ctx context.Context, key string) error {
 // GetQueryIDs retrieves a list of IDs associated with a query cache key.
 // It now checks for the NoneResult marker and returns ErrQueryCacheNoneResult if found.
 func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
+	m.incrementCounter("GetQueryIDs") // Use helper
 	m.mu.Lock()
-	m.GetQueryIDsCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG GetQueryIDs: Looking up query key: %s", queryKey)
@@ -365,8 +344,8 @@ func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]i
 }
 
 func (m *mockCacheClient) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
+	m.incrementCounter("SetQueryIDs") // Use helper
 	m.mu.Lock()
-	m.SetQueryIDsCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG SetQueryIDs: Setting query key: %s with %d IDs, expiration: %v", queryKey, len(ids), expiration)
@@ -393,8 +372,8 @@ func (m *mockCacheClient) SetQueryIDs(ctx context.Context, queryKey string, ids 
 }
 
 func (m *mockCacheClient) DeleteQueryIDs(ctx context.Context, queryKey string) error {
+	m.incrementCounter("DeleteQueryIDs") // Use helper
 	m.mu.Lock()
-	m.DeleteQueryIDsCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG DeleteQueryIDs: Deleting query key: %s", queryKey)
@@ -404,8 +383,8 @@ func (m *mockCacheClient) DeleteQueryIDs(ctx context.Context, queryKey string) e
 }
 
 func (m *mockCacheClient) AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error) {
+	m.incrementCounter("AcquireLock") // Use helper
 	m.mu.Lock()
-	m.AcquireLockCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG AcquireLock: Attempting to acquire lock: %s with expiration: %v", lockKey, expiration)
@@ -431,8 +410,8 @@ func (m *mockCacheClient) AcquireLock(ctx context.Context, lockKey string, expir
 }
 
 func (m *mockCacheClient) ReleaseLock(ctx context.Context, lockKey string) error {
+	m.incrementCounter("ReleaseLock") // Use helper
 	m.mu.Lock()
-	m.ReleaseLockCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG ReleaseLock: Releasing lock: %s", lockKey)
@@ -442,8 +421,8 @@ func (m *mockCacheClient) ReleaseLock(ctx context.Context, lockKey string) error
 }
 
 func (m *mockCacheClient) DeleteByPrefix(ctx context.Context, prefix string) error {
+	m.incrementCounter("DeleteByPrefix") // Use helper
 	m.mu.Lock()
-	m.DeleteByPrefixCalls++
 	m.mu.Unlock()
 
 	log.Printf("DEBUG DeleteByPrefix: Deleting keys with prefix: %s", prefix)
@@ -471,64 +450,6 @@ func (m *mockCacheClient) DeleteByPrefix(ctx context.Context, prefix string) err
 	return nil
 }
 
-func (m *mockCacheClient) InvalidateQueriesContainingID(ctx context.Context, prefix string, idToInvalidate int64) error {
-	m.mu.Lock()
-	m.InvalidateQueriesContainingIDCalls++
-	m.mu.Unlock()
-
-	log.Printf("DEBUG InvalidateQueriesContainingID: Finding and invalidating query cache entries with prefix '%s' containing ID %d", prefix, idToInvalidate)
-
-	var matchingQueryKeys []string
-
-	// First, find all query keys matching the prefix
-	m.store.Range(func(key, _ interface{}) bool {
-		// Only process string keys (should be all of them, but just to be safe)
-		keyStr, ok := key.(string)
-		if !ok {
-			return true // Skip non-string keys
-		}
-
-		// Check if this key has the query prefix
-		if len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
-			log.Printf("DEBUG InvalidateQueriesContainingID: Found key with matching prefix: %s", keyStr)
-
-			// Get the cached IDs for this query
-			storedBytes, found := m.GetValue(keyStr)
-			if !found {
-				log.Printf("DEBUG InvalidateQueriesContainingID: Key %s not found or expired", keyStr)
-				return true // Continue range
-			}
-
-			// Decode the IDs
-			var ids []int64
-			if err := unmarshalFromMock(storedBytes, &ids); err != nil {
-				log.Printf("DEBUG InvalidateQueriesContainingID: Error unmarshaling IDs for key %s: %v", keyStr, err)
-				return true // Continue range
-			}
-
-			// Check if the ID to invalidate is in this query's result set
-			for _, id := range ids {
-				if id == idToInvalidate {
-					log.Printf("DEBUG InvalidateQueriesContainingID: Query key %s contains ID %d, marking for invalidation", keyStr, idToInvalidate)
-					matchingQueryKeys = append(matchingQueryKeys, keyStr)
-					break
-				}
-			}
-		}
-		return true
-	})
-
-	// Delete all matching query keys
-	for _, keyStr := range matchingQueryKeys {
-		log.Printf("DEBUG InvalidateQueriesContainingID: Invalidating query key: %s", keyStr)
-		m.store.Delete(keyStr)
-		m.expiryStore.Delete(keyStr)
-	}
-
-	log.Printf("DEBUG InvalidateQueriesContainingID: Invalidated %d query cache entries", len(matchingQueryKeys))
-	return nil
-}
-
 // Helper function to return the minimum of two integers
 func min(a, b int) int {
 	if a < b {
@@ -542,7 +463,7 @@ func (m *mockCacheClient) AssertSetCalls(t *testing.T, expected int, msgAndArgs 
 	t.Helper()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	assert.Equal(t, expected, m.SetCalls, msgAndArgs...)
+	assert.Equal(t, expected, m.Counters["Set"], msgAndArgs...)
 }
 
 // AssertSetModelCalls checks if SetModel was called the expected number of times.
@@ -550,5 +471,5 @@ func (m *mockCacheClient) AssertSetModelCalls(t *testing.T, expected int, msgAnd
 	t.Helper()
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	assert.Equal(t, expected, m.SetModelCalls, msgAndArgs...)
+	assert.Equal(t, expected, m.Counters["SetModel"], msgAndArgs...)
 }

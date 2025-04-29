@@ -271,10 +271,10 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
             *   Implement `Thing.CheckQueryMatch(model *T, params QueryParams) (bool, error)`.
             *   This function needs to evaluate if a given `model` instance satisfies the `WHERE` clause defined in `params`.
             *   *Challenge:* Evaluating arbitrary SQL `WHERE` clauses in Go can be complex. Start with simple equality checks and potentially expand.
-        *   **[ ] Implement Cache Key Index System (`CacheIndex`):**
+        *   **[X] Implement Cache Key Index System (`CacheIndex`):** *(Verified existing implementation in `cache_index.go`)*
             *   Create a global `CacheIndex` struct (using `sync.RWMutex`) to map table names to the `listCacheKey` and `countCacheKey` values of queries involving that table.
             *   Modify `Thing.Query` (or cache generation points) to register generated cache keys with the `CacheIndex`.
-        *   **[ ] Implement Per-Key Lock Manager (`CacheKeyLockManager`):**
+        *   **[X] Implement Per-Key Lock Manager (`CacheKeyLockManager`):** *(Verified existing implementation in `cache_locker.go`)*
             *   Create a global `CacheKeyLockManager` struct (using `sync.Map` of `*sync.Mutex`) to provide locking for individual cache keys.
             *   Implement `Lock(key string)` and `Unlock(key string)` methods.
         *   **[ ] Modify `Save` Operation:**
@@ -294,17 +294,25 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
                 *   **Unlock:** Release lock using `CacheKeyLocker.Unlock(countCacheKey)`.
         *   **[ ] Modify `Delete` Operation:**
             *   Similar to `Save`, find affected query keys using `CacheIndex`.
-            *   For each key:
-                *   *(Optimization: Skip `CheckQueryMatch` as the deleted item definitely existed)*.
-                *   **Locking & Update:** Acquire locks, remove the ID from the list cache, decrement the count cache, release locks.
-        *   **[ ] Testing:**
-            *   Add unit tests for `CheckQueryMatch` (with simple conditions).
-            *   Add unit tests for `CacheIndex` registration and retrieval.
-            *   Add unit tests for `CacheKeyLockManager`.
-            *   Add integration tests simulating concurrent creates/updates/deletes and verifying the consistency of list and count caches.
+            *   For each potential key:
+                *   Retrieve the corresponding `QueryParams`.
+                *   **Delete Logic:** Check if the *deleted* model matched the query params using `CheckQueryMatch`. If it did, the ID needs removal.
+                *   **Locking & Update:** Lock the list and count keys, perform removal/decrement operations, and unlock.
+        *   **[ ] Add Tests:** Write unit tests for `CheckQueryMatch`, `CacheIndex`, `CacheKeyLockManager`, and integration tests for incremental cache updates in `Save`/`Delete`.
     *   **Success Criteria:** List and count caches are updated incrementally and correctly upon create, update, and delete operations under concurrent load. Tests verify consistency and proper locking.
     *   **Known Challenges/Limitations:** Accurately evaluating complex `WHERE` clauses in `CheckQueryMatch`; maintaining correct sort order in list caches for non-trivial `ORDER BY` clauses during incremental updates.
-20. **[ ] Task: Implement JSON Serialization Features *(New)*
+20. **[~] Task: Refactor Cache Logic and Remove Unused Function *(Manual edits in thing.go needed)*
+    *   **Goal:** Improve maintainability by removing the unused `InvalidateQueriesContainingID` function and refactoring cache invalidation logic out of `thing.go`.
+    *   **Motivation:** `thing.go` is becoming too large. Centralizing cache operations improves code organization. The `InvalidateQueriesContainingID` function was determined to be unnecessary.
+    *   **Sub-tasks:**
+        *   **[~] Remove `InvalidateQueriesContainingID` Calls:** Edit `thing.go` to remove the calls to `t.cache.InvalidateQueriesContainingID` within the `saveInternal` and `deleteInternal` functions. *(Manual edit needed due to tool failure)*
+        *   **[X] Create `cache_helpers.go`:** Create a new file named `cache_helpers.go` within the `thing` package.
+        *   **[X] Define `invalidateObjectCache` Helper:** Implement a function `invalidateObjectCache(ctx context.Context, cache CacheClient, tableName string, id int64)` in `cache_helpers.go` that encapsulates the logic for deleting a single model from the cache (using `generateCacheKey` and `cache.DeleteModel`). Include appropriate logging.
+        *   **[~] Refactor `saveInternal`:** Update the update path in `saveInternal` within `thing.go` to call the new `invalidateObjectCache` helper function instead of performing the cache deletion inline. *(Manual edit needed due to tool failure)*
+        *   **[X] Refactor `deleteInternal`:** Update `deleteInternal` within `thing.go`. Since it already calls `t.ClearCacheByID`, ensure this call remains and remove any redundant object cache invalidation logic if present. *Self-correction: `deleteInternal` already uses `ClearCacheByID` which handles object cache invalidation. The main goal here is to ensure no direct `DeleteModel` calls remain for the object cache and that the structure is clean.*
+        *   **[X] Run Tests:** Execute all tests (`go test -v -p 1 ./...`) to confirm the refactoring didn't introduce regressions. *(Passed, but doesn't reflect manual edits yet)*
+        *   **[X] Remove `InvalidateQueriesContainingID` Definition (Optional but Recommended):** Remove the definition of `InvalidateQueriesContainingID` from the `CacheClient` interface (`interfaces.go`) and its implementations (`cache/redis/client.go`, `mock_cache_test.go`) if it's confirmed to be unused anywhere else. *(Commented out)*
+21. **[ ] Task: Implement JSON Serialization Features
     *   **Goal:** Add comprehensive JSON serialization capabilities to the ORM, similar to Mongoose's capabilities.
     *   **Sub-tasks:**
         *   **[ ] Implement Basic JSON Serialization:**
@@ -332,7 +340,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
             *   Test with various model types, field types, and configurations.
             *   **Success Criteria:** All serialization features are well-tested with high coverage.
     *   **Success Criteria:** Thing ORM models can be easily serialized to JSON with flexible control over the output format, similar to Mongoose's capabilities.
-21. **[ ] Task: Implement `WithTransaction` Pattern *(New)*
+22. **[ ] Task: Implement `WithTransaction` Pattern
     *   **Goal:** Add a transaction management pattern to the ORM.
     *   **Sub-tasks:**
         *   **[ ] Design `WithTransaction` API:**
@@ -342,7 +350,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[ ] Test `WithTransaction`:**
             *   Add tests to verify the correctness and reliability of the new transaction management pattern.
     *   **Success Criteria:** `WithTransaction` is implemented and tested.
-22. **[ ] Task: Implement Soft Delete *(New)*
+23. **[ ] Task: Implement Soft Delete
     *   **Goal:** Add soft delete functionality to the ORM.
     *   **Sub-tasks:**
         *   **[ ] Design Soft Delete API:**
@@ -376,9 +384,10 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - [x] Task 17: Debug Failing Tests
 - [~] Task 18: Refactor SQLite Adapter to Remove `sqlx` *(Implementation Done - Transaction Tests Failing)*
 - [ ] Task 19: Implement Incremental Cache Updates for Query Lists
-- [ ] Task 20: Implement JSON Serialization Features *(New)*
-- [ ] Task 21: Implement `WithTransaction` Pattern *(New)*
-- [ ] Task 22: Implement Soft Delete *(New)*
+- [~] Task 20: Refactor Cache Logic and Remove Unused Function *(Manual edits in thing.go needed)*
+- [ ] Task 21: Implement JSON Serialization Features
+- [ ] Task 22: Implement `WithTransaction` Pattern
+- [ ] Task 23: Implement Soft Delete
 
 ## Executor's Feedback or Assistance Requests
 
@@ -393,6 +402,9 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   **`db:"-"` Tag for Relationships:** To prevent `getFieldPointers` from trying to scan database columns into struct fields representing relationships (like `has_many` or `belongs_to`), add the `db:"-"` tag to those fields in the model struct definition.
 *   **SQLite `Select` with Basic Types:** The `SQLiteAdapter.Select` method needs specific handling for scanning results into slices of basic Go types (e.g., `[]int64`, `[]string`) as the standard `Scan` might expect struct fields.
 *   Refactored `deleteInternal` to use `ClearCacheByID` for model cache invalidation.
+*   **[X] Task 18: Fix Transaction Tests:** Update SQL queries in `tests/transaction_test.go` to include the `deleted` field. (Completed)
+*   **Awaiting Manual Edits (Task 20):** Need user to manually edit `thing.go` (remove `InvalidateQueriesContainingID` calls, update `saveInternal` to use `invalidateObjectCache`), then re-run tests before Task 20 can be marked complete.
+*   **Starting Task 19:** Beginning implementation of incremental cache updates. Starting with the `CheckQueryMatch` function.
 
 ## Lessons Learned
 *   Test failures related to caching often involve subtle interactions between mock implementations and the actual code's assumptions (e.g., specific error types like `ErrCacheNoneResult`).
@@ -401,10 +413,10 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   Running tests individually (`-run TestName`) can help isolate failures before running the full suite.
 *   `sqlx` simplifies result scanning but hides the underlying `database/sql` complexity, which becomes apparent when removing it.
 *   Go linters (like `stylecheck`) prefer error strings returned by `fmt.Errorf` or `errors.New` to start with a lowercase letter (ST1005).
+*   Avoid adding new functions directly to `thing.go` due to its large size. Use separate, focused files (e.g., `cache_helpers.go`, `query_match.go`, `cache_index.go`) for new functionality.
 
 <details>
 <summary>Archived Scratchpad Sections</summary>
 
 *No sections archived yet.*
-
 </details>
