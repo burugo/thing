@@ -675,25 +675,19 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value interface{}) error 
 			return ErrNotFound
 		}
 
-		// --- Object Cache Invalidate within Lock ---
-		cacheKey := generateCacheKey(tableName, id)
-		cacheDelStart := time.Now()
-		errCacheDel := t.cache.DeleteModel(lctx, cacheKey) // Use context from lock
-		cacheDelDuration := time.Since(cacheDelStart)
-		if errCacheDel != nil {
-			log.Printf("WARN: Failed to delete model from cache during delete lock for key %s: %v (%s)", cacheKey, errCacheDel, cacheDelDuration)
+		// --- Object Cache Invalidate within Lock (Using ClearCacheByID) ---
+		// Removed direct call: cacheKey := generateCacheKey(tableName, id)
+		// Removed direct call: errCacheDel := t.cache.DeleteModel(lctx, cacheKey)
+		// Removed logging for direct call
+
+		// Call the centralized cache clearing method
+		if clearErr := t.ClearCacheByID(lctx, id); clearErr != nil {
+			// Log the error from ClearCacheByID, but don't fail the delete operation
+			// ClearCacheByID already logs warnings, so just a note here might suffice.
+			log.Printf("Notice: ClearCacheByID returned an error during delete for %s %d: %v", tableName, id, clearErr)
+			// Decide if this should return an error, for now, it doesn't.
 		}
 		// --- End Object Cache Invalidate ---
-
-		// --- Query Cache Invalidation (Targeted: Delete queries containing this ID) ---
-		queryPrefix := fmt.Sprintf("query:%s:", tableName)
-		qcDelStart := time.Now()
-		errQcDel := t.cache.InvalidateQueriesContainingID(lctx, queryPrefix, id) // Pass model ID
-		qcDelDuration := time.Since(qcDelStart)
-		if errQcDel != nil {
-			log.Printf("WARN: Failed to invalidate queries containing ID %d with prefix '%s': %v (%s)", id, queryPrefix, errQcDel, qcDelDuration)
-		}
-		// --- End Query Cache Invalidation ---
 
 		return nil // Lock action successful
 	})

@@ -346,6 +346,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   **Manual Cache Invalidation with Tx.Exec:** When modifying data directly using `Tx.Exec` (instead of ORM methods like `Save` or `Delete`), the cache is not automatically invalidated upon `Commit`. Manual cache invalidation (e.g., using `ClearCacheByID`) is required after the commit to prevent reading stale data from the cache. The `WithTransaction` pattern aims to address this.
 *   **`db:"-"` Tag for Relationships:** To prevent `getFieldPointers` from trying to scan database columns into struct fields representing relationships (like `has_many` or `belongs_to`), add the `db:"-"` tag to those fields in the model struct definition.
 *   **SQLite `Select` with Basic Types:** The `SQLiteAdapter.Select` method needs specific handling for scanning results into slices of basic Go types (e.g., `[]int64`, `[]string`) as the standard `Scan` might expect struct fields.
+*   Refactored `deleteInternal` to use `ClearCacheByID` for model cache invalidation.
 
 
 ## Lessons Learned
