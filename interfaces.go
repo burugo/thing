@@ -63,11 +63,6 @@ type DBAdapter interface {
 	// GetCount executes a SELECT COUNT(*) query based on the provided parameters.
 	GetCount(ctx context.Context, info *ModelInfo, params QueryParams) (int64, error)
 
-	// SelectPaginated executes a query including WHERE, ORDER BY, LIMIT, and OFFSET
-	// clauses, scanning results into dest.
-	// dest must be a pointer to a slice of pointers (e.g., *[]*User).
-	SelectPaginated(ctx context.Context, dest interface{}, info *ModelInfo, params QueryParams, offset int, limit int) error
-
 	// BeginTx starts a transaction.
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error)
 

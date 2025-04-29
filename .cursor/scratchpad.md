@@ -251,12 +251,13 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[x] Replace `sqlx.Connect`:** Use `sql.Open` and potentially `PingContext`. *(Done)*
         *   **[x] Implement Manual Scanning Helper (`getFieldPointers`):** Create a function using `reflect` to get pointers to struct fields for `Scan`. *(Done)*
         *   **[x] Implement Slice Appending Helper (`appendValueToSlice`):** Create a function using `reflect` to append scanned values to the destination slice. *(Done)*
-        *   **[x] Replace `GetContext` calls:** Use `QueryRowContext` and manual `Scan` with the helper. Handle `sql.ErrNoRows`. *(Done)*
-        *   **[x] Replace `SelectContext` calls:** Use `QueryContext`, iterate `*sql.Rows`, and use manual `Scan` with helpers. Handle `rows.Err()`, `rows.Close()`. *(Done)*
-        *   **[x] Replace `BeginTxx`:** Use `BeginTx`. *(Done)*
-        *   **[x] Verify `ExecContext`, `Commit`, `Rollback` usage** (likely only type changes needed). *(Done)*
-        *   **[ ] Update Tests:** Ensure existing or new tests cover the adapter functionality after removing `sqlx`. *(Remaining)*
-    *   **Success Criteria:** `sqlx` is no longer imported or used in `drivers/sqlite/sqlite.go`. All methods use `database/sql` types and functions. Manual scanning logic is implemented correctly. All relevant tests pass.
+        *   **[x] Replace `GetContext` calls:** Use `QueryRowContext` and manual `Scan` with the helper. Handle `sql.ErrNoRows`. *(Covers SQLiteAdapter.Get & SQLiteTx.Get)*
+        *   **[x] Replace `SelectContext` calls:** Use `QueryContext`, iterate `*sql.Rows`, and use manual `Scan` with helpers. Handle `rows.Err()`, `rows.Close()`. *(Covers SQLiteAdapter.Select & SQLiteTx.Select)*
+        *   **[x] Replace `BeginTxx`:** Use `BeginTx`.
+        *   **[x] Verify `ExecContext`, `Commit`, `Rollback` usage** (only type changes needed).
+        *   **[ ] Update Tests:** Ensure existing or new tests cover the adapter functionality after removing `sqlx`. *(Remaining - Including Tx Tests)*
+        *   **[x] Cleanup:** Removed unused `SelectPaginated` method from interface and implementation.
+        *   **Success Criteria:** `sqlx` is no longer imported or used in `drivers/sqlite/sqlite.go`. All methods use `database/sql` types and functions. Manual scanning logic is implemented correctly. *(Partially met - Tests remaining)*
 19. **[ ] Implement JSON Serialization Features:** *(New Task)*
     *   **Goal:** Add flexible JSON serialization capabilities to Thing ORM models, inspired by Mongoose's approach.
     *   **Sub-tasks:**
@@ -325,6 +326,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   Cache key consistency is critical. Ensure the keys used for setting/getting data match the keys used for invalidation or pattern matching (e.g., `list:` vs `query:` prefix issue).
 *   Running tests individually (`-run TestName`) can help isolate failures before running the full suite.
 *   `sqlx` simplifies result scanning but hides the underlying `database/sql` complexity, which becomes apparent when removing it.
+*   Go linters (like `stylecheck`) prefer error strings returned by `fmt.Errorf` or `errors.New` to start with a lowercase letter (ST1005).
 
 
 <details>

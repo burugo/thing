@@ -105,7 +105,7 @@ func (a *SQLiteAdapter) Select(ctx context.Context, dest interface{}, query stri
 	// --- Destination Type Check ---
 	destVal := reflect.ValueOf(dest)
 	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Slice {
-		return fmt.Errorf("Select: destination must be a pointer to a slice, got %T", dest)
+		return fmt.Errorf("select: destination must be a pointer to a slice, got %T", dest)
 	}
 	sliceVal := destVal.Elem()         // The slice itself
 	elemType := sliceVal.Type().Elem() // The type of elements in the slice
@@ -157,7 +157,7 @@ func (a *SQLiteAdapter) Select(ctx context.Context, dest interface{}, query stri
 			baseElemType = elemType.Elem() // Get the underlying struct type if slice elements are pointers
 		}
 		if baseElemType.Kind() != reflect.Struct {
-			return fmt.Errorf("Select: destination slice element type must be a struct or pointer to struct (or basic type), got %s", elemType.String())
+			return fmt.Errorf("select: destination slice element type must be a struct or pointer to struct (or basic type), got %s", elemType.String())
 		}
 
 		for rows.Next() {
@@ -232,7 +232,7 @@ func (a *SQLiteAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, par
 		return 0, fmt.Errorf("adapter is closed")
 	}
 	if info == nil || info.TableName == "" {
-		return 0, errors.New("GetCount: model info or table name is missing")
+		return 0, errors.New("getCount: model info or table name is missing")
 	}
 
 	// Build query: SELECT COUNT(*) FROM table WHERE ...
@@ -269,141 +269,6 @@ func (a *SQLiteAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, par
 
 	log.Printf("DB GetCount Result: %d (%s)", count, duration)
 	return count, nil
-}
-
-// SelectPaginated executes a query including WHERE, ORDER BY, LIMIT, and OFFSET clauses.
-// TODO: Needs reimplementation using QueryContext and manual row iteration/Scan.
-func (a *SQLiteAdapter) SelectPaginated(ctx context.Context, dest interface{}, info *thing.ModelInfo, params thing.QueryParams, offset int, limit int) error {
-	if a.isClosed() {
-		return fmt.Errorf("adapter is closed")
-	}
-	if info == nil || info.TableName == "" || len(info.Columns) == 0 {
-		return errors.New("SelectPaginated: model info, table name, or columns list is missing")
-	}
-
-	// Build base SELECT part (duplicate logic from thing.buildSelectSQL)
-	// IMPORTANT: The order of columns here MUST match the field order in the struct
-	// for the manual Scan to work correctly. Using info.Columns assumes this is the case.
-	quotedColumns := make([]string, len(info.Columns))
-	for i, col := range info.Columns {
-		quotedColumns[i] = fmt.Sprintf("\"%s\"", col) // Assuming SQLite quoting needed
-	}
-	// Ensure we select the primary key if it's not already included, needed for scanning potentially?
-	// pkCol := fmt.Sprintf("\"%s\"", info.PrimaryKeyColumn()) // Assuming method exists
-	// if !slices.Contains(quotedColumns, pkCol) {
-	// 	quotedColumns = append(quotedColumns, pkCol)
-	// }
-	baseQuery := fmt.Sprintf("SELECT %s FROM %s", strings.Join(quotedColumns, ", "), info.TableName)
-
-	// Build clauses
-	var queryBuilder strings.Builder
-	queryBuilder.WriteString(baseQuery)
-
-	args := make([]interface{}, len(params.Args))
-	copy(args, params.Args)
-
-	if params.Where != "" {
-		queryBuilder.WriteString(" WHERE ")
-		queryBuilder.WriteString(params.Where)
-	}
-
-	if params.Order != "" {
-		queryBuilder.WriteString(" ORDER BY ")
-		queryBuilder.WriteString(params.Order)
-	}
-
-	// Add LIMIT and OFFSET
-	if limit > 0 {
-		queryBuilder.WriteString(" LIMIT ?")
-		args = append(args, limit)
-		if offset > 0 {
-			queryBuilder.WriteString(" OFFSET ?")
-			args = append(args, offset)
-		}
-	} else if offset > 0 {
-		queryBuilder.WriteString(" LIMIT -1 OFFSET ?")
-		args = append(args, offset)
-	}
-
-	query := queryBuilder.String()
-
-	log.Printf("DB SelectPaginated (sql): %s [%v]", query, args)
-	start := time.Now()
-	// err := a.db.SelectContext(ctx, dest, query, args...) // Original sqlx call
-	// --- Manual Scan Logic Start ---
-	rows, err := a.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		log.Printf("DB SelectPaginated Error: %s [%v] - %v", query, args, err)
-		return fmt.Errorf("sqlite SelectPaginated error: %w", err)
-	}
-	defer rows.Close()
-	// TODO: Implement slice element creation and getFieldPointers
-	// TODO: Implement appendValueToSlice
-	// for rows.Next() { ... rows.Scan(...) ... append ... }
-	// if err = rows.Err(); err != nil { ... }
-	// --- Manual Scan Logic End ---
-	err = errors.New("SelectPaginated method not fully implemented after removing sqlx") // Temporary error
-	rows, err = a.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		log.Printf("DB SelectPaginated Query Error: %s [%v] - %v", query, args, err)
-		return fmt.Errorf("sqlite SelectPaginated query error: %w", err)
-	}
-	defer rows.Close()
-
-	// Determine the element type of the destination slice
-	destVal := reflect.ValueOf(dest)
-	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Slice {
-		return fmt.Errorf("SelectPaginated: destination must be a pointer to a slice, got %T", dest)
-	}
-	sliceType := destVal.Elem().Type()
-	elemType := sliceType.Elem()
-	isPtrElem := elemType.Kind() == reflect.Ptr
-	baseElemType := elemType
-	if isPtrElem {
-		baseElemType = elemType.Elem()
-	}
-
-	for rows.Next() {
-		// Create a new element (pointer or struct) of the correct type
-		newElemPtrVal := reflect.New(baseElemType)
-
-		pointers, err := getFieldPointers(newElemPtrVal.Interface())
-		if err != nil {
-			log.Printf("DB SelectPaginated Error (Pointer Setup): %s [%v] - %v", query, args, err)
-			return fmt.Errorf("sqlite SelectPaginated row setup error: %w", err)
-		}
-
-		if err := rows.Scan(pointers...); err != nil {
-			log.Printf("DB SelectPaginated Scan Error: %s [%v] - %v", query, args, err)
-			return fmt.Errorf("sqlite SelectPaginated scan error: %w", err)
-		}
-
-		// Append the new element (pointer or value) to the destination slice
-		if isPtrElem {
-			if err := appendValueToSlice(dest, newElemPtrVal.Interface()); err != nil {
-				return fmt.Errorf("SelectPaginated: failed to append pointer value: %w", err)
-			}
-		} else {
-			if err := appendValueToSlice(dest, newElemPtrVal.Elem().Interface()); err != nil {
-				return fmt.Errorf("SelectPaginated: failed to append value: %w", err)
-			}
-		}
-	}
-
-	if err = rows.Err(); err != nil {
-		log.Printf("DB SelectPaginated Rows Error: %s [%v] - %v", query, args, err)
-		return fmt.Errorf("sqlite SelectPaginated rows error: %w", err)
-	}
-	duration := time.Since(start)
-
-	if err != nil {
-		log.Printf("DB SelectPaginated Error: %s [%v] (%s) - %v", query, args, duration, err)
-		return fmt.Errorf("sqlite SelectContext (paginated) error: %w", err)
-	}
-
-	log.Printf("DB SelectPaginated Success (%s)", duration)
-	log.Printf("DB SelectPaginated Success (%s)", duration)
-	return nil
 }
 
 // BeginTx starts a new transaction.
@@ -454,28 +319,20 @@ type SQLiteTx struct {
 var _ thing.Tx = (*SQLiteTx)(nil)
 
 // Get executes a query within the transaction, scanning into dest (which must be a pointer).
-// TODO: Needs reimplementation using QueryRowContext and manual Scan.
 func (t *SQLiteTx) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	// Placeholder for manual scanning logic
 	log.Printf("DB Tx Get (sql): %s [%v]", query, args)
-	// err := t.tx.GetContext(ctx, dest, query, args...) // Original sqlx call
-	// --- Manual Scan Logic Start ---
-	row := t.tx.QueryRowContext(ctx, query, args...)
-	_ = row // Assign to blank identifier to silence linter temporarily
-	// TODO: Implement getFieldPointers(dest) using reflection
-	// pointers := getFieldPointers(dest)
-	// err := row.Scan(pointers...)
-	// --- Manual Scan Logic End ---
-	err := errors.New("Tx.Get method not fully implemented after removing sqlx") // Temporary error
-	start := time.Now()                                                          // Keep track of time
-	row = t.tx.QueryRowContext(ctx, query, args...)
+	start := time.Now()
 
-	pointers, err := getFieldPointers(dest)
+	row := t.tx.QueryRowContext(ctx, query, args...)
+
+	// Use the new getFieldPointers to get scan destinations
+	pointers, err := getFieldPointers(dest) // Pass dest directly
 	if err != nil {
 		log.Printf("DB Tx Get Error (Pointer Setup): %s [%v] - %v", query, args, err)
 		return fmt.Errorf("sqlite Tx Get setup error: %w", err)
 	}
 
+	// Scan the row directly into the pointers
 	err = row.Scan(pointers...)
 	duration := time.Since(start)
 	if err != nil {
@@ -483,92 +340,119 @@ func (t *SQLiteTx) Get(ctx context.Context, dest interface{}, query string, args
 			log.Printf("DB Tx Get (No Rows): %s [%v] (%s)", query, args, duration)
 			return thing.ErrNotFound // Use error from parent package
 		}
-		log.Printf("DB Tx Get Error: %s [%v] (%s) - %v", query, args, duration, err)
-		return fmt.Errorf("sqlite Tx Get error: %w", err)
+		log.Printf("DB Tx Get Error (Scan): %s [%v] (%s) - %v", query, args, duration, err) // Clarify error source
+		return fmt.Errorf("sqlite Tx Get scan error: %w", err)
 	}
-	log.Printf("DB Tx Get: %s [%v] (%s)", query, args, duration) // Duration removed
-	log.Printf("DB Tx Get: %s [%v] (%s)", query, args, duration)
+	log.Printf("DB Tx Get (Success): %s [%v] (%s)", query, args, duration) // Clarify success log
 	return nil
 }
 
 // Select executes a query within the transaction.
-// TODO: Needs reimplementation using QueryContext and manual row iteration/Scan.
+// The 'dest' argument must be a pointer to a slice.
 func (t *SQLiteTx) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	// Placeholder for manual scanning logic
-	log.Printf("DB Tx Select (sql): %s [%v]", query, args)
-	// err := t.tx.SelectContext(ctx, dest, query, args...) // Original sqlx call
-	// --- Manual Scan Logic Start ---
+	log.Printf("DB Tx Select (sql): %s [%v]", query, args) // Log the query first
+	start := time.Now()                                    // Keep track of time
+
+	// --- Destination Type Check --- (Same as SQLiteAdapter.Select)
+	destVal := reflect.ValueOf(dest)
+	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Slice {
+		return fmt.Errorf("tx Select: destination must be a pointer to a slice, got %T", dest)
+	}
+	sliceVal := destVal.Elem()         // The slice itself
+	elemType := sliceVal.Type().Elem() // The type of elements in the slice
+
+	isBasicTypeSlice := false
+	switch elemType.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64,
+		reflect.String,
+		reflect.Bool:
+		isBasicTypeSlice = true
+	}
+	// --- End Destination Type Check ---
+
 	rows, err := t.tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		log.Printf("DB Tx Select Error: %s [%v] - %v", query, args, err)
-		return fmt.Errorf("sqlite Tx Select error: %w", err)
-	}
-	defer rows.Close()
-	// TODO: Implement slice element creation and getFieldPointers
-	// TODO: Implement appendValueToSlice
-	// for rows.Next() { ... rows.Scan(...) ... append ... }
-	// if err = rows.Err(); err != nil { ... }
-	// --- Manual Scan Logic End ---
-	err = errors.New("Tx.Select method not fully implemented after removing sqlx") // Temporary error
-	start := time.Now()                                                            // Keep track of time
-	rows, err = t.tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		log.Printf("DB Tx Select Query Error: %s [%v] - %v", query, args, err)
+		// Log error before returning
+		duration := time.Since(start)
+		log.Printf("DB Tx Select Query Error: %s [%v] (%s) - %v", query, args, duration, err)
 		return fmt.Errorf("sqlite Tx Select query error: %w", err)
 	}
 	defer rows.Close()
 
-	// Determine the element type of the destination slice
-	destVal := reflect.ValueOf(dest)
-	if destVal.Kind() != reflect.Ptr || destVal.Elem().Kind() != reflect.Slice {
-		return fmt.Errorf("Tx Select: destination must be a pointer to a slice, got %T", dest)
-	}
-	sliceType := destVal.Elem().Type()
-	elemType := sliceType.Elem()
-	isPtrElem := elemType.Kind() == reflect.Ptr
-	baseElemType := elemType
-	if isPtrElem {
-		baseElemType = elemType.Elem()
-	}
+	rowCount := 0
 
-	for rows.Next() {
-		// Create a new element (pointer or struct) of the correct type
-		newElemPtrVal := reflect.New(baseElemType)
+	if isBasicTypeSlice {
+		// --- Handle Slice of Basic Types (e.g., []int64, []string) --- (Same as SQLiteAdapter.Select)
+		for rows.Next() {
+			// Create a pointer to a new value of the slice's element type
+			elemPtr := reflect.New(elemType) // e.g., *int64
 
-		pointers, err := getFieldPointers(newElemPtrVal.Interface())
-		if err != nil {
-			log.Printf("DB Tx Select Error (Pointer Setup): %s [%v] - %v", query, args, err)
-			return fmt.Errorf("sqlite Tx Select row setup error: %w", err)
+			// Scan directly into the pointer
+			if err := rows.Scan(elemPtr.Interface()); err != nil {
+				duration := time.Since(start)
+				log.Printf("DB Tx Select Scan Error (Basic Type): %s [%v] (%s) - %v", query, args, duration, err)
+				return fmt.Errorf("sqlite Tx Select scan (basic type) error: %w", err)
+			}
+
+			// Append the actual value (not the pointer) to the slice
+			sliceVal.Set(reflect.Append(sliceVal, elemPtr.Elem())) // Append the dereferenced value
+			rowCount++
 		}
-
-		if err := rows.Scan(pointers...); err != nil {
-			log.Printf("DB Tx Select Scan Error: %s [%v] - %v", query, args, err)
-			return fmt.Errorf("sqlite Tx Select scan error: %w", err)
-		}
-
-		// Append the new element (pointer or value) to the destination slice
+	} else {
+		// --- Handle Slice of Structs or Pointers to Structs --- (Same as SQLiteAdapter.Select)
+		isPtrElem := elemType.Kind() == reflect.Ptr
+		baseElemType := elemType
 		if isPtrElem {
-			if err := appendValueToSlice(dest, newElemPtrVal.Interface()); err != nil {
-				return fmt.Errorf("Tx Select: failed to append pointer value: %w", err)
+			baseElemType = elemType.Elem() // Get the underlying struct type if slice elements are pointers
+		}
+		if baseElemType.Kind() != reflect.Struct {
+			return fmt.Errorf("tx Select: destination slice element type must be a struct or pointer to struct (or basic type), got %s", elemType.String())
+		}
+
+		for rows.Next() {
+			// Create a new element (pointer to struct) of the base type
+			newElemPtrVal := reflect.New(baseElemType) // e.g. *User
+
+			pointers, err := getFieldPointers(newElemPtrVal.Interface()) // Get pointers to fields of *User
+			if err != nil {
+				duration := time.Since(start)
+				log.Printf("DB Tx Select Error (Pointer Setup): %s [%v] (%s) - %v", query, args, duration, err)
+				return fmt.Errorf("sqlite Tx Select row setup error: %w", err)
 			}
-		} else {
-			if err := appendValueToSlice(dest, newElemPtrVal.Elem().Interface()); err != nil {
-				return fmt.Errorf("Tx Select: failed to append value: %w", err)
+
+			if err := rows.Scan(pointers...); err != nil {
+				duration := time.Since(start)
+				log.Printf("DB Tx Select Scan Error (Struct): %s [%v] (%s) - %v", query, args, duration, err)
+				return fmt.Errorf("sqlite Tx Select scan (struct) error: %w", err)
 			}
+
+			// Append the new element (pointer or value) to the destination slice
+			var appendErr error
+			if isPtrElem { // If dest is *[]*User
+				appendErr = appendValueToSlice(dest, newElemPtrVal.Interface()) // Append *User
+			} else { // If dest is *[]User
+				appendErr = appendValueToSlice(dest, newElemPtrVal.Elem().Interface()) // Append User
+			}
+			if appendErr != nil {
+				duration := time.Since(start)
+				log.Printf("DB Tx Select Append Error: %s [%v] (%s) - %v", query, args, duration, appendErr)
+				return fmt.Errorf("sqlite Tx Select: failed to append value: %w", appendErr)
+			}
+			rowCount++
 		}
 	}
 
+	// --- Check for errors during iteration --- (Same as SQLiteAdapter.Select)
 	if err = rows.Err(); err != nil {
-		log.Printf("DB Tx Select Rows Error: %s [%v] - %v", query, args, err)
+		duration := time.Since(start)
+		log.Printf("DB Tx Select Rows Error: %s [%v] (%s) - %v", query, args, duration, err)
 		return fmt.Errorf("sqlite Tx Select rows error: %w", err)
 	}
+
 	duration := time.Since(start)
-	if err != nil {
-		log.Printf("DB Tx Select Error: %s [%v] (%s) - %v", query, args, duration, err)
-		return fmt.Errorf("sqlite Tx Select error: %w", err)
-	}
-	log.Printf("DB Tx Select: %s [%v] (%s)", query, args, duration) // Duration removed
-	log.Printf("DB Tx Select: %s [%v] (%s)", query, args, duration)
+	log.Printf("DB Tx Select OK: %s [%v] (%d rows, %s)", query, args, rowCount, duration) // Log success
 	return nil
 }
 
