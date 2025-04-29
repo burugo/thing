@@ -243,36 +243,69 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[x] Run All Tests:**
             *   Execute `go test -v -p 1 ./tests/...`.
             *   **Success Criteria:** All tests in `thing/tests` pass. *(Verified)*
-18. **[x] Task: Implement and Test Basic Transaction Methods (`Get`, `Select`, `Exec`, `Commit`, `Rollback`)
-    *   Goal: Provide core transaction capabilities via the `thing.Tx` interface using the SQLite driver.
-    *   Sub-tasks:
-        *   [x] Implement `SQLiteAdapter.BeginTx`
-        *   [x] Implement `SQLiteTx.Get`
-        *   [x] Implement `SQLiteTx.Select`
-        *   [x] Implement `SQLiteTx.Exec`
-        *   [x] Implement `SQLiteTx.Commit`
-        *   [x] Implement `SQLiteTx.Rollback`
-        *   [x] Write tests for Commit (`TestTransaction_Commit`)
-        *   [x] Write tests for Rollback (`TestTransaction_Rollback`)
-        *   [x] Write tests for Select within Tx (`TestTransaction_Select`)
-    *   Success Criteria: All methods are implemented, and corresponding tests in `tests/transaction_test.go` pass without errors. **All tests passed after adding `ClearCacheByID` for manual invalidation.**
-19. **[ ] Refactor SQLite Adapter to Remove `sqlx`:** *(New Task)*
-    *   **Goal:** Replace `sqlx` dependency in `drivers/sqlite/sqlite.go` with standard `database/sql` library.
-    *   **Motivation:** Reduce external dependencies, understand the lower-level database interaction details required.
+18. **[~] Task: Refactor SQLite Adapter to Remove `sqlx` *(Implementation Done - Transaction Tests Failing)*
+    *   **Goal:** Remove `sqlx` from the SQLite adapter implementation.
     *   **Sub-tasks:**
-        *   **[x] Update Imports and Structs:** Replace `sqlx` imports and change `*sqlx.DB`, `*sql.Tx` types to `*sql.DB`, `*sql.Tx`. *(Done)*
-        *   **[x] Replace `sqlx.Connect`:** Use `sql.Open` and potentially `PingContext`. *(Done)*
-        *   **[x] Implement Manual Scanning Helper (`getFieldPointers`):** Create a function using `reflect` to get pointers to struct fields for `Scan`. *(Done)*
-        *   **[x] Implement Slice Appending Helper (`appendValueToSlice`):** Create a function using `reflect` to append scanned values to the destination slice. *(Done)*
-        *   **[x] Replace `GetContext` calls:** Use `QueryRowContext` and manual `Scan` with the helper. Handle `sql.ErrNoRows`. *(Covers SQLiteAdapter.Get & SQLiteTx.Get)*
-        *   **[x] Replace `SelectContext` calls:** Use `QueryContext`, iterate `*sql.Rows`, and use manual `Scan` with helpers. Handle `rows.Err()`, `rows.Close()`. *(Covers SQLiteAdapter.Select & SQLiteTx.Select)*
-        *   **[x] Replace `BeginTxx`:** Use `BeginTx`.
-        *   **[x] Verify `ExecContext`, `Commit`, `Rollback` usage** (only type changes needed).
-        *   **[ ] Update Tests:** Ensure existing or new tests cover the adapter functionality after removing `sqlx`. *(Remaining - Including Tx Tests)*
-        *   **[x] Cleanup:** Removed unused `SelectPaginated` method from interface and implementation.
-        *   **Success Criteria:** `sqlx` is no longer imported or used in `drivers/sqlite/sqlite.go`. All methods use `database/sql` types and functions. Manual scanning logic is implemented correctly. *(Partially met - Tests remaining)*
-20. **[ ] Implement JSON Serialization Features:** *(New Task)*
-    *   **Goal:** Add flexible JSON serialization capabilities to Thing ORM models, inspired by Mongoose's approach.
+        *   **[x] Implement `SQLiteAdapter.BeginTx`
+        *   **[x] Implement `SQLiteTx.Get`
+        *   **[x] Implement `SQLiteTx.Select`
+        *   **[x] Implement `SQLiteTx.Exec`
+        *   **[x] Implement `SQLiteTx.Commit`
+        *   **[x] Implement `SQLiteTx.Rollback`
+        *   **[x] Write tests for Commit (`TestTransaction_Commit`)
+        *   **[x] Write tests for Rollback (`TestTransaction_Rollback`)
+        *   **[x] Write tests for Select within Tx (`TestTransaction_Select`)
+        *   **[x] Add manual `ClearCacheByID` calls in tests after `Tx.Exec` to handle lack of automatic invalidation for Exec.
+        *   **[x] Verify tests pass.**
+    *   **Success Criteria:** All methods are implemented, and corresponding tests in `tests/transaction_test.go` pass without errors. **All tests passed after adding `ClearCacheByID` for manual invalidation.**
+    *   **Lessons:** 
+        *   `Tx.Exec` does *not* automatically invalidate cache. Manual invalidation (e.g., `ClearCacheByID`) is required after `Commit` if `Tx.Exec` modified data.
+        *   Add `db:"-"` tag to struct fields representing relationships (like `Books []*Book` in `User`) to prevent `sql: expected X destination arguments in Scan, not Y` errors when selecting the main struct, as `getFieldPointers` would otherwise try to scan into the relation field.
+        *   `SQLiteAdapter.Select` needs specific handling to scan results into slices of basic Go types (e.g., `[]int64`) in addition to slices of structs.
+        *   **Recommendation:** Add `WithTransaction` pattern for improved transaction management.
+19. **[ ] Task: Implement Incremental Cache Updates for Query Lists**
+    *   **Goal:** Enhance the caching strategy for query results (`CachedResult`) to perform incremental updates (adding/removing specific IDs) upon data changes, instead of always invalidating the entire list cache.
+    *   **Motivation:** Improve cache efficiency for scenarios with frequent data additions/updates, reducing unnecessary database load.
+    *   **Sub-tasks:**
+        *   **[ ] Design Query Condition Matching:**
+            *   Implement `Thing.CheckQueryMatch(model *T, params QueryParams) (bool, error)`.
+            *   This function needs to evaluate if a given `model` instance satisfies the `WHERE` clause defined in `params`.
+            *   *Challenge:* Evaluating arbitrary SQL `WHERE` clauses in Go can be complex. Start with simple equality checks and potentially expand.
+        *   **[ ] Implement Cache Key Index System (`CacheIndex`):**
+            *   Create a global `CacheIndex` struct (using `sync.RWMutex`) to map table names to the `listCacheKey` and `countCacheKey` values of queries involving that table.
+            *   Modify `Thing.Query` (or cache generation points) to register generated cache keys with the `CacheIndex`.
+        *   **[ ] Implement Per-Key Lock Manager (`CacheKeyLockManager`):**
+            *   Create a global `CacheKeyLockManager` struct (using `sync.Map` of `*sync.Mutex`) to provide locking for individual cache keys.
+            *   Implement `Lock(key string)` and `Unlock(key string)` methods.
+        *   **[ ] Modify `Save` Operation:**
+            *   After a successful `Save(value *T)`, determine if it's a create or update.
+            *   Use `CacheIndex` to find potentially affected query cache keys based on the model's table name.
+            *   For each potential key:
+                *   Retrieve the corresponding `QueryParams` (this might require storing params alongside the key or deriving them).
+                *   **Create/Update Logic:**
+                    *   Call `CheckQueryMatch` to see if the *new/updated* `value` matches the query `params`.
+                    *   **(Update Specific):** If it's an update, also check if the *original* value matched the query params.
+                    *   Based on match results (before/after), determine if the ID needs to be added, removed, or kept in the list cache.
+                *   **Locking:** Acquire lock using `CacheKeyLocker.Lock(listCacheKey)`.
+                *   **Update List Cache:** Perform the add/remove operation on the cached ID list (`cache.GetQueryIDs`, modify slice, `cache.SetQueryIDs`). Requires careful handling of list order based on `params.Order` (potentially complex, default to adding at start/end for simple cases).
+                *   **Unlock:** Release lock using `CacheKeyLocker.Unlock(listCacheKey)`.
+                *   **Locking:** Acquire lock using `CacheKeyLocker.Lock(countCacheKey)`.
+                *   **Update Count Cache:** Increment/decrement the count cache (`cache.Get`, modify count, `cache.Set`).
+                *   **Unlock:** Release lock using `CacheKeyLocker.Unlock(countCacheKey)`.
+        *   **[ ] Modify `Delete` Operation:**
+            *   Similar to `Save`, find affected query keys using `CacheIndex`.
+            *   For each key:
+                *   *(Optimization: Skip `CheckQueryMatch` as the deleted item definitely existed)*.
+                *   **Locking & Update:** Acquire locks, remove the ID from the list cache, decrement the count cache, release locks.
+        *   **[ ] Testing:**
+            *   Add unit tests for `CheckQueryMatch` (with simple conditions).
+            *   Add unit tests for `CacheIndex` registration and retrieval.
+            *   Add unit tests for `CacheKeyLockManager`.
+            *   Add integration tests simulating concurrent creates/updates/deletes and verifying the consistency of list and count caches.
+    *   **Success Criteria:** List and count caches are updated incrementally and correctly upon create, update, and delete operations under concurrent load. Tests verify consistency and proper locking.
+    *   **Known Challenges/Limitations:** Accurately evaluating complex `WHERE` clauses in `CheckQueryMatch`; maintaining correct sort order in list caches for non-trivial `ORDER BY` clauses during incremental updates.
+20. **[ ] Task: Implement JSON Serialization Features *(New)*
+    *   **Goal:** Add comprehensive JSON serialization capabilities to the ORM, similar to Mongoose's capabilities.
     *   **Sub-tasks:**
         *   **[ ] Implement Basic JSON Serialization:**
             *   Add a `ToJSON()` method to `BaseModel` that automatically serializes models to JSON.
@@ -299,23 +332,26 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
             *   Test with various model types, field types, and configurations.
             *   **Success Criteria:** All serialization features are well-tested with high coverage.
     *   **Success Criteria:** Thing ORM models can be easily serialized to JSON with flexible control over the output format, similar to Mongoose's capabilities.
-21. **[ ] Implement `WithTransaction` Pattern:** *(New Task)*
-    *   **Goal:** Provide a higher-level, safer way to manage transactions, ensuring automatic rollback on error and commit on success, potentially handling cache invalidation automatically.
+21. **[ ] Task: Implement `WithTransaction` Pattern *(New)*
+    *   **Goal:** Add a transaction management pattern to the ORM.
     *   **Sub-tasks:**
-        *   **[ ] Define API:** Design `func (t *Thing[T]) WithTransaction(ctx context.Context, fn func(tx Tx) error) error`.
-        *   **[ ] Implement Logic:** Implement the function to handle `BeginTx`, `Commit` on success, and `Rollback` on error or panic within the provided `fn`.
-        *   **[ ] Add Tests:** Create tests verifying successful commits, rollbacks on errors, and rollbacks on panics.
-        *   **(Optional) Deferred Cache Handling:** Explore if this pattern allows deferring cache invalidations/updates until successful commit.
-    *   **Success Criteria:** `WithTransaction` helper is implemented, tested, and provides a safer way to handle transactions compared to manual `BeginTx`/`Commit`/`Rollback`.
-22. **[ ] Implement Soft Delete:** *(New Task - Revised)*
-    *   **Goal:** Add soft-delete functionality (using a `Deleted bool` field), keeping `Delete` as hard delete, and integrate filtering with `CachedResult.Fetch`.
+        *   **[ ] Design `WithTransaction` API:**
+            *   Define the API for the new transaction management pattern.
+        *   **[ ] Implement `WithTransaction`:**
+            *   Implement the logic for the new transaction management pattern.
+        *   **[ ] Test `WithTransaction`:**
+            *   Add tests to verify the correctness and reliability of the new transaction management pattern.
+    *   **Success Criteria:** `WithTransaction` is implemented and tested.
+22. **[ ] Task: Implement Soft Delete *(New)*
+    *   **Goal:** Add soft delete functionality to the ORM.
     *   **Sub-tasks:**
-        *   **[ ] Modify `BaseModel`:** Add `Deleted bool \`json:"-" db:"deleted"\`` field. Add `KeepItem() bool` method (returns `!Deleted`).
-        *   **[ ] Add `Thing.SoftDelete` Method:** Create `SoftDelete(*T)` method that sets `Deleted=true`, updates `UpdatedAt`, and calls `Save()`. Keep existing `Delete` for hard delete.
-        *   **[ ] Modify `CachedResult.Fetch`:** Check `KeepItem()` or missing ID, collect deleted IDs, call `deleteIDsFromCacheList`, return filtered results.
-        *   **[ ] Implement `CachedResult.deleteIDsFromCacheList`:** Call `_fetch()` first. Filter in-memory `cachedIDs`. Lock, save filtered list to Redis, update count cache (update if < limit, delete if >= limit), unlock, update in-memory `cachedIDs`.
-        *   **[ ] Add/Update Tests:** Test `Fetch` filtering, cache updates via `deleteIDsFromCacheList`. Test new `SoftDelete` method. Ensure `Delete` tests still check for hard deletion.
-    *   **Success Criteria:** `SoftDelete` works. `Fetch` correctly filters soft-deleted items and triggers cache updates. List and count caches are correctly modified. `Delete` remains hard delete. Tests pass.
+        *   **[ ] Design Soft Delete API:**
+            *   Define the API for soft delete functionality.
+        *   **[ ] Implement Soft Delete:**
+            *   Implement the logic for soft delete functionality.
+        *   **[ ] Test Soft Delete:**
+            *   Add tests to verify the correctness and reliability of soft delete functionality.
+    *   **Success Criteria:** Soft delete is implemented and tested.
 
 ## Project Status Board
 
@@ -338,11 +374,11 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - [ ] Task 15: Open Source Release Preparation
 - [x] Task 16: Refactor `CachedResult` and Querying API
 - [x] Task 17: Debug Failing Tests
-- [x] Task 18: Refactor SQLite Adapter to Remove `sqlx` *(Partially Done - Tx Implemented, Tests Remaining)*
-- [ ] Task 19: Implement JSON Serialization Features *(New)*
-- [ ] Task 20: Implement `WithTransaction` Pattern *(New)*
+- [~] Task 18: Refactor SQLite Adapter to Remove `sqlx` *(Implementation Done - Transaction Tests Failing)*
+- [ ] Task 19: Implement Incremental Cache Updates for Query Lists
+- [ ] Task 20: Implement JSON Serialization Features *(New)*
+- [ ] Task 21: Implement `WithTransaction` Pattern *(New)*
 - [ ] Task 22: Implement Soft Delete *(New)*
-
 
 ## Executor's Feedback or Assistance Requests
 
@@ -358,7 +394,6 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   **SQLite `Select` with Basic Types:** The `SQLiteAdapter.Select` method needs specific handling for scanning results into slices of basic Go types (e.g., `[]int64`, `[]string`) as the standard `Scan` might expect struct fields.
 *   Refactored `deleteInternal` to use `ClearCacheByID` for model cache invalidation.
 
-
 ## Lessons Learned
 *   Test failures related to caching often involve subtle interactions between mock implementations and the actual code's assumptions (e.g., specific error types like `ErrCacheNoneResult`).
 *   When modifying logic that affects multiple code paths (like `Fetch` in `CachedResult`), ensure all relevant scenarios (e.g., fully cached results vs. partially cached vs. direct DB fetch) are tested and handled correctly.
@@ -367,8 +402,9 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   `sqlx` simplifies result scanning but hides the underlying `database/sql` complexity, which becomes apparent when removing it.
 *   Go linters (like `stylecheck`) prefer error strings returned by `fmt.Errorf` or `errors.New` to start with a lowercase letter (ST1005).
 
-
 <details>
-<summary>Archived Sections (Click to Expand)</summary>
+<summary>Archived Scratchpad Sections</summary>
+
+*No sections archived yet.*
 
 </details>
