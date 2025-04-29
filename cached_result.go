@@ -190,7 +190,8 @@ func (cr *CachedResult[T]) _fetch_ids_from_db(offset, limit int) ([]int64, error
 	return fetchedIDs, nil
 }
 
-// _fetch_data attempts to load the first `cacheListCountLimit` IDs from cache or database.
+// _fetch_data attempts to load up to `cacheListCountLimit` valid IDs from cache or database.
+// It filters out soft-deleted items before caching.
 func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	if cr.thing == nil || cr.thing.cache == nil || cr.thing.db == nil {
 		return nil, errors.New("_fetch_data: CachedResult not properly initialized")
@@ -238,17 +239,80 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	}
 	log.Printf("CACHE MISS: List Key: %s (Tried Get: %v, Tried GetQueryIDs: %v)", listCacheKey, genericCacheErr, idsCacheErr)
 
-	// 3. Cache Miss: Query Database for first `cacheListCountLimit` IDs
-	// Use the common method to fetch IDs from database
-	fetchedIDs, err := cr._fetch_ids_from_db(0, cacheListCountLimit)
-	if err != nil {
-		return nil, err
+	// 3. Cache Miss: Query Database and filter results
+	// 3a. Prepare to collect valid, non-deleted IDs
+	validIDs := make([]int64, 0, cacheListCountLimit)
+	currentOffset := 0
+	batchSize := int(float64(cacheListCountLimit) * 1.5) // Larger batch for efficiency
+
+	// 3b. Loop until we have enough IDs or no more results, with max iteration protection
+	const maxIterations = 20 // Prevent excessive looping when many records are soft-deleted
+	iterationCount := 0
+
+	for len(validIDs) < cacheListCountLimit {
+		iterationCount++
+		if iterationCount > maxIterations {
+			log.Printf("WARN: Reached maximum number of iterations (%d) in _fetch_data. Returning %d valid IDs found so far.",
+				maxIterations, len(validIDs))
+			break
+		}
+
+		// Fetch a batch of IDs from DB
+		batchIDs, dbErr := cr._fetch_ids_from_db(currentOffset, batchSize)
+		if dbErr != nil {
+			return nil, fmt.Errorf("failed to fetch IDs from database: %w", dbErr)
+		}
+
+		// If no more IDs, break
+		if len(batchIDs) == 0 {
+			break
+		}
+
+		// Get models for these IDs to check KeepItem()
+		models, modelsErr := cr.thing.ByIDs(batchIDs)
+		if modelsErr != nil {
+			log.Printf("WARN: Failed to fetch models for IDs: %v", modelsErr)
+			// Continue with next batch
+			currentOffset += len(batchIDs)
+			continue
+		}
+
+		// Filter models based on KeepItem()
+		for _, id := range batchIDs {
+			// If we have enough valid IDs, stop
+			if len(validIDs) >= cacheListCountLimit {
+				break
+			}
+
+			model, found := models[id]
+			if !found {
+				continue // Model not found, skip
+			}
+
+			basePtr := getBaseModelPtr(model)
+			if basePtr == nil {
+				continue // Invalid model, skip
+			}
+
+			// Only keep IDs for models that should be visible
+			if basePtr.KeepItem() {
+				validIDs = append(validIDs, id)
+			}
+		}
+
+		// Advance offset for next batch
+		currentOffset += len(batchIDs)
+
+		// If this batch returned fewer than expected, no more results
+		if len(batchIDs) < batchSize {
+			break
+		}
 	}
 
-	// 4. Handle DB results and cache appropriately
-	if len(fetchedIDs) == 0 {
+	// 4. Handle filtered DB results and cache appropriately
+	if len(validIDs) == 0 {
 		// Store NoneResult marker in cache
-		log.Printf("DB HIT (Zero Results): List Key: %s. Caching NoneResult.", listCacheKey)
+		log.Printf("DB HIT (Zero Valid Results): List Key: %s. Caching NoneResult.", listCacheKey)
 		cacheSetErr := cr.thing.cache.Set(cr.thing.ctx, listCacheKey, NoneResult, globalCacheTTL)
 		if cacheSetErr != nil {
 			log.Printf("WARN: Failed to cache NoneResult for key %s: %v", listCacheKey, cacheSetErr)
@@ -263,32 +327,74 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 		} else {
 			log.Printf("WARN: Failed to generate count cache key for zero result update: %v", keyErr)
 		}
-		return fetchedIDs, nil // Return empty slice
+		return validIDs, nil // Return empty slice
 	} else {
-		// Store actual fetched IDs in Cache
-		log.Printf("DB HIT: List Key: %s, Fetched %d IDs (Limit %d). Caching IDs.", listCacheKey, len(fetchedIDs), cacheListCountLimit)
-		cacheSetErr := cr.thing.cache.SetQueryIDs(cr.thing.ctx, listCacheKey, fetchedIDs, globalCacheTTL)
+		// Store filtered valid IDs in Cache
+		log.Printf("DB HIT: List Key: %s, Found %d valid IDs after filtering. Caching IDs.", listCacheKey, len(validIDs))
+		cacheSetErr := cr.thing.cache.SetQueryIDs(cr.thing.ctx, listCacheKey, validIDs, globalCacheTTL)
 		if cacheSetErr != nil {
 			log.Printf("WARN: Failed to cache list IDs for key %s: %v", listCacheKey, cacheSetErr)
 		}
 
 		// If fetched count < limit, update Count cache as well
-		if len(fetchedIDs) < cacheListCountLimit {
+		if len(validIDs) < cacheListCountLimit {
 			countCacheKey, keyErr := cr.generateCountCacheKey()
 			if keyErr == nil {
-				countStr := strconv.FormatInt(int64(len(fetchedIDs)), 10)
+				countStr := strconv.FormatInt(int64(len(validIDs)), 10)
 				countSetErr := cr.thing.cache.Set(cr.thing.ctx, countCacheKey, countStr, globalCacheTTL)
 				if countSetErr != nil {
 					log.Printf("WARN: Failed to update count cache (key: %s) after partial list fetch: %v", countCacheKey, countSetErr)
 				} else {
-					log.Printf("Updated count cache (key: %s) with count %d after partial list fetch", countCacheKey, len(fetchedIDs))
+					log.Printf("Updated count cache (key: %s) with count %d after partial list fetch", countCacheKey, len(validIDs))
 				}
 			} else {
 				log.Printf("WARN: Failed to generate count cache key for update after partial list fetch: %v", keyErr)
 			}
 		}
-		return fetchedIDs, nil // Return fetched IDs
+		return validIDs, nil // Return filtered valid IDs
 	}
+}
+
+// invalidateCache invalidates both the list and count cache for the current query./ This is used when we detect inconsistencies in the cached data.
+func (cr *CachedResult[T]) invalidateCache() error {
+	if cr.thing == nil || cr.thing.cache == nil {
+		return errors.New("invalidateCache: CachedResult not properly initialized")
+	}
+
+	// 1. Invalidate list cache
+	listCacheKey, err := cr.generateListCacheKey()
+	if err != nil {
+		return fmt.Errorf("failed to generate list cache key for invalidation: %w", err)
+	}
+
+	deleteErr := cr.thing.cache.Delete(cr.thing.ctx, listCacheKey)
+	if deleteErr != nil && !errors.Is(deleteErr, ErrNotFound) {
+		log.Printf("WARN: Failed to invalidate list cache for key %s: %v", listCacheKey, deleteErr)
+		// Continue despite error, try to invalidate count cache as well
+	} else {
+		log.Printf("Cache invalidated for list key: %s", listCacheKey)
+	}
+
+	// 2. Invalidate count cache
+	countCacheKey, err := cr.generateCountCacheKey()
+	if err != nil {
+		return fmt.Errorf("failed to generate count cache key for invalidation: %w", err)
+	}
+
+	deleteErr = cr.thing.cache.Delete(cr.thing.ctx, countCacheKey)
+	if deleteErr != nil && !errors.Is(deleteErr, ErrNotFound) {
+		log.Printf("WARN: Failed to invalidate count cache for key %s: %v", countCacheKey, deleteErr)
+	} else {
+		log.Printf("Cache invalidated for count key: %s", countCacheKey)
+	}
+
+	// 3. Reset in-memory cache state to trigger reload on next access
+	cr.hasLoadedIDs = false
+	cr.hasLoadedCount = false
+	cr.cachedIDs = nil
+	cr.cachedCount = 0
+
+	return nil
 }
 
 // Fetch returns a subset of records starting from the given offset with the specified limit.
@@ -297,7 +403,6 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 // - It iteratively fetches batches from cache or DB
 // - It filters items using KeepItem()
 // - It dynamically calculates how many more items to fetch based on filtering results
-// - It tracks deleted/missing IDs for cache maintenance
 func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 	if cr.thing == nil || cr.thing.cache == nil || cr.thing.db == nil {
 		return nil, errors.New("Fetch: CachedResult not properly initialized")
@@ -314,12 +419,20 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 		return []*T{}, nil
 	}
 
+	// Get total count for this query to determine if there are more records to fetch
+	totalCount, err := cr.Count()
+	if err != nil {
+		log.Printf("WARN: Failed to get total count for query: %v. Will proceed with available IDs.", err)
+		// Even if count fails, we can still use cachedIDs
+		totalCount = int64(len(cr.cachedIDs))
+	}
+
 	// --- Setup for iterative fetching (similar to PHP CachedResult.fetch implementation) ---
 	finalResults := make([]*T, 0, limit)
-	deletedOrMissingIDs := make([]int64, 0)
 	nextFetchOffset := offset // Starting offset (PHP's $start)
 	nextFetchLimit := limit   // Initial fetch limit (PHP's $limit)
 	remainingNeeded := limit  // How many more items we need (PHP's $need_count)
+	cacheInvalidated := false // Flag to track if cache was invalidated
 
 	// Main loop - keep fetching until we have enough results or run out of data
 	for remainingNeeded > 0 {
@@ -344,8 +457,8 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 			log.Printf("Fetch Iteration: Using %d cached IDs [%d:%d], need %d more results (source: %s)",
 				len(idsToCheck), nextFetchOffset, endOffset, remainingNeeded, fetchSource)
 
-		} else if len(cr.cachedIDs) == cacheListCountLimit {
-			// Cache list might be truncated; fetch next batch directly from DB
+		} else if int64(nextFetchOffset) < totalCount {
+			// Still have more data in the database according to total count
 			fetchSource = "Database"
 
 			// Get IDs directly from DB with proper offset and limit
@@ -356,7 +469,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 			}
 
 			if len(idsToCheck) == 0 {
-				// No more results in DB
+				// No more results in DB despite what count says
 				log.Printf("Fetch Iteration: No more IDs from database (source: %s)", fetchSource)
 				break
 			}
@@ -365,8 +478,8 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 				len(idsToCheck), remainingNeeded, fetchSource)
 
 		} else {
-			// Cache wasn't truncated and we're past its end - no more results
-			log.Printf("Fetch Iteration: Reached end of cached results (%d IDs)", len(cr.cachedIDs))
+			// Reached the end of total records
+			log.Printf("Fetch Iteration: Reached end of all results (%d total)", totalCount)
 			break
 		}
 
@@ -378,11 +491,28 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 		models, err := cr.thing.ByIDs(idsToCheck /* preloads */)
 		if err != nil {
 			log.Printf("WARN: Fetch Iteration: ByIDs failed: %v", err)
-			deletedOrMissingIDs = append(deletedOrMissingIDs, idsToCheck...)
-			nextFetchOffset += len(idsToCheck) // PHP would still advance $start
+
+			// If fetching from cache failed, invalidate cache
+			if fetchSource == "Cache" && !cacheInvalidated {
+				log.Printf("Invalidating cache due to ByIDs failure for cached IDs")
+				invErr := cr.invalidateCache()
+				if invErr != nil {
+					log.Printf("WARN: Failed to invalidate cache: %v", invErr)
+				}
+				cacheInvalidated = true
+
+				// Skip this batch and continue
+				nextFetchOffset += len(idsToCheck)
+				continue
+			}
+
+			nextFetchOffset += len(idsToCheck) // Still advance $start
 			nextFetchLimit = remainingNeeded   // Set next limit to remaining need
 			continue
 		}
+
+		// Flag to track if any issue was found with cached IDs
+		anyIssueFound := false
 
 		// --- Process and filter fetched models (similar to PHP fetch foreach loop) ---
 		processedFromBatch := 0
@@ -392,8 +522,9 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 			model, found := models[id]
 			if !found {
 				// ID exists but model not returned (e.g., deleted between queries)
-				// PHP: $key = array_search($_id, $this->data); if ($key !== False) { unset($this->data[$key]); }
-				deletedOrMissingIDs = append(deletedOrMissingIDs, id)
+				if fetchSource == "Cache" {
+					anyIssueFound = true
+				}
 				continue
 			}
 
@@ -402,24 +533,33 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 				continue // Skip invalid models
 			}
 
-			// PHP: if ($item->keep_item()) { ... } else { ... }
+			// Check if item should be kept (i.e., not soft-deleted)
 			if basePtr.KeepItem() {
 				finalResults = append(finalResults, model)
 				remainingNeeded--
 				if remainingNeeded == 0 {
 					break // Got all we need
 				}
-			} else {
-				// PHP: $deleted[] = $_id
-				deletedOrMissingIDs = append(deletedOrMissingIDs, id)
+			} else if fetchSource == "Cache" {
+				// Item is soft-deleted but still in cache
+				anyIssueFound = true
 			}
 		}
 
-		// --- Prepare for next iteration (similar to PHP calculation after foreach) ---
-		// PHP: $cached_count = count($this->data)
-		// PHP: if ($cached_count) $limit = $cached_count > ($start + $limit) ? $limit : $cached_count - $start
-		// PHP: if ($need_count == 0 || $limit <= 0) break
+		// If any issues found with cached IDs and cache hasn't been invalidated yet
+		if fetchSource == "Cache" && anyIssueFound && !cacheInvalidated {
+			log.Printf("Invalidating cache due to inconsistencies found in cached IDs")
+			invErr := cr.invalidateCache()
+			if invErr != nil {
+				log.Printf("WARN: Failed to invalidate cache: %v", invErr)
+			}
+			cacheInvalidated = true
 
+			// We continue with the results we have so far, and possibly fetch more
+			// from the database in the next iteration
+		}
+
+		// --- Prepare for next iteration (similar to PHP calculation after foreach) ---
 		// Advance offset by how many we processed this iteration
 		nextFetchOffset += processedFromBatch
 
@@ -434,23 +574,6 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 
 		log.Printf("Fetch Iteration: Got %d/%d items so far, need %d more. Next fetch: offset=%d, limit=%d",
 			len(finalResults), limit, remainingNeeded, nextFetchOffset, nextFetchLimit)
-	}
-
-	// --- Clean up deleted/missing IDs from cache if needed ---
-	if len(deletedOrMissingIDs) > 0 {
-		uniqueDeletedIDsMap := make(map[int64]struct{})
-		uniqueDeletedIDs := make([]int64, 0, len(deletedOrMissingIDs))
-		for _, id := range deletedOrMissingIDs {
-			if _, exists := uniqueDeletedIDsMap[id]; !exists {
-				uniqueDeletedIDsMap[id] = struct{}{}
-				uniqueDeletedIDs = append(uniqueDeletedIDs, id)
-			}
-		}
-
-		log.Printf("Fetch: Found %d deleted/missing IDs, will update cache", len(uniqueDeletedIDs))
-
-		// TODO: PHP: $this->delete($deleted)
-		// TODO: Implement and call cr.deleteIDsFromCacheList(uniqueDeletedIDs)
 	}
 
 	log.Printf("Fetch: Returning %d/%d requested results", len(finalResults), limit)
