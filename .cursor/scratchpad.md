@@ -307,6 +307,15 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[ ] Add Tests:** Create tests verifying successful commits, rollbacks on errors, and rollbacks on panics.
         *   **(Optional) Deferred Cache Handling:** Explore if this pattern allows deferring cache invalidations/updates until successful commit.
     *   **Success Criteria:** `WithTransaction` helper is implemented, tested, and provides a safer way to handle transactions compared to manual `BeginTx`/`Commit`/`Rollback`.
+22. **[ ] Implement Soft Delete:** *(New Task - Revised)*
+    *   **Goal:** Add soft-delete functionality (using a `Deleted bool` field), keeping `Delete` as hard delete, and integrate filtering with `CachedResult.Fetch`.
+    *   **Sub-tasks:**
+        *   **[ ] Modify `BaseModel`:** Add `Deleted bool \`json:"-" db:"deleted"\`` field. Add `KeepItem() bool` method (returns `!Deleted`).
+        *   **[ ] Add `Thing.SoftDelete` Method:** Create `SoftDelete(*T)` method that sets `Deleted=true`, updates `UpdatedAt`, and calls `Save()`. Keep existing `Delete` for hard delete.
+        *   **[ ] Modify `CachedResult.Fetch`:** Check `KeepItem()` or missing ID, collect deleted IDs, call `deleteIDsFromCacheList`, return filtered results.
+        *   **[ ] Implement `CachedResult.deleteIDsFromCacheList`:** Call `_fetch()` first. Filter in-memory `cachedIDs`. Lock, save filtered list to Redis, update count cache (update if < limit, delete if >= limit), unlock, update in-memory `cachedIDs`.
+        *   **[ ] Add/Update Tests:** Test `Fetch` filtering, cache updates via `deleteIDsFromCacheList`. Test new `SoftDelete` method. Ensure `Delete` tests still check for hard deletion.
+    *   **Success Criteria:** `SoftDelete` works. `Fetch` correctly filters soft-deleted items and triggers cache updates. List and count caches are correctly modified. `Delete` remains hard delete. Tests pass.
 
 ## Project Status Board
 
@@ -332,6 +341,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - [x] Task 18: Refactor SQLite Adapter to Remove `sqlx` *(Partially Done - Tx Implemented, Tests Remaining)*
 - [ ] Task 19: Implement JSON Serialization Features *(New)*
 - [ ] Task 20: Implement `WithTransaction` Pattern *(New)*
+- [ ] Task 22: Implement Soft Delete *(New)*
 
 
 ## Executor's Feedback or Assistance Requests

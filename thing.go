@@ -186,6 +186,7 @@ type BaseModel struct {
 	ID        int64     `json:"id" db:"id"`                 // Primary key
 	CreatedAt time.Time `json:"created_at" db:"created_at"` // Timestamp for creation
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"` // Timestamp for last update
+	Deleted   bool      `json:"-" db:"deleted"`             // Soft delete flag
 
 	// --- Internal ORM state ---
 	// These fields should be populated by the ORM functions (ByID, Create, etc.).
@@ -216,6 +217,11 @@ func (b *BaseModel) TableName() string {
 // IsNewRecord returns whether this is a new record.
 func (b *BaseModel) IsNewRecord() bool {
 	return b.isNewRecord
+}
+
+// KeepItem checks if the record is considered active (not soft-deleted).
+func (b *BaseModel) KeepItem() bool {
+	return !b.Deleted
 }
 
 // SetNewRecordFlag sets the internal isNewRecord flag.
@@ -1844,6 +1850,34 @@ func (t *Thing[T]) Save(value *T) error {
 // Delete removes a record of type T.
 func (t *Thing[T]) Delete(value *T) error {
 	return t.deleteInternal(t.ctx, value) // Calls internal method
+}
+
+// SoftDelete marks a record as deleted by setting the Deleted flag and updating
+// the UpdatedAt timestamp. It then saves the changes.
+func (t *Thing[T]) SoftDelete(model *T) error {
+	if model == nil {
+		return errors.New("cannot soft delete a nil model")
+	}
+
+	baseModelPtr := getBaseModelPtr(model)
+	if baseModelPtr == nil {
+		// This case might be less likely if model is *T, but good practice
+		return errors.New("SoftDelete: model must embed BaseModel")
+	}
+
+	// Set Deleted flag and update timestamp
+	baseModelPtr.Deleted = true
+	baseModelPtr.UpdatedAt = time.Now()
+
+	// Use Save to persist changes and handle cache invalidation
+	// Note: saveInternal triggers BeforeSave/AfterSave but not Before/AfterDelete
+	if err := t.saveInternal(t.ctx, model); err != nil {
+		// If save fails, attempt to revert the flags in memory?
+		// baseModelPtr.Deleted = false // Maybe? Or rely on caller to retry?
+		return fmt.Errorf("SoftDelete failed during save: %w", err)
+	}
+
+	return nil
 }
 
 // Query prepares a query based on QueryParams and returns a *CachedResult[T] for lazy execution.
