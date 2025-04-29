@@ -11,7 +11,7 @@ type User struct {
 	thing.BaseModel
 	Name  string  `db:"name"`
 	Email string  `db:"email"`
-	Books []*Book `thing:"rel=has_many;fk=user_id;model=Book"` // HasMany relationship
+	Books []*Book `thing:"rel=has_many;fk=user_id;model=Book" db:"-"` // HasMany relationship - Added db:"-"
 }
 
 // Change TableName to pointer receiver to satisfy Model[T] interface directly

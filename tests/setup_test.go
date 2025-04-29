@@ -16,7 +16,13 @@ import (
 // It returns the DBAdapter, a mock CacheClient, and a cleanup function.
 func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	// Use in-memory DB for all connections in this test
-	dsn := ":memory:"
+	// Add cache=shared to potentially share the in-memory db across connections from the pool
+	// dsn := ":memory:?cache=shared"
+	// Use a file-based DB for testing to rule out :memory: issues
+	dbFile := "test_thing.db"
+	_ = os.Remove(dbFile) // Remove any previous test db file
+	dsn := dbFile
+
 	adapter, err := sqlite.NewSQLiteAdapter(dsn)
 	require.NoError(tb, err, "Failed to create SQLite adapter")
 
@@ -56,6 +62,11 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 			tb.Logf("Error closing test DB adapter: %v", err)
 			// Optionally panic or fail test if Close fails critically
 			// tb.Fatalf("CRITICAL: Failed to close test DB adapter: %v", err)
+		}
+		// Remove the test database file
+		removeErr := os.Remove(dbFile)
+		if removeErr != nil && !os.IsNotExist(removeErr) {
+			tb.Logf("Error removing test DB file %s: %v", dbFile, removeErr)
 		}
 		tb.Logf("--- setupTestDB: Cleanup function finished ---")
 	}

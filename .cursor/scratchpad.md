@@ -243,7 +243,21 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[x] Run All Tests:**
             *   Execute `go test -v -p 1 ./tests/...`.
             *   **Success Criteria:** All tests in `thing/tests` pass. *(Verified)*
-18. **[ ] Implement JSON Serialization Features:** *(New Task)*
+18. **[ ] Refactor SQLite Adapter to Remove `sqlx`:** *(New Task)*
+    *   **Goal:** Replace `sqlx` dependency in `drivers/sqlite/sqlite.go` with standard `database/sql` library.
+    *   **Motivation:** Reduce external dependencies, understand the lower-level database interaction details required.
+    *   **Sub-tasks:**
+        *   **[x] Update Imports and Structs:** Replace `sqlx` imports and change `*sqlx.DB`, `*sql.Tx` types to `*sql.DB`, `*sql.Tx`. *(Done)*
+        *   **[x] Replace `sqlx.Connect`:** Use `sql.Open` and potentially `PingContext`. *(Done)*
+        *   **[x] Implement Manual Scanning Helper (`getFieldPointers`):** Create a function using `reflect` to get pointers to struct fields for `Scan`. *(Done)*
+        *   **[x] Implement Slice Appending Helper (`appendValueToSlice`):** Create a function using `reflect` to append scanned values to the destination slice. *(Done)*
+        *   **[x] Replace `GetContext` calls:** Use `QueryRowContext` and manual `Scan` with the helper. Handle `sql.ErrNoRows`. *(Done)*
+        *   **[x] Replace `SelectContext` calls:** Use `QueryContext`, iterate `*sql.Rows`, and use manual `Scan` with helpers. Handle `rows.Err()`, `rows.Close()`. *(Done)*
+        *   **[x] Replace `BeginTxx`:** Use `BeginTx`. *(Done)*
+        *   **[x] Verify `ExecContext`, `Commit`, `Rollback` usage** (likely only type changes needed). *(Done)*
+        *   **[ ] Update Tests:** Ensure existing or new tests cover the adapter functionality after removing `sqlx`. *(Remaining)*
+    *   **Success Criteria:** `sqlx` is no longer imported or used in `drivers/sqlite/sqlite.go`. All methods use `database/sql` types and functions. Manual scanning logic is implemented correctly. All relevant tests pass.
+19. **[ ] Implement JSON Serialization Features:** *(New Task)*
     *   **Goal:** Add flexible JSON serialization capabilities to Thing ORM models, inspired by Mongoose's approach.
     *   **Sub-tasks:**
         *   **[ ] Implement Basic JSON Serialization:**
@@ -274,138 +288,46 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 ## Project Status Board
 
-(Revised for Integration & Scope)
+(Simple Markdown TODO list format. Executor updates status.)
 
-- [x] Project Setup & Core Structure (Done: Module init, `thing` pkg, `thing.go` rename, dirs, interfaces defined)
-- [x] Database Adapter Layer (Initial - Done: SQLite adapter implemented with `sqlx`, including transaction support)
-- [x] Basic CRUD Operations (Done: `Create`, `Update`, `Delete`, `ByID`, `Save` refactored to use DBAdapter)
-- [x] Initial Query Executor Design (Done: `IDs`, `Query` refactored to use DBAdapter and SQL builder) *(Refactored in Task 16)*
-- [x] Caching Layer Integration (Done: Redis Client impl; Object/query cache logic integrated; Basic cache interaction tests added) *(Query caching refactored in Task 16)*
-- [x] Relationship Management (Phase 1: BelongsTo, HasMany) - *Note: Keep simple, reuse core funcs.* (Done: Implemented eager loading via `QueryParams.Preloads`. Requires testing.) *(Dependency on Task 16)*
-- [~] Hooks/Events System (Partially done, needs testing/refinement)
-- [x] Transaction Management (Done: Implemented in SQLite adapter)
-- [ ] Adding Support for More Databases
-- [ ] Querying Refinements (Scope Reduced) *(Refactored in Task 16)*
-- [ ] Relationship Management (Phase 2: ManyToMany) - *Note: Keep simple, reuse core funcs.* *(Dependency on Task 16)*
-- [ ] Schema Definition & Migration Tools (Basic)
-- [~] Testing, Benchmarking, and Refinement (Partial: Initial test setup, basic cache tests added. *Refined plan added.*) *(Query cache tests superseded by Task 16)*
-  - [~] Implement placeholders (`findChangedFields` in `Save` uses basic reflection, needs refinement & tests) ⟵ **Current Focus**
-  - [x] Mock DB/Redis Tests (Done: Enhanced `mockCacheClient` in `tests/thing_test.go`)
-  - [x] Replace DB Placeholders (`ByID`, `Create`, `Save`, `Delete`, `IDs` use adapter)
-  - [x] Refactor TTL logic in `thing.go`
-  - [x] Refactor TTL logic in `cached_result.go`
-  - [x] Run tests to verify TTL changes
-  - [x] Resolve remaining test failures (Task 17 - Done)
-- [x] Refactor `CachedResult` and Querying API (Task 16 - Done)
-- [x] Debug Failing Tests (Task 17 - Done)
-- [ ] Implement JSON Serialization Features (Task 18)
-  - [ ] Basic JSON serialization
-  - [ ] Field inclusion/exclusion
-  - [ ] Virtual properties
-  - [ ] Nested object handling
-  - [ ] Serialization hooks
-  - [ ] Comprehensive tests
+- [~] Task 1: Project Setup & Core Structure (`thing` package, interfaces) - *Partially done*
+- [ ] Task 2: Database Adapter Layer (SQLite initial impl needed)
+- [~] Task 3: Basic CRUD Operations (No Cache Yet) - *Placeholders exist, DB logic needed*
+- [~] Task 4: Initial Query Executor Design - *API/logic needs Task 16 refactor applied*
+- [~] Task 5: Caching Layer Integration - *Basic Redis client/integration done, needs refinement*
+- [ ] Task 6: Relationship Management (Phase 1: BelongsTo, HasMany) - *Depends on Task 16*
+- [~] Task 7: Hooks/Events System - *Definitions exist, testing needed*
+- [ ] Task 8: Transaction Management
+- [ ] Task 9: Adding Support for More Databases (MySQL, PostgreSQL)
+- [ ] Task 10: Querying Refinements - *Covered by Task 16*
+- [ ] Task 11: Relationship Management (Phase 2: ManyToMany) - *Depends on Task 16*
+- [ ] Task 12: Schema Definition & Migration Tools (Basic)
+- [~] Task 13: Testing, Benchmarking, and Refinement - *Ongoing, cache testing improved, lock refactor needed*
+- [ ] Task 14: Documentation and Examples - *Basic READMEs, need feature examples*
+- [ ] Task 15: Open Source Release Preparation
+- [x] Task 16: Refactor `CachedResult` and Querying API
+- [x] Task 17: Debug Failing Tests
+- [ ] Task 18: Refactor SQLite Adapter to Remove `sqlx` *(New)*
+- [ ] Task 19: Implement JSON Serialization Features *(New)*
 
-## Current Status / Progress Tracking
-
-- **2025-04-29:** Successfully refactored TTL logic across `thing.go` and `cached_result.go`.
-- **2025-04-29:** Fixed a regression where public methods were accidentally removed during TTL refactoring.
-- **2025-04-29:** All tests pass after fixing the regression. The TTL refactoring is complete and verified.
-- **2025-04-30:** Analysis completed for improving the `findChangedFields` implementation. Detailed plan created with subtasks.
-- **2025-04-30:** Executor started Task 13: Improving `findChangedFields`. Added `findChangedFieldsAdvanced` function skeleton in `thing.go`.
 
 ## Executor's Feedback or Assistance Requests
 
-- All tests are passing now after the TTL refactoring and fixing the accidental removal of public methods.
-- The core TTL refactoring task is complete.
-- Ready to begin work on improving the `findChangedFields` implementation as per the detailed plan.
-- Added the basic structure for `findChangedFieldsAdvanced`. Next step is to design and implement the metadata caching for efficient field comparison.
+*Provide feedback on tasks, raise blockers, ask questions, or request Planner review.*
+*   **(Previous)** Requesting review of Task 16 completion and confirmation to proceed with testing/debugging (Task 17).
+*   **(Previous)** Task 17 (Debugging) completed. All tests in `thing/tests` pass. Requesting confirmation before potentially moving to other tasks like testing refinement (Task 13) or documentation (Task 14).
+*   Ready for the next task. Awaiting instructions on whether to proceed with Task 18 (Remove sqlx) or Task 19 (JSON Serialization).
 
-## Lessons
 
-- Use `go test -v -p 1` to run tests sequentially and get verbose output, especially helpful for debugging race conditions or cache interactions.
-- Use `go test -race` to detect race conditions.
-- When refactoring caching logic (`
+## Lessons Learned
+*   Test failures related to caching often involve subtle interactions between mock implementations and the actual code's assumptions (e.g., specific error types like `ErrCacheNoneResult`).
+*   When modifying logic that affects multiple code paths (like `Fetch` in `CachedResult`), ensure all relevant scenarios (e.g., fully cached results vs. partially cached vs. direct DB fetch) are tested and handled correctly.
+*   Cache key consistency is critical. Ensure the keys used for setting/getting data match the keys used for invalidation or pattern matching (e.g., `list:` vs `query:` prefix issue).
+*   Running tests individually (`-run TestName`) can help isolate failures before running the full suite.
+*   `sqlx` simplifies result scanning but hides the underlying `database/sql` complexity, which becomes apparent when removing it.
 
-## Planner's Next Task Analysis (2025-04-30)
 
-After reviewing the current state of the project, I can see that we've successfully completed Tasks 16 (Refactor `CachedResult` and Querying API) and 17 (Debug Failing Tests). The TTL refactoring has also been completed and verified. Looking at the Project Status Board, the next logical tasks to focus on are:
+<details>
+<summary>Archived Sections (Click to Expand)</summary>
 
-1. **Continue with Task 13 (Testing, Benchmarking, and Refinement)**: 
-   - We need to implement and test `findChangedFields` in `Save` which currently uses basic reflection and needs refinement.
-   - Add comprehensive tests for cache interactions across CRUD operations.
-   - Implement and test the query cache invalidation strategy based on Task 16's cache structure.
-   - Add configuration for cache TTLs.
-
-2. **Complete Task 7 (Hooks/Events System)**:
-   - This is partially done but needs testing and refinement.
-   - We should focus on completing this before moving to the more complex relationship tasks.
-
-3. **Begin Task 9 (Adding Support for More Databases)**:
-   - We already have SQLite support, but need to implement adapters for MySQL and PostgreSQL.
-   - This involves creating specific database adapters that implement the common interface.
-
-**Recommended Next Task: Task 13 - Improve `findChangedFields` Implementation**
-
-I recommend we focus first on improving the `findChangedFields` implementation within the `Save` method. This is a core part of the ORM that affects update operations and needs to be robust and efficient. After reviewing the current implementation in `thing.go`, I've found several areas for improvement:
-
-### Current Implementation Analysis:
-1. The current implementation uses recursive reflection to compare all fields in two structs (original and updated).
-2. It generates excessive debug logging which could impact performance in production.
-3. It handles `UpdatedAt` as a special case but in a limited way.
-4. It lacks proper handling for:
-   - Nested structs (non-embedded)
-   - Custom type comparisons
-   - Pointer fields
-   - Slices and maps (relies on reflect.DeepEqual)
-   - Zero value detection (distinguishing between zero value and unchanged value)
-5. There is no field metadata caching - reflection is performed repeatedly.
-
-### Sub-tasks:
-1. **Optimize Reflection with Metadata Caching:**
-   - Create a cache for reflection metadata indexed by type
-   - Store field information, column mappings, and comparison logic
-   - Avoid repeating reflection operations for the same type
-
-2. **Improve Field Comparison Logic:**
-   - Integrate `utils.NormalizeValue` or similar functionality for consistent comparison
-   - Implement specialized comparisons for different types (times, pointers, custom types)
-   - Handle nil pointers vs zero values correctly
-   - Add proper support for comparing slices, maps, and custom types
-
-3. **Handle Special Cases:**
-   - Expand UpdatedAt handling
-   - Add options to ignore certain fields during comparison 
-   - Provide proper support for nested struct fields (not just embedded ones)
-   - Handle fields implementing custom interfaces (e.g., Equalable or sql.Scanner)
-
-4. **Performance Improvements:**
-   - Remove excessive debug logging or gate it behind configuration
-   - Use direct field access when possible instead of reflection
-   - Implement object pooling for temporary data structures
-
-5. **Add Comprehensive Tests:**
-   - Basic field changes (string, int, bool, etc.)
-   - Pointer field changes (including nil vs. zero value cases)
-   - Struct field changes (embedded and non-embedded)
-   - Slice and map changes
-   - Custom type changes
-   - Time field changes (including time zone differences)
-   - UpdatedAt handling
-
-### Success Criteria:
-- The implementation correctly identifies changed fields across various data types
-- Edge cases are properly handled (nil pointers, zero values, custom types)
-- Test coverage is comprehensive
-- Performance is improved over the current implementation (benchmark results)
-- The code is clean, well-documented, and follows Go best practices
-
-### Implementation Approach:
-1. Start by creating a replacement function `findChangedFieldsAdvanced` while keeping the original
-2. Implement the field metadata caching system
-3. Develop the improved field comparison logic
-4. Add comprehensive tests for both versions
-5. Benchmark both implementations
-6. Once verified superior, replace the original implementation
-
-Let's prioritize this task to ensure the core update functionality is solid before moving on to other features.
+</details>
