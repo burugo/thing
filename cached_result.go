@@ -488,7 +488,8 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 		}
 
 		// --- Fetch models for IDs (PHP does this via parent::fetch return) ---
-		models, err := cr.thing.ByIDs(idsToCheck /* preloads */)
+		// Pass preloads from the query params to ByIDs to support relationship loading
+		models, err := cr.thing.ByIDs(idsToCheck, cr.params.Preloads...)
 		if err != nil {
 			log.Printf("WARN: Fetch Iteration: ByIDs failed: %v", err)
 
