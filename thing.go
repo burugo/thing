@@ -2065,9 +2065,13 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 		// Check if the model matches the query conditions
 		matchesCurrent, matchesOriginal, err := t.checkModelMatchAgainstQuery(model, originalModel, params, isCreate)
 		if err != nil {
-			// Log the error and, critically, delete the potentially inconsistent cache entries
-			log.Printf("ERROR CheckQueryMatch Failed: Query check failed for cache key %s (and associated count key %s). Deleting cache entries due to error: %v", cacheKey, cacheKey, err)
-			continue
+			// Log the error and delete the specific cache key that failed the check
+			log.Printf("ERROR CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
+			// Attempt to delete the specific key for this iteration
+			if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, ErrNotFound) {
+				log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
+			}
+			continue // Skip further processing for this query cache
 		}
 
 		// Determine action
