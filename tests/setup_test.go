@@ -56,6 +56,9 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	// Initialize mock cache
 	cache := &mockCacheClient{}
 
+	// Reset the global query cache index to prevent interference between tests
+	thing.ResetGlobalCacheIndex()
+
 	cleanup := func() {
 		tb.Logf("--- setupTestDB: Running cleanup function ---")
 		if adapter != nil {
@@ -84,6 +87,9 @@ func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, th
 
 	// Reset mock cache state
 	mockCache.Reset()
+
+	// Reset the global query cache index to prevent interference between tests
+	thing.ResetGlobalCacheIndex()
 
 	// Create Thing instance with the given adapter and cache using New
 	// This ensures the instance uses the specific DB/cache we created.

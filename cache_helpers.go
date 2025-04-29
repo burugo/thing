@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 
@@ -13,33 +12,6 @@ import (
 )
 
 // Placeholder for cache helper functions
-
-// invalidateObjectCache deletes a single model instance from the cache using its table name and ID.
-func invalidateObjectCache(ctx context.Context, cache CacheClient, tableName string, id int64) error {
-	if cache == nil {
-		// Silently return if cache is not configured
-		return nil
-	}
-	if tableName == "" || id == 0 {
-		log.Printf("WARN: invalidateObjectCache called with empty tableName or zero ID. Skipping.")
-		return nil // Or return an error? For now, just log and skip.
-	}
-
-	cacheKey := generateCacheKey(tableName, id)
-	cacheDelStart := time.Now()
-	errCacheDel := cache.DeleteModel(ctx, cacheKey)
-	cacheDelDuration := time.Since(cacheDelStart)
-
-	if errCacheDel != nil {
-		// Log the error but don't necessarily fail the calling operation (e.g., Save)
-		log.Printf("WARN: Failed to delete model from cache for key %s: %v (%s)", cacheKey, errCacheDel, cacheDelDuration)
-		return errCacheDel // Return the error so the caller is aware, though it might ignore it.
-	}
-
-	log.Printf("DEBUG: Invalidated object cache for key %s (%s)", cacheKey, cacheDelDuration)
-	return nil
-}
-
 // getCachedListIDs retrieves a list of IDs stored as a JSON array string from the cache.
 // It returns an empty slice if the key is not found (ErrCacheMiss).
 func getCachedListIDs(ctx context.Context, cacheClient CacheClient, key string) ([]int64, error) {
@@ -69,12 +41,13 @@ func setCachedListIDs(ctx context.Context, cacheClient CacheClient, key string, 
 		// Let's store empty array for consistency.
 		ids = []int64{}
 	}
-	jsonData, err := json.Marshal(ids)
-	if err != nil {
-		return fmt.Errorf("failed to marshal list for key '%s': %w", key, err)
-	}
+	// jsonData, err := json.Marshal(ids)
+	// if err != nil {
+	// 	return fmt.Errorf("failed to marshal list for key '%s': %w", key, err)
+	// }
 
-	err = cacheClient.Set(ctx, key, string(jsonData), ttl)
+	var err error // Declare err here
+	err = cacheClient.SetQueryIDs(ctx, key, ids, ttl)
 	if err != nil {
 		return fmt.Errorf("failed to set cached list '%s': %w", key, err)
 	}
@@ -133,7 +106,3 @@ func removeIDFromList(ids []int64, idToRemove int64) []int64 {
 	}
 	return newIDs
 }
-
-/* <<< Function moved to thing.go as method Thing.updateAffectedQueryCaches >>> */
-
-/* <<< Function moved to thing.go as method Thing.handleDeleteInQueryCaches >>> */

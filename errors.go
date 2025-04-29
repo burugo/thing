@@ -9,7 +9,7 @@ var ErrNotFound = errors.New("thing: requested item not found")
 var (
 	ErrLockNotAcquired = errors.New("thing: could not acquire lock")
 	// ErrQueryCacheNoneResult indicates that the cache holds the marker for an empty query result set.
-	ErrQueryCacheNoneResult = errors.New("thing: cached query result indicates no matching records")
+	// ErrQueryCacheNoneResult = errors.New("thing: cached query result indicates no matching records")
 	// ErrCacheNoneResult indicates the cache key exists but holds the NoneResult marker.
 	ErrCacheNoneResult = errors.New("thing: cache indicates record does not exist (NoneResult marker found)")
 	ErrInvalidID       = errors.New("thing: invalid ID format")

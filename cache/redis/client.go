@@ -141,10 +141,10 @@ func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, err
 		return nil, fmt.Errorf("redis Get error for query key '%s': %w", queryKey, err)
 	}
 
-	// Check for NoneResult marker *before* trying to unmarshal
-	if val == thing.NoneResult {
-		return nil, thing.ErrQueryCacheNoneResult
-	}
+	// Remove the check for the no longer used NoneResult marker
+	// if val == thing.NoneResult {
+	// 	return nil, thing.ErrQueryCacheNoneResult
+	// }
 
 	// If not NoneResult, attempt to unmarshal as list of IDs
 	var ids []int64

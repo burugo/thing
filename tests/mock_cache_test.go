@@ -2,6 +2,7 @@ package thing_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -30,6 +31,20 @@ type mockCacheClient struct {
 
 	// Call counters for assertions (Exported)
 	Counters map[string]int // Made public
+
+	// Additional fields for call counters
+	GetCalls            int
+	SetCalls            int
+	DeleteCalls         int
+	GetModelCalls       int
+	SetModelCalls       int
+	DeleteModelCalls    int
+	GetQueryIDsCalls    int
+	SetQueryIDsCalls    int
+	DeleteQueryIDsCalls int
+	AcquireLockCalls    int
+	ReleaseLockCalls    int
+	DeleteByPrefixCalls int
 }
 
 // newMockCacheClient creates a new initialized mock cache client.
@@ -71,6 +86,7 @@ func (m *mockCacheClient) Reset() {
 
 	// Reset counters
 	m.Counters = make(map[string]int) // Reset map
+	m.ResetCalls()                    // Call the dedicated reset for calls
 
 	// Verify the cache is empty after reset
 	keyCount = 0
@@ -82,14 +98,25 @@ func (m *mockCacheClient) Reset() {
 	log.Printf("DEBUG Reset: Cache cleared. Keys remaining: %d", keyCount)
 }
 
-// ResetCounters only resets the call counters, not the cache content.
-func (m *mockCacheClient) ResetCounters() { // Exported
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// ResetCalls resets only the call counters.
+// It assumes the caller (e.g., Reset) already holds the necessary lock (m.mu).
+func (m *mockCacheClient) ResetCalls() {
+	// Reset the map used by assertions
+	m.Counters = make(map[string]int)
 
-	// Reset counters
-	m.Counters = make(map[string]int) // Reset map
-	log.Printf("DEBUG ResetCounters: Call counters reset.")
+	// Reset individual counters (optional, as map is now primary)
+	m.GetCalls = 0
+	m.SetCalls = 0
+	m.DeleteCalls = 0
+	m.GetModelCalls = 0
+	m.SetModelCalls = 0
+	m.DeleteModelCalls = 0
+	m.GetQueryIDsCalls = 0
+	m.SetQueryIDsCalls = 0
+	m.DeleteQueryIDsCalls = 0
+	m.AcquireLockCalls = 0
+	m.ReleaseLockCalls = 0
+	m.DeleteByPrefixCalls = 0
 }
 
 // Helper method to increment a counter safely
@@ -318,15 +345,6 @@ func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]i
 		return nil, thing.ErrNotFound
 	}
 
-	// Check for NoneResult marker
-	if string(storedBytes) == thing.NoneResult {
-		log.Printf("DEBUG GetQueryIDs: Found NoneResult marker for query key %s", queryKey)
-		m.mu.Lock()
-		m.lastQueryCacheHit = true // Considered a hit, even though it's empty
-		m.mu.Unlock()
-		return nil, thing.ErrQueryCacheNoneResult // Return the specific error
-	}
-
 	var ids []int64
 	if err := unmarshalFromMock(storedBytes, &ids); err != nil {
 		log.Printf("DEBUG GetQueryIDs: Error unmarshaling for query key %s: %v", queryKey, err)
@@ -472,4 +490,111 @@ func (m *mockCacheClient) AssertSetModelCalls(t *testing.T, expected int, msgAnd
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	assert.Equal(t, expected, m.Counters["SetModel"], msgAndArgs...)
+}
+
+// --- Mock DB Adapter --- (Keep basic version needed for setup)
+
+type mockDBAdapter struct {
+	// Add fields if needed to simulate DB behavior
+}
+
+func (m *mockDBAdapter) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+	// Simulate not found or return predefined data if needed
+	return thing.ErrNotFound
+}
+
+func (m *mockDBAdapter) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+	// Simulate no rows found
+	return nil // Or sql.ErrNoRows if needed
+}
+
+func (m *mockDBAdapter) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	// Simulate success
+	return mockSqlResult{rowsAffected: 1, lastInsertId: 0}, nil // Return mock result
+}
+
+func (m *mockDBAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params thing.QueryParams) (int64, error) {
+	// Simulate count
+	return 0, nil
+}
+
+func (m *mockDBAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, error) {
+	// Return mock transaction
+	return &mockTx{}, nil
+}
+
+func (m *mockDBAdapter) Close() error {
+	return nil
+}
+
+// --- Mock SQL Result ---
+
+type mockSqlResult struct {
+	rowsAffected int64
+	lastInsertId int64
+}
+
+func (r mockSqlResult) LastInsertId() (int64, error) {
+	return r.lastInsertId, nil
+}
+
+func (r mockSqlResult) RowsAffected() (int64, error) {
+	return r.rowsAffected, nil
+}
+
+// --- Mock Transaction ---
+
+type mockTx struct {
+	// Add fields if needed
+}
+
+func (tx *mockTx) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+	return thing.ErrNotFound
+}
+
+func (tx *mockTx) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+	return nil
+}
+
+func (tx *mockTx) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	return mockSqlResult{rowsAffected: 1, lastInsertId: 0}, nil
+}
+
+func (tx *mockTx) Commit() error {
+	return nil
+}
+
+func (tx *mockTx) Rollback() error {
+	return nil
+}
+
+// assertMockCacheCounts helper
+func assertMockCacheCounts(t *testing.T, mockCache *mockCacheClient, expected map[string]int) {
+	t.Helper()
+	// Fetch the actual counts from the mock cache's Counters map
+	actual := mockCache.Counters // Use the map
+
+	// Provide a more informative default message
+	defaultMsg := fmt.Sprintf("Mock cache call counts mismatch.\nExpected: %v\nActual:   %v", expected, actual)
+
+	// Check if maps are equal
+	assert.Equal(t, expected, actual, defaultMsg)
+
+	/* // Keep old implementation commented out for reference
+	actual := map[string]int{
+		"Get":            mockCache.GetCalls,
+		"Set":            mockCache.SetCalls,
+		"Delete":         mockCache.DeleteCalls,
+		"GetModel":       mockCache.GetModelCalls,
+		"SetModel":       mockCache.SetModelCalls,
+		"DeleteModel":    mockCache.DeleteModelCalls,
+		"GetQueryIDs":    mockCache.GetQueryIDsCalls,
+		"SetQueryIDs":    mockCache.SetQueryIDsCalls,
+		"DeleteQueryIDs": mockCache.DeleteQueryIDsCalls,
+		"AcquireLock":    mockCache.AcquireLockCalls,
+		"ReleaseLock":    mockCache.ReleaseLockCalls,
+		"DeleteByPrefix": mockCache.DeleteByPrefixCalls,
+	}
+	assert.Equal(t, expected, actual, "Mock cache call counts mismatch")
+	*/
 }

@@ -108,7 +108,7 @@ func TestThing_Save_Update(t *testing.T) {
 
 func TestThing_Delete(t *testing.T) {
 	// Set up test DB and cache
-	th, _, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[User](t)
 	defer cleanup()
 
 	// Create a new user
@@ -126,14 +126,50 @@ func TestThing_Delete(t *testing.T) {
 	_, err = th.ByID(user.ID)
 	require.NoError(t, err, "User should exist before deletion")
 
+	// Define query params used for caching tests
+	countParams := thing.QueryParams{Where: "name = ?", Args: []interface{}{user.Name}}
+	listParams := thing.QueryParams{Where: "email LIKE ?", Args: []interface{}{"%example.com"}}
+
+	// --- Populate caches BEFORE delete ---
+	// Perform a count query to cache it
+	countResult, err := th.Query(countParams)
+	require.NoError(t, err, "Failed to perform count query before delete")
+	_, err = countResult.Count() // Trigger count cache population
+	require.NoError(t, err, "Failed to get count before delete")
+
+	// Perform a list query to cache it
+	listResult, err := th.Query(listParams)
+	require.NoError(t, err, "Failed to perform list query before delete")
+	_, err = listResult.Fetch(0, 1) // Trigger list cache population
+	require.NoError(t, err, "Failed to fetch list before delete")
+	// --- End cache population ---
+
+	// Reset calls *after* populating caches but *before* the action being tested (Delete)
+	mockCache.ResetCalls() // Reset counters to isolate Delete actions
+
 	// Delete the user
-	err = th.Delete(user)
+	err = th.Delete(user) // Delete -> should now find and invalidate populated caches
 	require.NoError(t, err)
 
 	// Verify user no longer exists
 	_, err = th.ByID(user.ID)
 	assert.Error(t, err)
 	assert.Equal(t, thing.ErrNotFound, err, "User should not exist after deletion")
+
+	// Access the Counters map directly
+	// Check counts *after* the Delete operation.
+	// DeleteModel is called once by Delete itself.
+	assert.Equal(t, 1, mockCache.Counters["DeleteModel"], "Expected 1 DeleteModel call from th.Delete")
+	// Cache invalidation for 3 caches (count name, list email, count email) involves reads and writes.
+	assert.Equal(t, 2, mockCache.Counters["Get"], "Expected 2 Gets (count name + count email)")
+	assert.Equal(t, 1, mockCache.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (list email)")
+	// Set is called 3 times: 2 for invalidation (counts), 1 for caching NoneResult by the subsequent ByID check.
+	assert.Equal(t, 3, mockCache.Counters["Set"], "Expected 3 Sets (2 invalidate + 1 NoneResult)")
+	assert.Equal(t, 1, mockCache.Counters["SetQueryIDs"], "Expected 1 SetQueryIDs (list email)")
+
+	// GetModel is called once by the subsequent ByID check after the delete.
+	assert.Equal(t, 1, mockCache.Counters["GetModel"], "Expected 1 GetModel from post-delete ByID check")
+	assert.Zero(t, mockCache.Counters["SetModel"], "SetModel should not be called during delete invalidation or post-delete check")
 }
 
 func TestThing_Query(t *testing.T) {

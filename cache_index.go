@@ -1,6 +1,9 @@
 package thing
 
-import "sync"
+import (
+	"log"
+	"sync"
+)
 
 // Global instance of the cache index.
 // This should be initialized once, potentially during application startup.
@@ -91,6 +94,13 @@ func (idx *CacheIndex) GetQueryParamsForKey(cacheKey string) (QueryParams, bool)
 
 	params, found := idx.keyToParams[cacheKey]
 	return params, found
+}
+
+// ResetGlobalCacheIndex resets the global cache index to a new empty state.
+// Primarily useful for testing purposes to ensure test isolation.
+func ResetGlobalCacheIndex() {
+	globalCacheIndex = NewCacheIndex()
+	log.Println("DEBUG: Global Cache Index Reset") // Add log for visibility
 }
 
 // TODO: Consider adding a DeregisterQuery method if cache keys can expire or become invalid permanently.

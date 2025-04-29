@@ -91,8 +91,9 @@ func TestCachedResult_Fetch(t *testing.T) {
 	assert.Equal(t, expectedIDs[0], users1[0].ID)
 	assert.Equal(t, expectedIDs[1], users1[1].ID)
 	// Verify GetQueryIDs was called (miss), SetQueryIDs was called
-	assert.GreaterOrEqual(t, mockCache.GetQueryIDsCalls, 1)
-	assert.GreaterOrEqual(t, mockCache.SetQueryIDsCalls, 1)
+	t.Logf("DEBUG: Before assert - GetQueryIDsCalls: %d, SetQueryIDsCalls: %d", mockCache.Counters["GetQueryIDs"], mockCache.Counters["SetQueryIDs"])
+	assert.GreaterOrEqual(t, mockCache.Counters["GetQueryIDs"], 1, "GetQueryIDs should have been called")
+	assert.GreaterOrEqual(t, mockCache.Counters["SetQueryIDs"], 1, "SetQueryIDs should have been called")
 	// Verify ByIDs was called for these 2 IDs (object cache miss likely)
 
 	// --- Test Fetch - Page 2 (Cache Hit for IDs) ---

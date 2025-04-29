@@ -1,7 +1,7 @@
 ---
-description: 
+description: This is a project tree structure, always place files in their designated locations.
 globs: 
-alwaysApply: true
+alwaysApply: false
 ---
 ## this is project-tree
 

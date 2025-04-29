@@ -6,13 +6,14 @@ import (
 	"log"
 	"reflect"
 	"strings"
+	// Import regexp for potential future use or complex LIKE
 )
 
 // CheckQueryMatch evaluates if a given model instance satisfies the WHERE clause
 // defined in the provided QueryParams.
 //
-// Current implementation only supports simple equality checks (e.g., "field = ?").
-// Support for other operators (>, <, LIKE, IN, etc.) is NOT yet implemented.
+// Supports =, LIKE, >, <, >=, <=, IN operators joined by AND.
+// Support for OR clauses or complex LIKE patterns is NOT yet implemented.
 func (t *Thing[T]) CheckQueryMatch(model *T, params QueryParams) (bool, error) {
 	if model == nil {
 		return false, errors.New("model cannot be nil")
@@ -32,31 +33,53 @@ func (t *Thing[T]) CheckQueryMatch(model *T, params QueryParams) (bool, error) {
 	// Basic validation: Check if number of '?' matches number of args
 	expectedArgs := strings.Count(whereClause, "?")
 	if expectedArgs != len(args) {
-		return false, fmt.Errorf("mismatched number of placeholders ('?') and arguments: %d vs %d in WHERE clause '%s'", expectedArgs, len(args), whereClause)
+		// Special case for IN: it uses one '?' but multiple implicit args in the slice
+		isIN := false
+		conditionsTemp := strings.Split(whereClause, " AND ")
+		for _, cond := range conditionsTemp {
+			if len(strings.Fields(cond)) == 3 && strings.ToUpper(strings.Fields(cond)[1]) == "IN" {
+				isIN = true
+				break
+			}
+		}
+		// If it's not an IN query or if arg count still mismatch, error out
+		if !isIN || expectedArgs != 1 || len(args) != 1 || reflect.ValueOf(args[0]).Kind() != reflect.Slice {
+			return false, fmt.Errorf("mismatched number of placeholders ('?') and arguments: %d vs %d in WHERE clause '%s' (Note: IN expects one '?' and one slice argument)", expectedArgs, len(args), whereClause)
+		}
+		// If it looks like a valid IN, let the loop handle the single arg
 	}
 
-	// Very basic parser for "column = ?" clauses joined by "AND"
+	// Very basic parser for "column OP ?" clauses joined by "AND"
 	conditions := strings.Split(whereClause, " AND ")
-	if len(conditions) != expectedArgs {
-		// If splitting by AND doesn't match the number of args/placeholders,
-		// it's likely a more complex clause we don't support yet.
-		log.Printf("WARN: CheckQueryMatch currently only supports simple 'column = ?' conditions joined by AND. Clause: '%s'", whereClause)
-		// For now, we'll conservatively return false and an error indicating limited support.
-		// A more robust implementation would involve a proper SQL parser.
-		return false, fmt.Errorf("unsupported WHERE clause structure: '%s'. Only simple 'col = ?' AND 'col2 = ?' supported", whereClause)
+	// We are deliberately *not* checking if len(conditions) == expectedArgs here,
+	// because a single condition like "a = ? OR b = ?" might fail that check
+	// but could still be parsed condition by condition if we enhance the loop.
+	// However, for now, we only support AND-separated conditions.
+	if strings.Contains(strings.ToUpper(whereClause), " OR ") {
+		// Explicitly disallow OR for now
+		return false, fmt.Errorf("unsupported WHERE clause structure: '%s'. OR clauses are not supported", whereClause)
 	}
 
 	modelVal := reflect.ValueOf(model).Elem()
+	currentArgIndex := 0 // Keep track of which arg we're using
 
-	for i, condition := range conditions {
-		parts := strings.SplitN(strings.TrimSpace(condition), "=", 2)
-		if len(parts) != 2 || strings.TrimSpace(parts[1]) != "?" {
-			log.Printf("WARN: CheckQueryMatch encountered non-'=' condition part: '%s'", condition)
-			return false, fmt.Errorf("unsupported condition structure in WHERE clause: '%s'. Only 'col = ?' supported", condition)
+	for _, condition := range conditions {
+		condition = strings.TrimSpace(condition)
+		if condition == "" {
+			continue
 		}
 
-		colName := strings.Trim(strings.TrimSpace(parts[0]), "`"'") // Remove potential quotes
-		argValue := args[i]
+		// Expect "column OP ?" format
+		parts := strings.Fields(condition) // Split by whitespace
+		if len(parts) != 3 || parts[2] != "?" {
+			log.Printf("WARN: CheckQueryMatch could not parse condition: '%s'. Expected 'column OP ?'", condition)
+			return false, fmt.Errorf("unsupported condition format: '%s'. Expected 'column OP ?'", condition)
+		}
+
+		colName := strings.Trim(parts[0], "\\\"`'") // Remove potential quotes
+		operator := strings.ToUpper(parts[1])
+		argValue := args[currentArgIndex]
+		currentArgIndex++
 
 		// Find the Go field name corresponding to the DB column name
 		goFieldName, ok := t.info.columnToFieldMap[colName]
@@ -76,27 +99,91 @@ func (t *Thing[T]) CheckQueryMatch(model *T, params QueryParams) (bool, error) {
 			return false, fmt.Errorf("field '%s' (for column '%s') not valid on model %s", goFieldName, colName, modelVal.Type().Name())
 		}
 
-		// Compare model field value with the argument value
-		// Use reflect.DeepEqual for a general comparison, might need refinement for specific types.
-		// Normalize argValue before comparison if necessary (e.g., ensure types match fieldVal)
 		modelFieldValue := fieldVal.Interface()
-
-		// Basic type matching/conversion attempt
 		argReflectVal := reflect.ValueOf(argValue)
-		if argReflectVal.Type().ConvertibleTo(fieldVal.Type()) {
-			convertedArg := argReflectVal.Convert(fieldVal.Type()).Interface()
-			if !reflect.DeepEqual(modelFieldValue, convertedArg) {
-				log.Printf("DEBUG CheckQueryMatch: Field '%s' mismatch. Model: [%v] (%T), Arg: [%v] (%T, Converted: %T)",
-					goFieldName, modelFieldValue, modelFieldValue, argValue, argValue, convertedArg)
-				return false, nil // Condition not met
+
+		// --- Perform comparison based on operator ---
+		var conditionMet bool
+		var matchErr error
+
+		switch operator {
+		case "=":
+			// Basic type matching/conversion attempt for equality
+			if argReflectVal.Type().ConvertibleTo(fieldVal.Type()) {
+				convertedArg := argReflectVal.Convert(fieldVal.Type()).Interface()
+				conditionMet = reflect.DeepEqual(modelFieldValue, convertedArg)
+				if !conditionMet {
+					log.Printf("DEBUG CheckQueryMatch (=): Field '%s' mismatch. Model: [%v] (%T), Arg: [%v] (%T, Converted: %T)",
+						goFieldName, modelFieldValue, modelFieldValue, argValue, argValue, convertedArg)
+				}
+			} else {
+				// If types are not directly convertible, rely on DeepEqual (might fail for some cases)
+				conditionMet = reflect.DeepEqual(modelFieldValue, argValue)
+				if !conditionMet {
+					log.Printf("DEBUG CheckQueryMatch (=): Field '%s' mismatch (non-convertible types). Model: [%v] (%T), Arg: [%v] (%T)",
+						goFieldName, modelFieldValue, modelFieldValue, argValue, argValue)
+				}
 			}
-		} else {
-			// If types are not directly convertible, rely on DeepEqual (might fail for some cases)
-			if !reflect.DeepEqual(modelFieldValue, argValue) {
-				log.Printf("DEBUG CheckQueryMatch: Field '%s' mismatch (non-convertible types). Model: [%v] (%T), Arg: [%v] (%T)",
-					goFieldName, modelFieldValue, modelFieldValue, argValue, argValue)
-				return false, nil // Condition not met
+
+		case "LIKE":
+			// Ensure both model field and arg are strings
+			modelStr, modelOk := modelFieldValue.(string)
+			patternStr, patternOk := argValue.(string)
+
+			if !modelOk || !patternOk {
+				matchErr = fmt.Errorf("LIKE operator requires string field and pattern, got %T and %T for field '%s'", modelFieldValue, argValue, goFieldName)
+			} else {
+				conditionMet, matchErr = matchLike(modelStr, patternStr)
+				if matchErr != nil {
+					matchErr = fmt.Errorf("error matching LIKE for field '%s': %w", goFieldName, matchErr)
+				} else if !conditionMet {
+					log.Printf("DEBUG CheckQueryMatch (LIKE): Field '%s' ('%s') did not match pattern '%s'", goFieldName, modelStr, patternStr)
+				}
 			}
+
+		case ">":
+			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
+			if !conditionMet && matchErr == nil {
+				log.Printf("DEBUG CheckQueryMatch (>): Field '%s' (%v) not greater than arg (%v)", goFieldName, modelFieldValue, argValue)
+			}
+
+		case "<":
+			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
+			if !conditionMet && matchErr == nil {
+				log.Printf("DEBUG CheckQueryMatch (<): Field '%s' (%v) not less than arg (%v)", goFieldName, modelFieldValue, argValue)
+			}
+
+		case ">=":
+			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
+			if !conditionMet && matchErr == nil {
+				log.Printf("DEBUG CheckQueryMatch (>=): Field '%s' (%v) not greater than or equal to arg (%v)", goFieldName, modelFieldValue, argValue)
+			}
+
+		case "<=":
+			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
+			if !conditionMet && matchErr == nil {
+				log.Printf("DEBUG CheckQueryMatch (<=): Field '%s' (%v) not less than or equal to arg (%v)", goFieldName, modelFieldValue, argValue)
+			}
+
+		case "IN":
+			conditionMet, matchErr = checkInOperator(fieldVal, argReflectVal)
+			if !conditionMet && matchErr == nil {
+				log.Printf("DEBUG CheckQueryMatch (IN): Field '%s' (%v) not in arg slice (%v)", goFieldName, modelFieldValue, argValue)
+			}
+
+		default:
+			matchErr = fmt.Errorf("unsupported operator '%s' in condition '%s'", operator, condition)
+		}
+
+		// Handle errors during matching
+		if matchErr != nil {
+			log.Printf("WARN: Error during CheckQueryMatch condition evaluation: %v", matchErr)
+			return false, matchErr // Propagate error
+		}
+
+		// If any condition is not met, the whole query doesn't match
+		if !conditionMet {
+			return false, nil // Condition not met, no need to check further
 		}
 
 		// If we reach here, this condition matched. Continue to the next.
@@ -107,5 +194,188 @@ func (t *Thing[T]) CheckQueryMatch(model *T, params QueryParams) (bool, error) {
 	return true, nil
 }
 
-// TODO: Extend CheckQueryMatch to support more operators (IN, !=, >, <, LIKE) if needed.
+// compareValues compares two values using >, <, >=, <= operators, handling numeric and string types.
+func compareValues(modelVal, argVal interface{}, operator string) (bool, error) {
+	mVal := reflect.ValueOf(modelVal)
+	aVal := reflect.ValueOf(argVal)
+
+	// Handle basic types: ints, floats, strings
+	switch mVal.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		aInt, ok := convertToInt64(aVal)
+		if !ok {
+			return false, fmt.Errorf("cannot compare %s: model is int type (%T), but arg is incompatible type (%T)", operator, modelVal, argVal)
+		}
+		mInt := mVal.Int()
+		switch operator {
+		case ">":
+			return mInt > aInt, nil
+		case "<":
+			return mInt < aInt, nil
+		case ">=":
+			return mInt >= aInt, nil
+		case "<=":
+			return mInt <= aInt, nil
+		}
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		aUint, ok := convertToUint64(aVal)
+		if !ok {
+			return false, fmt.Errorf("cannot compare %s: model is uint type (%T), but arg is incompatible type (%T)", operator, modelVal, argVal)
+		}
+		mUint := mVal.Uint()
+		switch operator {
+		case ">":
+			return mUint > aUint, nil
+		case "<":
+			return mUint < aUint, nil
+		case ">=":
+			return mUint >= aUint, nil
+		case "<=":
+			return mUint <= aUint, nil
+		}
+	case reflect.Float32, reflect.Float64:
+		aFloat, ok := convertToFloat64(aVal)
+		if !ok {
+			return false, fmt.Errorf("cannot compare %s: model is float type (%T), but arg is incompatible type (%T)", operator, modelVal, argVal)
+		}
+		mFloat := mVal.Float()
+		switch operator {
+		case ">":
+			return mFloat > aFloat, nil
+		case "<":
+			return mFloat < aFloat, nil
+		case ">=":
+			return mFloat >= aFloat, nil
+		case "<=":
+			return mFloat <= aFloat, nil
+		}
+	case reflect.String:
+		if aVal.Kind() != reflect.String {
+			return false, fmt.Errorf("cannot compare %s: model is string, but arg is not (%T)", operator, argVal)
+		}
+		mStr := mVal.String()
+		aStr := aVal.String()
+		switch operator {
+		case ">":
+			return mStr > aStr, nil
+		case "<":
+			return mStr < aStr, nil
+		case ">=":
+			return mStr >= aStr, nil
+		case "<=":
+			return mStr <= aStr, nil
+		}
+	default:
+		return false, fmt.Errorf("unsupported type %T for comparison operators (> < >= <=)", modelVal)
+	}
+	return false, fmt.Errorf("internal error: unexpected fallthrough in compareValues for operator %s", operator)
+}
+
+// checkInOperator checks if a model field value exists within a slice/array argument.
+func checkInOperator(modelField reflect.Value, argSlice reflect.Value) (bool, error) {
+	if argSlice.Kind() != reflect.Slice && argSlice.Kind() != reflect.Array {
+		return false, fmt.Errorf("IN operator requires a slice or array argument, got %T", argSlice.Interface())
+	}
+
+	if argSlice.Len() == 0 {
+		return false, nil // SQL standard: field IN () is always false
+	}
+
+	modelVal := modelField.Interface()
+
+	for i := 0; i < argSlice.Len(); i++ {
+		sliceElement := argSlice.Index(i)
+		sliceElementVal := sliceElement.Interface()
+
+		// Attempt conversion if types are compatible
+		if sliceElement.Type().ConvertibleTo(modelField.Type()) {
+			convertedElement := sliceElement.Convert(modelField.Type()).Interface()
+			if reflect.DeepEqual(modelVal, convertedElement) {
+				return true, nil // Found a match
+			}
+		} else if reflect.DeepEqual(modelVal, sliceElementVal) {
+			// Fallback to DeepEqual for non-convertible but potentially equal types
+			return true, nil // Found a match
+		}
+	}
+
+	return false, nil // No match found in the slice
+}
+
+// conversion helpers for compareValues
+func convertToInt64(v reflect.Value) (int64, bool) {
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return v.Int(), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return int64(v.Uint()), true // Potential overflow ignored
+	case reflect.Float32, reflect.Float64:
+		return int64(v.Float()), true // Truncates
+	default:
+		return 0, false
+	}
+}
+func convertToUint64(v reflect.Value) (uint64, bool) {
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		val := v.Int()
+		if val < 0 {
+			return 0, false
+		} // Cannot convert negative int to uint
+		return uint64(val), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return v.Uint(), true
+	case reflect.Float32, reflect.Float64:
+		val := v.Float()
+		if val < 0 {
+			return 0, false
+		} // Cannot convert negative float to uint
+		return uint64(val), true // Truncates
+	default:
+		return 0, false
+	}
+}
+func convertToFloat64(v reflect.Value) (float64, bool) {
+	switch v.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return float64(v.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return float64(v.Uint()), true
+	case reflect.Float32, reflect.Float64:
+		return v.Float(), true
+	default:
+		return 0, false
+	}
+}
+
+// matchLike checks if a string 's' matches a SQL LIKE pattern.
+// Handles '%' wildcard at the beginning, end, or both.
+// Does NOT currently handle the '_' wildcard or escape characters.
+func matchLike(s, pattern string) (bool, error) {
+	if strings.Contains(pattern, "_") {
+		return false, errors.New("LIKE pattern with '_' wildcard not supported")
+	}
+	// TODO: Add handling for escape characters if needed
+
+	pattern = strings.TrimSpace(pattern) // Basic cleanup
+
+	if strings.HasPrefix(pattern, "%") && strings.HasSuffix(pattern, "%") {
+		// Case: %value%
+		searchTerm := strings.Trim(pattern, "%")
+		return strings.Contains(s, searchTerm), nil
+	} else if strings.HasPrefix(pattern, "%") {
+		// Case: %value
+		searchTerm := strings.TrimPrefix(pattern, "%")
+		return strings.HasSuffix(s, searchTerm), nil
+	} else if strings.HasSuffix(pattern, "%") {
+		// Case: value%
+		searchTerm := strings.TrimSuffix(pattern, "%")
+		return strings.HasPrefix(s, searchTerm), nil
+	} else {
+		// Case: value (no wildcards) - Treat as exact match
+		return s == pattern, nil
+	}
+}
+
 // TODO: Implement a more robust WHERE clause parser if complex conditions are required.
+// TODO: Enhance matchLike to support '_' wildcard and escape characters.

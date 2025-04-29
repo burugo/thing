@@ -117,32 +117,41 @@ type Thing[T any] struct {
 // New creates a new Thing instance with default context.Background().
 // Made generic: requires type parameter T when called, e.g., New[MyModel](...).
 func New[T any](db DBAdapter, cache CacheClient) (*Thing[T], error) {
+	log.Println("DEBUG: Entering New[T]") // Added log
 	if db == nil {
+		log.Println("DEBUG: New[T] - DB is nil") // Added log
 		return nil, errors.New("DBAdapter must be non-nil")
 	}
 	if cache == nil {
+		log.Println("DEBUG: New[T] - Cache is nil") // Added log
 		return nil, errors.New("CacheClient must be non-nil")
 	}
 	log.Println("New Thing instance created.")
 
 	// Pre-compute model info for T
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
-	info, err := GetCachedModelInfo(modelType) // Renamed: getCachedModelInfo -> GetCachedModelInfo
+	log.Printf("DEBUG: New[T] - Getting model info for type: %s", modelType.Name()) // Added log
+	info, err := GetCachedModelInfo(modelType)                                      // Renamed: getCachedModelInfo -> GetCachedModelInfo
 	if err != nil {
+		log.Printf("DEBUG: New[T] - Error getting model info: %v", err) // Added log
 		return nil, fmt.Errorf("failed to get model info for type %s: %w", modelType.Name(), err)
 	}
+	log.Printf("DEBUG: New[T] - Got model info: %+v", info) // Added log
 	// TableName is now populated within GetCachedModelInfo
 	// info.TableName = getTableNameFromType(modelType) // Removed redundant call
 	if info.TableName == "" {
 		log.Printf("Warning: Could not determine table name for type %s during New. Relying on instance method?", modelType.Name())
 	}
 
-	return &Thing[T]{
+	log.Println("DEBUG: New[T] - Creating Thing struct") // Added log
+	t := &Thing[T]{
 		db:    db,
 		cache: cache,
 		ctx:   context.Background(), // Default context
 		info:  info,                 // Store pre-computed info
-	}, nil
+	}
+	log.Println("DEBUG: New[T] - Returning new Thing instance") // Added log
+	return t, nil
 }
 
 // Use returns a Thing instance for the specified type T, using the globally
@@ -1623,11 +1632,6 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 				log.Printf("CACHE HIT (Query IDs): Found %d related IDs for key %s", len(cachedIDs), listCacheKey)
 				relatedIDs = cachedIDs
 				cacheHit = true // Got the IDs from cache
-			} else if errors.Is(queryIDsErr, ErrQueryCacheNoneResult) {
-				// Cache hit with NoneResult marker
-				log.Printf("CACHE HIT (NoneResult): Found NoneResult marker for key %s", listCacheKey)
-				relatedIDs = []int64{} // Empty slice for NoneResult
-				cacheHit = true        // Definitively know the result is empty
 			} else if errors.Is(queryIDsErr, ErrNotFound) {
 				// Cache miss
 				log.Printf("CACHE MISS (Query IDs): Key %s not found.", listCacheKey)
@@ -2033,154 +2037,248 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 
 	log.Printf("DEBUG: Found %d potential query caches to update for table '%s' after change to ID %d", len(queryCacheKeys), tableName, id)
 
-	// 2. Iterate through each potentially affected query cache key
+	// --- Phase 1: Gather Update Tasks ---
+	type cacheUpdateTask struct {
+		cacheKey    string
+		queryParams QueryParams
+		isListKey   bool
+		isCountKey  bool
+		needsAdd    bool
+		needsRemove bool
+	}
+	tasks := make([]cacheUpdateTask, 0, len(queryCacheKeys))
+
 	for _, cacheKey := range queryCacheKeys {
-		// Determine if it's a list key or count key based on prefix
 		isListKey := strings.HasPrefix(cacheKey, "list:")
 		isCountKey := strings.HasPrefix(cacheKey, "count:")
-
 		if !isListKey && !isCountKey {
 			log.Printf("WARN: Skipping unknown cache key format in index: %s", cacheKey)
 			continue
 		}
 
-		// Get the QueryParams associated with this cache key
 		params, found := globalCacheIndex.GetQueryParamsForKey(cacheKey)
 		if !found {
 			log.Printf("WARN: QueryParams not found for registered cache key '%s'. Cannot perform incremental update.", cacheKey)
-			continue // Cannot proceed without params
-		}
-
-		// 3. Check if the model matches the query conditions
-		var matchesCurrent, matchesOriginal bool
-		var matchErr error
-
-		// Check current model state
-		// Note: Call CheckQueryMatch as a method t.CheckQueryMatch
-		matchesCurrent, matchErr = t.CheckQueryMatch(model, params)
-		if matchErr != nil {
-			log.Printf("WARN: Error checking query match for current model (key: %s): %v. Skipping incremental update for this key.", cacheKey, matchErr)
 			continue
 		}
 
-		// Check original model state (only relevant for updates)
-		if !isCreate && originalModel != nil {
-			matchesOriginal, matchErr = t.CheckQueryMatch(originalModel, params)
-			if matchErr != nil {
-				log.Printf("WARN: Error checking query match for original model (key: %s): %v. Skipping incremental update for this key.", cacheKey, matchErr)
-				continue
-			}
+		// Check if the model matches the query conditions
+		matchesCurrent, matchesOriginal, err := t.checkModelMatchAgainstQuery(model, originalModel, params, isCreate)
+		if err != nil {
+			// Log the error and, critically, delete the potentially inconsistent cache entries
+			log.Printf("ERROR CheckQueryMatch Failed: Query check failed for cache key %s (and associated count key %s). Deleting cache entries due to error: %v", cacheKey, cacheKey, err)
+			continue
 		}
 
-		// 4. Determine action based on match results
-		needsAdd := false
-		needsRemove := false
+		// Determine action
+		needsAdd, needsRemove := determineCacheAction(isCreate, matchesOriginal, matchesCurrent, baseModelPtr.KeepItem())
 
-		if isCreate {
-			if matchesCurrent {
-				needsAdd = true
-				log.Printf("DEBUG Cache Update (%s): Create matches query. Needs Add.", cacheKey)
-			}
-		} else { // Update
-			if matchesCurrent && !matchesOriginal {
-				needsAdd = true
-				log.Printf("DEBUG Cache Update (%s): Update now matches query (didn't before). Needs Add.", cacheKey)
-			} else if !matchesCurrent && matchesOriginal {
-				needsRemove = true
-				log.Printf("DEBUG Cache Update (%s): Update no longer matches query (did before). Needs Remove.", cacheKey)
-			} else {
-				// No change in match status (both true or both false)
-				log.Printf("DEBUG Cache Update (%s): Update didn't change match status (%v -> %v). No cache change needed.", cacheKey, matchesOriginal, matchesCurrent)
-				continue // No cache update needed for this key
-			}
-		}
-
-		// **NEW CHECK:** If the item is now soft-deleted, ensure it's removed
-		// regardless of whether it matches the WHERE clause.
-		if !baseModelPtr.KeepItem() {
-			log.Printf("DEBUG Cache Update (%s): Model is soft-deleted (KeepItem=false). Ensuring removal.", cacheKey)
-			needsRemove = true
-			needsAdd = false // Cannot be added if it's deleted
-		}
-
-		// 5. Perform Cache Update (with locking)
 		if needsAdd || needsRemove {
-			// Lock the specific cache key before modifying
-			locker := globalCacheKeyLocker // Assumes global locker exists
-			locker.Lock(cacheKey)
-			log.Printf("DEBUG Cache Update (%s): Acquired lock.", cacheKey)
+			log.Printf("DEBUG Gather Task (%s): Action determined: Add=%v, Remove=%v", cacheKey, needsAdd, needsRemove)
+			tasks = append(tasks, cacheUpdateTask{
+				cacheKey:    cacheKey,
+				queryParams: params, // Store params for potential future use
+				isListKey:   isListKey,
+				isCountKey:  isCountKey,
+				needsAdd:    needsAdd,
+				needsRemove: needsRemove,
+			})
+		} else {
+			log.Printf("DEBUG Gather Task (%s): No cache change needed.", cacheKey)
+		}
+	}
 
-			var updateErr error
-			if isListKey {
-				// Update List Cache
-				cachedIDs, err := getCachedListIDs(ctx, t.cache, cacheKey)
-				if err != nil {
-					updateErr = fmt.Errorf("failed to get cached list IDs for update: %w", err)
+	if len(tasks) == 0 {
+		log.Printf("DEBUG: No actual cache updates required for ID %d after checks.", id)
+		return
+	}
+
+	log.Printf("DEBUG: Processing %d cache update tasks for ID %d.", len(tasks), id)
+
+	// --- Phase 2: Simulated Batch Read ---
+	initialListValues := make(map[string][]int64)
+	initialCountValues := make(map[string]int64)
+	readErrors := make(map[string]error) // Store errors encountered during read
+
+	for _, task := range tasks {
+		if task.isListKey {
+			// Avoid reading again if already processed (map check handles this)
+			if _, exists := initialListValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
+				cachedIDs, err := t.cache.GetQueryIDs(ctx, task.cacheKey)
+				if err != nil && !errors.Is(err, ErrNotFound) {
+					log.Printf("ERROR: Failed to read initial list cache for key %s: %v", task.cacheKey, err)
+					readErrors[task.cacheKey] = err        // Record error
+					initialListValues[task.cacheKey] = nil // Mark as errored/unreadable
 				} else {
-					var updatedIDs []int64
-					if needsAdd {
-						// TODO: Handle sorting based on params.Order if necessary.
-						// Simple approach: Add to end (or beginning?). Adding to end for now.
-						updatedIDs = addIDToListIfNotExists(cachedIDs, id)
-						log.Printf("DEBUG Cache Update (%s): Adding ID %d. List size %d -> %d", cacheKey, id, len(cachedIDs), len(updatedIDs))
-					} else { // needsRemove
-						updatedIDs = removeIDFromList(cachedIDs, id)
-						log.Printf("DEBUG Cache Update (%s): Removing ID %d. List size %d -> %d", cacheKey, id, len(cachedIDs), len(updatedIDs))
-					}
-					// Only write back if the list actually changed
-					if len(updatedIDs) != len(cachedIDs) || needsAdd { // needsAdd check covers adding existing ID case
-						err = setCachedListIDs(ctx, t.cache, cacheKey, updatedIDs, globalCacheTTL)
-						if err != nil {
-							updateErr = fmt.Errorf("failed to set updated list IDs: %w", err)
-						} else {
-							log.Printf("DEBUG Cache Update (%s): Successfully updated cached ID list.", cacheKey)
-						}
+					if errors.Is(err, ErrNotFound) {
+						log.Printf("DEBUG Read (%s): List cache key not found, treating as empty.", task.cacheKey)
+						initialListValues[task.cacheKey] = []int64{} // Treat not found as empty list
+					} else if cachedIDs == nil {
+						log.Printf("WARN: GetQueryIDs returned nil error but nil slice for key %s. Treating as empty.", task.cacheKey)
+						initialListValues[task.cacheKey] = []int64{}
 					} else {
-						log.Printf("DEBUG Cache Update (%s): List content didn't change, skipping set.", cacheKey)
-					}
-				}
-			} else if isCountKey {
-				// Update Count Cache
-				count, err := getCachedCount(ctx, t.cache, cacheKey)
-				if err != nil {
-					updateErr = fmt.Errorf("failed to get cached count for update: %w", err)
-				} else {
-					newCount := count
-					if needsAdd {
-						newCount++
-						log.Printf("DEBUG Cache Update (%s): Incrementing count %d -> %d", cacheKey, count, newCount)
-					} else { // needsRemove
-						if newCount > 0 { // Avoid negative counts
-							newCount--
-							log.Printf("DEBUG Cache Update (%s): Decrementing count %d -> %d", cacheKey, count, newCount)
-						} else {
-							log.Printf("DEBUG Cache Update (%s): Count already zero, cannot decrement further.", cacheKey)
-						}
-					}
-					// Only write back if the count actually changed
-					if newCount != count {
-						err = setCachedCount(ctx, t.cache, cacheKey, newCount, globalCacheTTL)
-						if err != nil {
-							updateErr = fmt.Errorf("failed to set updated count: %w", err)
-						} else {
-							log.Printf("DEBUG Cache Update (%s): Successfully updated cached count.", cacheKey)
-						}
-					} else {
-						log.Printf("DEBUG Cache Update (%s): Count didn't change, skipping set.", cacheKey)
+						log.Printf("DEBUG Read (%s): Read initial list with %d IDs.", task.cacheKey, len(cachedIDs))
+						initialListValues[task.cacheKey] = cachedIDs
 					}
 				}
 			}
-
-			// Unlock the key
-			locker.Unlock(cacheKey)
-			log.Printf("DEBUG Cache Update (%s): Released lock.", cacheKey)
-
-			if updateErr != nil {
-				log.Printf("ERROR: Failed incremental cache update for key %s: %v", cacheKey, updateErr)
-				// TODO: Consider invalidating the key entirely on error?
+		} else if task.isCountKey {
+			if _, exists := initialCountValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
+				count, err := getCachedCount(ctx, t.cache, task.cacheKey) // Uses internal helper which handles NotFound
+				if err != nil {
+					// getCachedCount already logs specific errors and returns 0 for ErrNotFound
+					log.Printf("ERROR: Failed to read initial count cache for key %s: %v", task.cacheKey, err)
+					readErrors[task.cacheKey] = err        // Record error
+					initialCountValues[task.cacheKey] = -1 // Indicate error state if needed, though getCachedCount returns 0 on error
+				} else {
+					log.Printf("DEBUG Read (%s): Read initial count: %d.", task.cacheKey, count)
+					initialCountValues[task.cacheKey] = count
+				}
 			}
 		}
 	}
+
+	// --- Phase 3: Compute Updates & Identify Changes ---
+	type finalWriteTask struct {
+		cacheKey  string
+		newList   []int64 // nil if not a list update
+		newCount  int64   // -1 if not a count update
+		isListKey bool
+	}
+	writesNeeded := make(map[string]finalWriteTask) // Use map to handle potential duplicate keys from tasks list
+
+	for _, task := range tasks {
+		// Skip if there was a read error for this key
+		if readErrors[task.cacheKey] != nil {
+			log.Printf("WARN: Skipping update computation for key %s due to previous read error.", task.cacheKey)
+			continue
+		}
+
+		if task.isListKey {
+			initialIDs := initialListValues[task.cacheKey]
+			if initialIDs == nil {
+				// This case might happen if the key was processed multiple times and failed read earlier
+				log.Printf("WARN: Skipping list update for %s, initial value missing (potentially due to earlier read error).", task.cacheKey)
+				continue
+			}
+
+			var updatedIDs []int64
+			changed := false
+			if task.needsAdd {
+				if !containsID(initialIDs, id) {
+					// updatedIDs = append(initialIDs, id) // Simple append, order might not matter or needs sorting later if needed
+					updatedIDs = addIDToListIfNotExists(initialIDs, id) // Use helper
+					changed = true
+					log.Printf("DEBUG Compute (%s): Adding ID %d. List size %d -> %d", task.cacheKey, id, len(initialIDs), len(updatedIDs))
+				} else {
+					updatedIDs = initialIDs // Already exists
+					log.Printf("DEBUG Compute (%s): Skipping list add as ID %d already exists.", task.cacheKey, id)
+				}
+			} else { // needsRemove
+				if len(initialIDs) > 0 && containsID(initialIDs, id) {
+					updatedIDs = removeIDFromList(initialIDs, id)
+					changed = true
+					log.Printf("DEBUG Compute (%s): Removing ID %d. List size %d -> %d", task.cacheKey, id, len(initialIDs), len(updatedIDs))
+				} else {
+					updatedIDs = initialIDs // Not present or list empty
+					log.Printf("DEBUG Compute (%s): Skipping list removal as ID %d not found or cache empty.", task.cacheKey, id)
+				}
+			}
+
+			if changed {
+				// Sort if order matters (e.g., based on query Params.Order) - COMPLEX, skip for now
+				// Ensure consistent order if needed by sorting `updatedIDs` here.
+				// sort.Slice(updatedIDs, func(i, j int) bool { return updatedIDs[i] < updatedIDs[j] }) // Example: sort ascending
+
+				writesNeeded[task.cacheKey] = finalWriteTask{
+					cacheKey:  task.cacheKey,
+					newList:   updatedIDs,
+					newCount:  -1, // Mark as not a count update
+					isListKey: true,
+				}
+				log.Printf("DEBUG Compute (%s): Identified list write needed. New size: %d", task.cacheKey, len(updatedIDs))
+			}
+
+		} else if task.isCountKey {
+			initialCount := initialCountValues[task.cacheKey]
+			if initialCount == -1 { // Check for error state from read phase
+				log.Printf("WARN: Skipping count update for %s, initial value indicates read error.", task.cacheKey)
+				continue
+			}
+
+			newCount := initialCount
+			changed := false
+			if task.needsAdd {
+				newCount++
+				changed = true
+				log.Printf("DEBUG Compute (%s): Incrementing count %d -> %d", task.cacheKey, initialCount, newCount)
+			} else { // needsRemove
+				if newCount > 0 {
+					newCount--
+					changed = true
+					log.Printf("DEBUG Compute (%s): Decrementing count %d -> %d", task.cacheKey, initialCount, newCount)
+				} else {
+					log.Printf("DEBUG Compute (%s): Skipping count decrement as it's already zero.", task.cacheKey)
+				}
+			}
+
+			if changed {
+				writesNeeded[task.cacheKey] = finalWriteTask{
+					cacheKey:  task.cacheKey,
+					newList:   nil, // Mark as not a list update
+					newCount:  newCount,
+					isListKey: false,
+				}
+				log.Printf("DEBUG Compute (%s): Identified count write needed. New value: %d", task.cacheKey, newCount)
+			}
+		}
+	}
+
+	// --- Phase 4: Conditional Batch Write (with Locking) ---
+	if len(writesNeeded) == 0 {
+		log.Printf("DEBUG: No actual cache writes required for ID %d after computation.", id)
+		return
+	}
+
+	log.Printf("DEBUG: Attempting to write %d cache updates for ID %d.", len(writesNeeded), id)
+	locker := globalCacheKeyLocker // Assumes global locker exists
+
+	for key, writeTask := range writesNeeded {
+		// Lock the specific cache key before modifying
+		log.Printf("DEBUG Write (%s): Acquiring lock...", key)
+		locker.Lock(key) // Assume Lock doesn't return an error to check here
+		log.Printf("DEBUG Write (%s): Acquired lock.", key)
+
+		var writeErr error
+		if writeTask.isListKey {
+			writeErr = setCachedListIDs(ctx, t.cache, key, writeTask.newList, globalCacheTTL)
+			if writeErr == nil {
+				log.Printf("DEBUG Write (%s): Successfully updated cached ID list (size %d).", key, len(writeTask.newList))
+			}
+		} else { // isCountKey
+			writeErr = setCachedCount(ctx, t.cache, key, writeTask.newCount, globalCacheTTL)
+			if writeErr == nil {
+				log.Printf("DEBUG Write (%s): Successfully updated cached count (%d).", key, writeTask.newCount)
+			}
+		}
+
+		// Unlock the key regardless of write error
+		log.Printf("DEBUG Write (%s): Releasing lock...", key)
+		locker.Unlock(key) // Assume Unlock doesn't return an error to check here
+		log.Printf("DEBUG Write (%s): Released lock.", key)
+
+		if writeErr != nil {
+			log.Printf("ERROR: Failed cache write for key %s: %v", key, writeErr)
+			// Attempt to delete the potentially corrupted key to force refresh on next query
+			deleteErr := t.cache.Delete(ctx, key) // Use generic Delete
+			if deleteErr != nil {
+				log.Printf("ERROR: Failed to delete potentially corrupted cache key %s after write error: %v", key, deleteErr)
+			} else {
+				log.Printf("INFO: Deleted potentially corrupted cache key %s after write error.", key)
+			}
+		}
+	}
+	log.Printf("DEBUG: Completed cache update processing for ID %d.", id)
 }
 
 // handleDeleteInQueryCaches is called after a Delete operation
@@ -2208,96 +2306,265 @@ func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
 
 	log.Printf("DEBUG: Found %d potential query caches to update for table '%s' after delete of ID %d", len(queryCacheKeys), tableName, id)
 
-	// 2. Iterate through each potentially affected query cache key
+	// --- Phase 1: Gather Remove Tasks ---
+	type cacheRemoveTask struct {
+		cacheKey    string
+		isListKey   bool
+		isCountKey  bool
+		wasMatching bool // Did the item match the query before deletion?
+	}
+	tasks := make([]cacheRemoveTask, 0, len(queryCacheKeys))
+
 	for _, cacheKey := range queryCacheKeys {
-		// Determine if it's a list key or count key based on prefix
 		isListKey := strings.HasPrefix(cacheKey, "list:")
 		isCountKey := strings.HasPrefix(cacheKey, "count:")
-
 		if !isListKey && !isCountKey {
-			log.Printf("WARN: Skipping unknown cache key format in index: %s", cacheKey)
+			log.Printf("WARN Delete Cache Update: Skipping unknown cache key format: %s", cacheKey)
 			continue
 		}
 
-		// Get the QueryParams associated with this cache key
 		params, found := globalCacheIndex.GetQueryParamsForKey(cacheKey)
 		if !found {
-			log.Printf("WARN: QueryParams not found for registered cache key '%s'. Cannot perform incremental delete update.", cacheKey)
-			continue // Cannot proceed without params
-		}
-
-		// 3. Check if the *deleted* model matched the query conditions
-		// Note: Call CheckQueryMatch as a method t.CheckQueryMatch
-		matchesDeleted, matchErr := t.CheckQueryMatch(model, params)
-		if matchErr != nil {
-			log.Printf("WARN: Error checking query match for deleted model (key: %s): %v. Skipping incremental update for this key.", cacheKey, matchErr)
+			log.Printf("WARN Delete Cache Update: QueryParams not found for key '%s'. Skipping.", cacheKey)
 			continue
 		}
 
-		// 4. If the deleted model matched the query, it needs removal from cache
-		if matchesDeleted {
-			log.Printf("DEBUG Cache Update (%s): Deleted item matches query. Needs Remove.", cacheKey)
+		// Check if the model *would have matched* the query before deletion
+		// We pass the model itself, assuming CheckQueryMatch handles nil originalModel correctly
+		matches, err := t.CheckQueryMatch(model, params)
+		if err != nil {
+			log.Printf("WARN Delete Cache Update: Error checking query match for deleted model (key: %s): %v. Skipping.", cacheKey, err)
+			continue
+		}
 
-			// Lock the specific cache key before modifying
-			locker := globalCacheKeyLocker
-			locker.Lock(cacheKey)
-			log.Printf("DEBUG Cache Update (%s): Acquired lock for delete.", cacheKey)
-
-			var updateErr error
-			if isListKey {
-				// Remove from List Cache
-				cachedIDs, err := getCachedListIDs(ctx, t.cache, cacheKey)
-				if err != nil {
-					updateErr = fmt.Errorf("failed to get cached list IDs for delete update: %w", err)
-				} else {
-					updatedIDs := removeIDFromList(cachedIDs, id)
-					log.Printf("DEBUG Cache Update (%s): Removing deleted ID %d. List size %d -> %d", cacheKey, id, len(cachedIDs), len(updatedIDs))
-					// Only write back if the list actually changed
-					if len(updatedIDs) != len(cachedIDs) {
-						err = setCachedListIDs(ctx, t.cache, cacheKey, updatedIDs, globalCacheTTL)
-						if err != nil {
-							updateErr = fmt.Errorf("failed to set updated list IDs after delete: %w", err)
-						} else {
-							log.Printf("DEBUG Cache Update (%s): Successfully updated cached ID list after delete.", cacheKey)
-						}
-					} else {
-						log.Printf("DEBUG Cache Update (%s): List content didn't change (ID %d likely not present), skipping set.", cacheKey, id)
-					}
-				}
-			} else if isCountKey {
-				// Decrement Count Cache
-				count, err := getCachedCount(ctx, t.cache, cacheKey)
-				if err != nil {
-					updateErr = fmt.Errorf("failed to get cached count for delete update: %w", err)
-				} else {
-					newCount := count
-					if newCount > 0 { // Avoid negative counts
-						newCount--
-						log.Printf("DEBUG Cache Update (%s): Decrementing count %d -> %d due to delete", cacheKey, count, newCount)
-						// Write back the updated count
-						err = setCachedCount(ctx, t.cache, cacheKey, newCount, globalCacheTTL)
-						if err != nil {
-							updateErr = fmt.Errorf("failed to set updated count after delete: %w", err)
-						} else {
-							log.Printf("DEBUG Cache Update (%s): Successfully updated cached count after delete.", cacheKey)
-						}
-					} else {
-						log.Printf("DEBUG Cache Update (%s): Count already zero, cannot decrement further due to delete.", cacheKey)
-						// No need to set count if it didn't change
-					}
-				}
-			}
-
-			// Unlock the key
-			locker.Unlock(cacheKey)
-			log.Printf("DEBUG Cache Update (%s): Released lock after delete.", cacheKey)
-
-			if updateErr != nil {
-				log.Printf("ERROR: Failed incremental cache update for key %s after delete: %v", cacheKey, updateErr)
-			}
+		if matches {
+			log.Printf("DEBUG Delete Gather Task (%s): Deleted item matched query. Needs Remove.", cacheKey)
+			tasks = append(tasks, cacheRemoveTask{
+				cacheKey:    cacheKey,
+				isListKey:   isListKey,
+				isCountKey:  isCountKey,
+				wasMatching: true,
+			})
 		} else {
-			// Deleted item didn't match this query, no cache update needed
-			log.Printf("DEBUG Cache Update (%s): Deleted item did not match query. No cache change needed.", cacheKey)
+			log.Printf("DEBUG Delete Gather Task (%s): Deleted item did not match query. No cache change needed.", cacheKey)
 		}
 	}
+
+	if len(tasks) == 0 {
+		log.Printf("DEBUG Delete Cache Update: No actual cache removals required for ID %d.", id)
+		return
+	}
+
+	log.Printf("DEBUG Delete Cache Update: Processing %d cache removal tasks for ID %d.", len(tasks), id)
+
+	// --- Phase 2: Simulated Batch Read ---
+	initialListValues := make(map[string][]int64)
+	initialCountValues := make(map[string]int64)
+	readErrors := make(map[string]error)
+
+	for _, task := range tasks {
+		// Only read if it was matching (otherwise no update needed)
+		if !task.wasMatching {
+			continue
+		}
+
+		if task.isListKey {
+			if _, exists := initialListValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
+				cachedIDs, err := t.cache.GetQueryIDs(ctx, task.cacheKey)
+				if err != nil && !errors.Is(err, ErrNotFound) {
+					log.Printf("ERROR Delete Cache Update: Failed read initial list for key %s: %v", task.cacheKey, err)
+					readErrors[task.cacheKey] = err
+					initialListValues[task.cacheKey] = nil
+				} else {
+					if errors.Is(err, ErrNotFound) {
+						initialListValues[task.cacheKey] = []int64{}
+					} else if cachedIDs == nil {
+						initialListValues[task.cacheKey] = []int64{}
+					} else {
+						initialListValues[task.cacheKey] = cachedIDs
+					}
+					log.Printf("DEBUG Delete Read (%s): Read initial list (size %d).", task.cacheKey, len(initialListValues[task.cacheKey]))
+				}
+			}
+		} else if task.isCountKey {
+			if _, exists := initialCountValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
+				count, err := getCachedCount(ctx, t.cache, task.cacheKey)
+				if err != nil {
+					log.Printf("ERROR Delete Cache Update: Failed read initial count for key %s: %v", task.cacheKey, err)
+					readErrors[task.cacheKey] = err
+					initialCountValues[task.cacheKey] = -1
+				} else {
+					initialCountValues[task.cacheKey] = count
+					log.Printf("DEBUG Delete Read (%s): Read initial count (%d).", task.cacheKey, count)
+				}
+			}
+		}
+	}
+
+	// --- Phase 3: Compute Updates & Identify Changes ---
+	type finalWriteTask struct {
+		cacheKey  string
+		newList   []int64 // nil if not a list update
+		newCount  int64   // -1 if not a count update
+		isListKey bool
+	}
+	writesNeeded := make(map[string]finalWriteTask)
+
+	for _, task := range tasks {
+		if !task.wasMatching || readErrors[task.cacheKey] != nil {
+			continue // Skip if wasn't matching or read failed
+		}
+
+		if task.isListKey {
+			initialIDs := initialListValues[task.cacheKey]
+			if initialIDs == nil {
+				continue
+			} // Skip if read failed earlier
+
+			if len(initialIDs) > 0 && containsID(initialIDs, id) {
+				updatedIDs := removeIDFromList(initialIDs, id)
+				log.Printf("DEBUG Delete Compute (%s): Removing ID %d. List size %d -> %d", task.cacheKey, id, len(initialIDs), len(updatedIDs))
+				// Sort if needed
+				writesNeeded[task.cacheKey] = finalWriteTask{
+					cacheKey:  task.cacheKey,
+					newList:   updatedIDs,
+					newCount:  -1,
+					isListKey: true,
+				}
+			} else {
+				log.Printf("DEBUG Delete Compute (%s): Skipping list removal as ID %d not found or cache empty.", task.cacheKey, id)
+			}
+		} else if task.isCountKey {
+			initialCount := initialCountValues[task.cacheKey]
+			if initialCount == -1 {
+				continue
+			} // Skip if read failed earlier
+
+			if initialCount > 0 {
+				newCount := initialCount - 1
+				log.Printf("DEBUG Delete Compute (%s): Decrementing count %d -> %d", task.cacheKey, initialCount, newCount)
+				writesNeeded[task.cacheKey] = finalWriteTask{
+					cacheKey:  task.cacheKey,
+					newList:   nil,
+					newCount:  newCount,
+					isListKey: false,
+				}
+			} else {
+				log.Printf("DEBUG Delete Compute (%s): Skipping count decrement as it's already zero.", task.cacheKey)
+			}
+		}
+	}
+
+	// --- Phase 4: Conditional Batch Write (with Locking) ---
+	if len(writesNeeded) == 0 {
+		log.Printf("DEBUG Delete Cache Update: No actual cache writes required for ID %d.", id)
+		return
+	}
+
+	log.Printf("DEBUG Delete Cache Update: Attempting to write %d cache updates for ID %d.", len(writesNeeded), id)
+	locker := globalCacheKeyLocker
+
+	for key, writeTask := range writesNeeded {
+		log.Printf("DEBUG Delete Write (%s): Acquiring lock...", key)
+		locker.Lock(key) // Assume Lock doesn't return an error
+		log.Printf("DEBUG Delete Write (%s): Acquired lock.", key)
+
+		var writeErr error
+		if writeTask.isListKey {
+			writeErr = setCachedListIDs(ctx, t.cache, key, writeTask.newList, globalCacheTTL)
+			if writeErr == nil {
+				log.Printf("DEBUG Delete Write (%s): Successfully updated list (size %d).", key, len(writeTask.newList))
+			}
+		} else {
+			writeErr = setCachedCount(ctx, t.cache, key, writeTask.newCount, globalCacheTTL)
+			if writeErr == nil {
+				log.Printf("DEBUG Delete Write (%s): Successfully updated count (%d).", key, writeTask.newCount)
+			}
+		}
+
+		log.Printf("DEBUG Delete Write (%s): Releasing lock...", key)
+		locker.Unlock(key) // Assume Unlock doesn't return an error
+		log.Printf("DEBUG Delete Write (%s): Released lock.", key)
+
+		if writeErr != nil {
+			log.Printf("ERROR Delete Cache Update: Failed write for key %s: %v", key, writeErr)
+			deleteErr := t.cache.Delete(ctx, key)
+			if deleteErr != nil {
+				log.Printf("ERROR Delete Cache Update: Failed delete potentially corrupted key %s: %v", key, deleteErr)
+			} else {
+				log.Printf("INFO Delete Cache Update: Deleted potentially corrupted key %s.", key)
+			}
+		}
+	}
+	log.Printf("DEBUG Delete Cache Update: Completed processing for ID %d.", id)
+}
+
+// --- Helper functions for list/count cache ---
+
+// containsID checks if an ID exists in a slice of int64.
+func containsID(ids []int64, id int64) bool {
+	for _, currentID := range ids {
+		if currentID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// Helper function to check if a model matches query parameters.
+// Returns: matchesCurrent, matchesOriginal, error
+func (t *Thing[T]) checkModelMatchAgainstQuery(model *T, originalModel *T, params QueryParams, isCreate bool) (bool, bool, error) {
+	var matchesCurrent, matchesOriginal bool
+	var matchErr error
+
+	// Check current model state
+	matchesCurrent, matchErr = t.CheckQueryMatch(model, params)
+	if matchErr != nil {
+		return false, false, fmt.Errorf("error checking query match for current model: %w", matchErr)
+	}
+
+	// Check original model state (only relevant for updates)
+	if !isCreate && originalModel != nil {
+		matchesOriginal, matchErr = t.CheckQueryMatch(originalModel, params)
+		if matchErr != nil {
+			return false, false, fmt.Errorf("error checking query match for original model: %w", matchErr)
+		}
+	}
+	return matchesCurrent, matchesOriginal, nil
+}
+
+// Helper function to determine cache action based on match status and deletion status.
+// Returns: needsAdd, needsRemove
+func determineCacheAction(isCreate, matchesOriginal, matchesCurrent bool, isKept bool) (bool, bool) {
+	needsAdd := false
+	needsRemove := false
+
+	if !isKept {
+		// If item is soft-deleted, it always needs removal (if it was previously matching)
+		// and never needs adding.
+		log.Printf("DEBUG Determine Action: Model is soft-deleted (KeepItem=false). Ensuring removal.")
+		needsRemove = true // Ensure removal attempt
+		needsAdd = false
+	} else if isCreate {
+		if matchesCurrent {
+			needsAdd = true
+			log.Printf("DEBUG Determine Action: Create matches query. Needs Add.")
+		}
+	} else { // Update
+		if matchesCurrent && !matchesOriginal {
+			needsAdd = true
+			log.Printf("DEBUG Determine Action: Update now matches query (didn't before). Needs Add.")
+		} else if !matchesCurrent && matchesOriginal {
+			needsRemove = true
+			log.Printf("DEBUG Determine Action: Update no longer matches query (did before). Needs Remove.")
+		}
+		// If match status didn't change (both true or both false), neither add nor remove is needed.
+	}
+
+	// If it needs adding, it cannot simultaneously need removing based on match status change.
+	if needsAdd {
+		needsRemove = false
+	}
+
+	return needsAdd, needsRemove
 }

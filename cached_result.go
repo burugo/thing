@@ -207,48 +207,27 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 		return nil, fmt.Errorf("failed to generate cache key for list: %w", err)
 	}
 
-	// 2. Check Cache (Handle NoneResult marker)
-	// 2a. Try generic Get first for NoneResult marker
-	cacheValStr, genericCacheErr := cr.thing.cache.Get(cr.thing.ctx, listCacheKey)
-	if genericCacheErr == nil {
-		if cacheValStr == NoneResult {
-			log.Printf("CACHE HIT (NoneResult): List Key: %s", listCacheKey)
-			return []int64{}, nil // Explicitly cached empty result
-		} else {
-			// Found something, but not NoneResult. Maybe old data or invalid state?
-			// Attempt to treat it as IDs via GetQueryIDs, or log warning and proceed.
-			log.Printf("WARN: Cache Get returned unexpected value for list key %s: %s. Attempting GetQueryIDs.", listCacheKey, cacheValStr)
-		}
-	} else if !errors.Is(genericCacheErr, ErrNotFound) {
-		// Unexpected error during generic Get
-		log.Printf("WARN: Cache Get error for list key %s: %v. Proceeding to GetQueryIDs.", listCacheKey, genericCacheErr)
-	}
-	// If Get returned ErrNotFound or an unexpected value, try GetQueryIDs
-
-	// 2b. Check for actual ID list
+	// 2. Check Cache directly using GetQueryIDs
 	cachedIDs, idsCacheErr := cr.thing.cache.GetQueryIDs(cr.thing.ctx, listCacheKey)
 	if idsCacheErr == nil {
 		log.Printf("CACHE HIT: List Key: %s (%d IDs)", listCacheKey, len(cachedIDs))
-		// If we somehow got here after finding a non-NoneResult string with Get, overwrite it.
-		if genericCacheErr == nil && cacheValStr != NoneResult {
-			log.Printf("INFO: Overwriting potentially stale string value in cache with fetched IDs for key %s", listCacheKey)
-			// No need to explicitly delete, SetQueryIDs below will overwrite if necessary,
-			// and this path returns immediately anyway.
-		}
-		return cachedIDs, nil // Cache hit with actual IDs
+		return cachedIDs, nil // Cache hit with actual IDs or empty slice
 	}
-	if !errors.Is(idsCacheErr, ErrNotFound) {
-		log.Printf("WARN: Cache GetQueryIDs error for list key %s: %v", listCacheKey, idsCacheErr)
-	}
-	log.Printf("CACHE MISS: List Key: %s (Tried Get: %v, Tried GetQueryIDs: %v)", listCacheKey, genericCacheErr, idsCacheErr)
 
-	// 3. Cache Miss: Query Database and filter results
-	// 3a. Prepare to collect valid, non-deleted IDs
+	// 3. Handle Cache Miss or Error
+	if !errors.Is(idsCacheErr, ErrNotFound) {
+		// Log unexpected errors but treat as cache miss
+		log.Printf("WARN: Cache GetQueryIDs error for list key %s: %v. Proceeding to DB query.", listCacheKey, idsCacheErr)
+	}
+	log.Printf("CACHE MISS: List Key: %s (Error: %v)", listCacheKey, idsCacheErr)
+
+	// 4. Cache Miss: Query Database and filter results
+	// 4a. Prepare to collect valid, non-deleted IDs
 	validIDs := make([]int64, 0, cacheListCountLimit)
 	currentOffset := 0
 	batchSize := int(float64(cacheListCountLimit) * 1.5) // Larger batch for efficiency
 
-	// 3b. Loop until we have enough IDs or no more results, with max iteration protection
+	// 4b. Loop until we have enough IDs or no more results, with max iteration protection
 	const maxIterations = 20 // Prevent excessive looping when many records are soft-deleted
 	iterationCount := 0
 
@@ -312,58 +291,34 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 		}
 	}
 
-	// 4. Handle filtered DB results and cache appropriately
-	if len(validIDs) == 0 {
-		// Store NoneResult marker in cache
-		log.Printf("DB HIT (Zero Valid Results): List Key: %s. Caching NoneResult.", listCacheKey)
-		cacheSetErr := cr.thing.cache.Set(cr.thing.ctx, listCacheKey, NoneResult, globalCacheTTL)
-		if cacheSetErr != nil {
-			log.Printf("WARN: Failed to cache NoneResult for key %s: %v", listCacheKey, cacheSetErr)
-		}
-		// Register the key even if caching failed slightly, as the query ran.
-		globalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, cr.params)
-		// Also ensure count cache is updated or set to 0 if possible
+	// 5. Handle filtered DB results and cache appropriately
+	log.Printf("DB HIT: List Key: %s, Found %d valid IDs after filtering. Caching IDs.", listCacheKey, len(validIDs))
+	// Use the helper function to store the list (works for empty lists too)
+	cacheSetErr := setCachedListIDs(cr.thing.ctx, cr.thing.cache, listCacheKey, validIDs, globalCacheTTL) // Use helper
+	if cacheSetErr != nil {
+		log.Printf("WARN: Failed to cache list IDs for key %s: %v", listCacheKey, cacheSetErr) // Log remains the same
+	}
+	// Register the list key
+	globalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, cr.params)
+
+	// If fetched count <= limit, update Count cache as well (handles count=0 correctly)
+	if len(validIDs) <= cacheListCountLimit { // Changed to <= for clarity, but < also works for count 0
 		countCacheKey, keyErr := cr.generateCountCacheKey()
 		if keyErr == nil {
-			countSetErr := cr.thing.cache.Set(cr.thing.ctx, countCacheKey, "0", globalCacheTTL)
+			countStr := strconv.FormatInt(int64(len(validIDs)), 10) // Correctly gets "0" if len is 0
+			countSetErr := cr.thing.cache.Set(cr.thing.ctx, countCacheKey, countStr, globalCacheTTL)
 			if countSetErr != nil {
-				log.Printf("WARN: Failed to update count cache to 0 for key %s: %v", countCacheKey, countSetErr)
+				log.Printf("WARN: Failed to update count cache (key: %s) after list fetch: %v", countCacheKey, countSetErr)
+			} else {
+				log.Printf("Updated count cache (key: %s) with count %d after list fetch", countCacheKey, len(validIDs))
 			}
-			// Register the count key as well
+			// Register the count key
 			globalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, cr.params)
 		} else {
-			log.Printf("WARN: Failed to generate count cache key for zero result update: %v", keyErr)
+			log.Printf("WARN: Failed to generate count cache key for update after list fetch: %v", keyErr)
 		}
-		return validIDs, nil // Return empty slice
-	} else {
-		// Store filtered valid IDs in Cache
-		log.Printf("DB HIT: List Key: %s, Found %d valid IDs after filtering. Caching IDs.", listCacheKey, len(validIDs))
-		cacheSetErr := cr.thing.cache.SetQueryIDs(cr.thing.ctx, listCacheKey, validIDs, globalCacheTTL)
-		if cacheSetErr != nil {
-			log.Printf("WARN: Failed to cache list IDs for key %s: %v", listCacheKey, cacheSetErr)
-		}
-		// Register the list key
-		globalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, cr.params)
-
-		// If fetched count < limit, update Count cache as well
-		if len(validIDs) < cacheListCountLimit {
-			countCacheKey, keyErr := cr.generateCountCacheKey()
-			if keyErr == nil {
-				countStr := strconv.FormatInt(int64(len(validIDs)), 10)
-				countSetErr := cr.thing.cache.Set(cr.thing.ctx, countCacheKey, countStr, globalCacheTTL)
-				if countSetErr != nil {
-					log.Printf("WARN: Failed to update count cache (key: %s) after partial list fetch: %v", countCacheKey, countSetErr)
-				} else {
-					log.Printf("Updated count cache (key: %s) with count %d after partial list fetch", countCacheKey, len(validIDs))
-				}
-				// Register the count key
-				globalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, cr.params)
-			} else {
-				log.Printf("WARN: Failed to generate count cache key for update after partial list fetch: %v", keyErr)
-			}
-		}
-		return validIDs, nil // Return filtered valid IDs
 	}
+	return validIDs, nil // Return filtered valid IDs (or empty slice)
 }
 
 // invalidateCache invalidates both the list and count cache for the current query./ This is used when we detect inconsistencies in the cached data.
