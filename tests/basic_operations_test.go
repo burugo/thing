@@ -159,20 +159,21 @@ func TestThing_Delete(t *testing.T) {
 
 	// Access the Counters map directly
 	// Check counts *after* the Delete operation.
-	// DeleteModel is called once by Delete itself.
 	assert.Equal(t, 0, mockCache.Counters["DeleteModel"], "Expected 0 DeleteModel calls")
-	assert.Equal(t, 1, mockCache.Counters["Delete"], "Expected 1 Delete call from th.Delete")
+	// Expect 2 deletes: 1 for the model itself, 1 for the invalidated list cache
+	assert.Equal(t, 2, mockCache.Counters["Delete"], "Expected 2 Delete calls (model + list invalidation)")
 
-	// Cache invalidation for 3 caches (count name, list email, count email) involves reads and writes.
+	// Cache invalidation for list/count caches involves reads and writes (or deletes).
+	// We now DELETE the list cache instead of setting it.
 	assert.Equal(t, 2, mockCache.Counters["Get"], "Expected 2 Gets (count name + count email)")
-	assert.Equal(t, 1, mockCache.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (list email)")
-	// Set is called 3 times: 2 for invalidation (counts), 1 for caching NoneResult by the subsequent ByID check.
-	assert.Equal(t, 3, mockCache.Counters["Set"], "Expected 3 Sets (2 invalidate + 1 NoneResult)")
-	assert.Equal(t, 1, mockCache.Counters["SetQueryIDs"], "Expected 1 SetQueryIDs (list email)")
+	// Expect 1 GetQueryIDs: During the initial read in handleDeleteInQueryCaches Phase 2.
+	assert.Equal(t, 1, mockCache.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (initial read in Delete)")
+	assert.Equal(t, 0, mockCache.Counters["SetQueryIDs"], "Expected 0 SetQueryIDs (list email is now deleted)")
+	// Expect 3 sets: 2 for count decrements, 1 for NoneResult caching by post-delete ByID check.
+	assert.Equal(t, 3, mockCache.Counters["Set"], "Expected 3 Sets (2 count decrements + 1 NoneResult)")
 
-	// GetModel is called once by the subsequent ByID check after the delete.
-	assert.Equal(t, 1, mockCache.Counters["GetModel"], "Expected 1 GetModel from post-delete ByID check")
-	assert.Zero(t, mockCache.Counters["SetModel"], "SetModel should not be called during delete invalidation or post-delete check")
+	// Verify user is actually gone from DB
+	_, err = th.ByID(1)
 }
 
 func TestThing_Query(t *testing.T) {

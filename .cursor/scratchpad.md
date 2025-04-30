@@ -420,12 +420,10 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 ## Executor's Feedback or Assistance Requests
 
-*   All tests are passing after fixing the assertions in the cache tests related to Task 25.
-*   The primary issue was that the test assertions did not correctly reflect the cache methods being called by `Save` (uses `SetModel`) and `Delete` (uses `cacheClient.Delete`).
-*   Ready to proceed with the next task. Please advise if we should work on defining interfaces (Task 1) or implementing Soft Delete (Task 23).
-
-*   `Save` (for updates) uses `SetModel` to update the model cache, not `DeleteModel`.
-*   `Delete` uses the cache client's `Delete` method (e.g., `mockCache.Delete` in tests), not `DeleteModel`.
+*   (Previous) All tests are passing after fixing the assertions in the cache tests related to Task 25.
+*   (Previous) The primary issue was that the test assertions did not correctly reflect the cache methods being called by `Save` (uses `SetModel`) and `Delete` (uses `cacheClient.Delete`).
+*   (Previous) Inlined simple cache helper functions (`GetCachedCount`, `SetCachedCount`) from `internal/cache/helpers.go` into `cache.go` to reduce internal dependencies. Tests pass.
+*   Ready to proceed with the next task.
 
 ## Lessons
 
@@ -434,6 +432,28 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   Refactoring test logic sometimes requires careful adjustment of assertions based on underlying implementation changes (e.g., `Fetch` logic change affecting expected `ByIDs` calls).
 *   Deleting cache entries when `CheckQueryMatch` fails due to errors (like unsupported operators) is a safer default strategy than simply skipping the update, as it prevents potential data inconsistency.
 *   For simple helper functions within internal packages (like `GetCachedCount`, `SetCachedCount`), consider inlining their logic directly into the calling package (`thing`) if it significantly reduces dependencies and complexity without sacrificing readability.
+
+<details>
+<summary>Planner Analysis: List Cache Updates on Create</summary>
+
+**Problem:** When a new object is created, the current cache update logic (`updateAffectedQueryCaches`) appends the new ID to the end of relevant cached ID lists (`SetQueryIDs`). This ignores the `ORDER BY` clause of the original query, causing the cached list's order to be temporarily inconsistent with the database reality for that new item.
+
+**Challenges:**
+*   **Maintaining Order:** Inserting the ID at the correct position based on `ORDER BY` is complex.
+*   **Partial Cache Limit (`cacheListCountLimit`):** Determining the correct position relative to the cache limit (first N IDs) is hard without fetching more data.
+*   **Complexity/Performance:** In-memory sorting based on dynamic `ORDER BY` clauses is complex and potentially slow. Frequent re-sorting/writing impacts cache performance.
+
+**Options Considered:**
+1.  **Append & Accept (Current):** Simplest, best `Save` performance, accepts temporary order inaccuracy.
+2.  **Rely on TTL:** Simple, uses existing mechanism, order corrects eventually.
+3.  **Invalidate on Create:** Guarantees correct order on next read but hurts read performance post-create.
+4.  **Re-fetch & Re-cache (Background):** Complex, adds overhead, eventual consistency.
+5.  **In-Memory Sort:** Very complex, high performance cost, doesn't solve partial cache well.
+
+**Recommendation (Revised):** Adopt the **Invalidate-on-Change** approach (Option 3) for **list caches**. When `updateAffectedQueryCaches` or `handleDeleteInQueryCaches` determines a list cache needs modification (add/remove ID), **invalidate (delete) the cache entry** instead of attempting an incremental update. This guarantees read consistency after writes, albeit at the cost of potentially lower read performance immediately after mutations for affected queries. This approach is simpler and safer than attempting complex in-memory ordered updates. **Count caches** can still be updated incrementally.
+
+**Action:** Modify `updateAffectedQueryCaches` and `handleDeleteInQueryCaches` in `cache.go` to delete list cache entries when `needsAdd` or `needsRemove` is true, instead of performing list manipulations (`SetQueryIDs`).
+</details>
 
 <details>
 <summary>Previous Status/Feedback (Archived)</summary>

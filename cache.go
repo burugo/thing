@@ -261,40 +261,30 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 				continue
 			}
 
-			var updatedIDs []int64
 			changed := false
 			if task.needsAdd {
 				if !containsID(initialIDs, id) {
-					updatedIDs = cache.AddIDToListIfNotExists(initialIDs, id) // Use exported helper
 					changed = true
-					log.Printf("DEBUG Compute (%s): Adding ID %d. List size %d -> %d", task.cacheKey, id, len(initialIDs), len(updatedIDs))
+					log.Printf("DEBUG Compute (%s): Action determined: Needs Add. Invalidation Required.", task.cacheKey)
 				} else {
-					updatedIDs = initialIDs // Already exists
-					log.Printf("DEBUG Compute (%s): Skipping list add as ID %d already exists.", task.cacheKey, id)
+					log.Printf("DEBUG Compute (%s): Skipping list add as ID %d already exists. No change needed.", task.cacheKey, id)
 				}
 			} else { // needsRemove
 				if len(initialIDs) > 0 && containsID(initialIDs, id) {
-					updatedIDs = cache.RemoveIDFromList(initialIDs, id) // Use exported helper
 					changed = true
-					log.Printf("DEBUG Compute (%s): Removing ID %d. List size %d -> %d", task.cacheKey, id, len(initialIDs), len(updatedIDs))
+					log.Printf("DEBUG Compute (%s): Action determined: Needs Remove. Invalidation Required.", task.cacheKey)
 				} else {
-					updatedIDs = initialIDs // Not present or list empty
-					log.Printf("DEBUG Compute (%s): Skipping list removal as ID %d not found or cache empty.", task.cacheKey, id)
+					log.Printf("DEBUG Compute (%s): Skipping list removal as ID %d not found or cache empty. No change needed.", task.cacheKey, id)
 				}
 			}
 
 			if changed {
-				// Sort if order matters (e.g., based on query Params.Order) - COMPLEX, skip for now
-				// Ensure consistent order if needed by sorting `updatedIDs` here.
-				// sort.Slice(updatedIDs, func(i, j int) bool { return updatedIDs[i] < updatedIDs[j] }) // Example: sort ascending
-
 				writesNeeded[task.cacheKey] = finalWriteTask{
 					cacheKey:  task.cacheKey,
-					newList:   updatedIDs,
-					newCount:  -1, // Mark as not a count update
+					newCount:  -1,
 					isListKey: true,
 				}
-				log.Printf("DEBUG Compute (%s): Identified list write needed. New size: %d", task.cacheKey, len(updatedIDs))
+				log.Printf("DEBUG Compute (%s): Identified list invalidation needed.", task.cacheKey)
 			}
 
 		} else if task.isCountKey {
@@ -349,9 +339,17 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 
 		var writeErr error
 		if writeTask.isListKey {
-			writeErr = t.cache.SetQueryIDs(ctx, key, writeTask.newList, globalCacheTTL)
+			// Reverted Optimization for Update: Always invalidate list cache if a change (add/remove) is needed.
+			// The optimization (checking if ID exists first) is only applied in handleDeleteInQueryCaches.
+			log.Printf("DEBUG Write (%s): Invalidating list cache due to computed change (Add/Remove).", key)
+			writeErr = t.cache.Delete(ctx, key)
+			// writeErr = t.cache.SetQueryIDs(ctx, key, writeTask.newList, globalCacheTTL) // Keep commented
 			if writeErr == nil {
-				log.Printf("DEBUG Write (%s): Successfully updated cached ID list (size %d).", key, len(writeTask.newList))
+				log.Printf("DEBUG Write (%s): Successfully invalidated list cache.", key)
+			} else if errors.Is(writeErr, ErrNotFound) {
+				// Not finding the key when trying to delete is okay.
+				log.Printf("DEBUG Write (%s): List cache key not found during invalidation (already gone?).", key)
+				writeErr = nil // Treat as success
 			}
 		} else { // isCountKey
 			// Inline SetCachedCount logic
@@ -546,17 +544,15 @@ func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
 			} // Skip if read failed earlier
 
 			if len(initialIDs) > 0 && containsID(initialIDs, id) {
-				updatedIDs := cache.RemoveIDFromList(initialIDs, id)
-				log.Printf("DEBUG Delete Compute (%s): Removing ID %d. List size %d -> %d", task.cacheKey, id, len(initialIDs), len(updatedIDs))
-				// Sort if needed
+				log.Printf("DEBUG Delete Compute (%s): ID %d found. List invalidation will be attempted.", task.cacheKey, id)
+				// Mark that a write *might* be needed (Phase 4 checks again)
 				writesNeeded[task.cacheKey] = finalWriteTask{
 					cacheKey:  task.cacheKey,
-					newList:   updatedIDs,
 					newCount:  -1,
 					isListKey: true,
 				}
 			} else {
-				log.Printf("DEBUG Delete Compute (%s): Skipping list removal as ID %d not found or cache empty.", task.cacheKey, id)
+				log.Printf("DEBUG Delete Compute (%s): Skipping list invalidation as ID %d not found or cache empty.", task.cacheKey, id)
 			}
 		} else if task.isCountKey {
 			initialCount := initialCountValues[task.cacheKey]
@@ -595,9 +591,15 @@ func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
 
 		var writeErr error
 		if writeTask.isListKey {
-			writeErr = t.cache.SetQueryIDs(ctx, key, writeTask.newList, globalCacheTTL)
+			// REVERTED OPTIMIZATION: Always invalidate if the deleted item matched the query.
+			// The check (currentIDs, readErr := ...) and shouldDelete logic is removed.
+			log.Printf("DEBUG Delete Write (%s): Invalidating list cache because deleted item matched query.", key)
+			writeErr = t.cache.Delete(ctx, key)
 			if writeErr == nil {
-				log.Printf("DEBUG Delete Write (%s): Successfully updated list (size %d).", key, len(writeTask.newList))
+				log.Printf("DEBUG Delete Write (%s): Successfully invalidated list cache.", key)
+			} else if errors.Is(writeErr, ErrNotFound) {
+				log.Printf("DEBUG Delete Write (%s): List cache key not found during invalidation (already gone?).", key)
+				writeErr = nil // Treat as success
 			}
 		} else {
 			// Inline SetCachedCount logic

@@ -401,31 +401,35 @@ func (m *mockCacheClient) DeleteQueryIDs(ctx context.Context, queryKey string) e
 	return nil
 }
 
-func (m *mockCacheClient) AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error) {
+// AcquireLock attempts to acquire a lock for the given key.
+// Matches the CacheClient interface signature.
+func (m *mockCacheClient) AcquireLock(ctx context.Context, key string, expiration time.Duration) (bool, error) {
 	m.incrementCounter("AcquireLock") // Use helper
 	m.mu.Lock()
-	m.mu.Unlock()
+	defer m.mu.Unlock()
+
+	lockKey := key // Use the original key directly for locking in the mock
 
 	log.Printf("DEBUG AcquireLock: Attempting to acquire lock: %s with expiration: %v", lockKey, expiration)
 
 	// Check if the lock exists and is not expired
-	if m.Exists(lockKey) {
+	if m.Exists(lockKey) { // Use internal Exists which checks expiry
 		log.Printf("DEBUG AcquireLock: Lock %s already exists and is valid", lockKey)
 		return false, nil // Lock exists and is still valid
 	}
 
 	// Since our mock uses normal keys for simplicity, we'll just use a dummy value
-	// Redis would use SET NX, memcached would use ADD
-	m.store.Store(lockKey, []byte("LOCK"))
+	// Redis would use SET NX
+	m.store.Store(lockKey, []byte("LOCK")) // Store lock marker
 	if expiration > 0 {
 		expiryTime := time.Now().Add(expiration)
-		m.expiryStore.Store(lockKey, expiryTime)
+		m.expiryStore.Store(lockKey, expiryTime) // Store expiry separately
 		log.Printf("DEBUG AcquireLock: Acquired lock %s with expiry at %v", lockKey, expiryTime)
 	} else {
 		log.Printf("DEBUG AcquireLock: Acquired lock %s with no expiry", lockKey)
 	}
 
-	return true, nil
+	return true, nil // Lock acquired
 }
 
 func (m *mockCacheClient) ReleaseLock(ctx context.Context, lockKey string) error {
