@@ -11,12 +11,12 @@ import (
 
 const (
 	// Max number of IDs to cache per query list
-	cacheListCountLimit = 300
+	cacheListCountLimit = 200
 )
 
 // CachedResult represents a cached query result with lazy loading capabilities.
 // It allows for efficient querying with pagination and caching.
-type CachedResult[T any] struct {
+type CachedResult[T Model] struct {
 	thing          *Thing[T]
 	params         cache.QueryParams
 	cachedIDs      []int64
@@ -24,7 +24,7 @@ type CachedResult[T any] struct {
 	hasLoadedIDs   bool
 	hasLoadedCount bool
 	hasLoadedAll   bool
-	all            []*T
+	all            []T
 }
 
 // --- Thing Method for Querying ---
@@ -261,13 +261,7 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 				continue // Model not found, skip
 			}
 
-			basePtr := getBaseModelPtr(model)
-			if basePtr == nil {
-				continue // Invalid model, skip
-			}
-
-			// Keep the ID if either IncludeDeleted is true OR the item is not soft-deleted
-			if cr.params.IncludeDeleted || basePtr.KeepItem() {
+			if model.KeepItem() {
 				validIDs = append(validIDs, id)
 			}
 		}
@@ -292,8 +286,8 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	// Register the list key
 	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, cr.params)
 
-	// If fetched count <= limit, update Count cache as well (handles count=0 correctly)
-	if len(validIDs) <= cacheListCountLimit { // Changed to <= for clarity, but < also works for count 0
+	// If fetched count < limit, update Count cache as well (handles count=0 correctly)
+	if len(validIDs) < cacheListCountLimit { // Changed to < for clarity
 		countCacheKey := cr.generateCountCacheKey()
 		countStr := strconv.FormatInt(int64(len(validIDs)), 10) // Correctly gets "0" if len is 0
 		countSetErr := cr.thing.cache.Set(cr.thing.ctx, countCacheKey, countStr, globalCacheTTL)
@@ -351,7 +345,7 @@ func (cr *CachedResult[T]) invalidateCache() error {
 // - It iteratively fetches batches from cache or DB
 // - It filters items using KeepItem()
 // - It dynamically calculates how many more items to fetch based on filtering results
-func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
+func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 	if cr.thing == nil || cr.thing.cache == nil || cr.thing.db == nil {
 		return nil, errors.New("Fetch: CachedResult not properly initialized")
 	}
@@ -364,7 +358,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 	// Handle case where query yielded no results initially
 	if len(cr.cachedIDs) == 0 {
 		log.Printf("Fetch: No cached IDs found for query.")
-		return []*T{}, nil
+		return []T{}, nil
 	}
 
 	// Get total count for this query to determine if there are more records to fetch
@@ -376,7 +370,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 	}
 
 	// --- Setup for iterative fetching (similar to PHP CachedResult.fetch implementation) ---
-	finalResults := make([]*T, 0, limit)
+	finalResults := make([]T, 0, limit)
 	nextFetchOffset := offset // Starting offset (PHP's $start)
 	nextFetchLimit := limit   // Initial fetch limit (PHP's $limit)
 	remainingNeeded := limit  // How many more items we need (PHP's $need_count)
@@ -477,13 +471,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 				continue
 			}
 
-			basePtr := getBaseModelPtr(model)
-			if basePtr == nil {
-				continue // Skip invalid models
-			}
-
-			// Check if item should be kept based on IncludeDeleted flag
-			if cr.params.IncludeDeleted || basePtr.KeepItem() {
+			if model.KeepItem() {
 				finalResults = append(finalResults, model)
 				remainingNeeded--
 				if remainingNeeded == 0 {
@@ -533,7 +521,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 
 // All retrieves all records matching the query.
 // It first gets the total count and then fetches all records using Fetch.
-func (cr *CachedResult[T]) All() ([]*T, error) {
+func (cr *CachedResult[T]) All() ([]T, error) {
 	// 0. Check if already loaded
 	if cr.hasLoadedAll {
 		return cr.all, nil
@@ -548,7 +536,7 @@ func (cr *CachedResult[T]) All() ([]*T, error) {
 	// 2. If count is zero, return empty slice
 	if count == 0 {
 		log.Printf("All: Count is zero, returning empty slice.")
-		return []*T{}, nil
+		return []T{}, nil
 	}
 
 	// 3. Fetch all records using Fetch(0, count)
@@ -564,13 +552,15 @@ func (cr *CachedResult[T]) All() ([]*T, error) {
 	cr.hasLoadedAll = true
 	return results, nil
 }
-func (cr *CachedResult[T]) First() (*T, error) {
+
+func (cr *CachedResult[T]) First() (T, error) {
 	// 1. Try fetching just the first item using Fetch
 	// This leverages the existing caching logic within Fetch
 	results, err := cr.Fetch(0, 1)
 	if err != nil {
 		// Propagate errors from Fetch (e.g., DB connection issues)
-		return nil, err
+		var zero T
+		return zero, err
 	}
 
 	// 2. Check if any result was returned
@@ -579,7 +569,8 @@ func (cr *CachedResult[T]) First() (*T, error) {
 		// Check if Count is 0 first to potentially set NoneResult for count cache?
 		// For simplicity now, just return ErrNotFound directly.
 		// TODO: Consider integrating with NoneResult caching for the query itself?
-		return nil, ErrNotFound // Use the existing ErrNotFound
+		var zero T
+		return zero, ErrNotFound // Use the existing ErrNotFound
 	}
 
 	// 3. Return the first result

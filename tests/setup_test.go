@@ -57,13 +57,16 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	// Initialize mock mockcache
 	mockcache := &mockCacheClient{}
 
+	// Wrap SQLiteAdapter in mockDBAdapter for counting
+	mockDB := &mockDBAdapter{SQLiteAdapter: adapter.(*sqlite.SQLiteAdapter)}
+
 	// Reset the global query cache index to prevent interference between tests
 	cache.ResetGlobalCacheIndex()
 
 	cleanup := func() {
 		tb.Logf("--- setupTestDB: Running cleanup function ---")
-		if adapter != nil {
-			err := adapter.Close()
+		if mockDB != nil {
+			err := mockDB.Close()
 			if err != nil {
 				tb.Logf("Error closing test DB adapter: %v", err)
 			}
@@ -76,12 +79,12 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 		tb.Logf("--- setupTestDB: Cleanup function finished ---")
 	}
 
-	return adapter, mockcache, cleanup
+	return mockDB, mockcache, cleanup
 }
 
 // setupCacheTest creates test setup specifically for cache tests.
 // It returns the Thing instance, the mock cache, the DB adapter, and a cleanup function.
-func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, thing.DBAdapter, func()) {
+func setupCacheTest[T thing.Model](tb testing.TB) (*thing.Thing[T], *mockCacheClient, thing.DBAdapter, func()) {
 	db, cacheClient, cleanupDB := setupTestDB(tb)
 	mockCache, ok := cacheClient.(*mockCacheClient)
 	require.True(tb, ok, "Cache client is not a mockCacheClient")
@@ -97,10 +100,6 @@ func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, th
 	thingInstance, err := thing.New[T](db, mockCache)
 	require.NoError(tb, err, "Failed to create Thing instance with New()")
 
-	// Configure Thing globally ONLY IF tests specifically need to call thing.Use()
-	// Generally prefer passing the created thingInstance directly.
-	// _ = thing.Configure(db, mockCache, 5*time.Minute)
-
 	cleanup := func() {
 		tb.Logf("--- setupCacheTest: Running cleanup function ---")
 		cleanupDB() // Call the DB cleanup first
@@ -115,7 +114,7 @@ func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, th
 // Use this helper primarily when testing code paths that rely on the global configuration
 // and the thing.Use() function. For most tests, setupCacheTest is preferred as it
 // provides the specific *thing.Thing instance directly.
-func SetupTestThing[T any](t *testing.T) (*thing.Thing[T], func()) {
+func SetupTestThing[T thing.Model](t *testing.T) (*thing.Thing[T], func()) {
 	dbAdapter, cacheClient, cleanupDB := setupTestDB(t)
 	// Ensure cacheClient is the mock type for configuration
 	mockCache, ok := cacheClient.(*mockCacheClient)

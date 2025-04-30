@@ -10,9 +10,15 @@ import (
 
 // --- Thing Core Struct ---
 
+// Model is the base interface for all ORM models.
+type Model interface {
+	KeepItem() bool
+	GetID() int64
+}
+
 // Thing is the central access point for ORM operations, analogous to gorm.DB.
 // It holds database/cache clients and the context for operations.
-type Thing[T any] struct {
+type Thing[T Model] struct {
 	db    DBAdapter
 	cache CacheClient
 	ctx   context.Context
@@ -23,7 +29,7 @@ type Thing[T any] struct {
 
 // New creates a new Thing instance with default context.Background().
 // Made generic: requires type parameter T when called, e.g., New[MyModel](...).
-func New[T any](db DBAdapter, cache CacheClient) (*Thing[T], error) {
+func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 	log.Println("DEBUG: Entering New[T]") // Added log
 	if db == nil {
 		log.Println("DEBUG: New[T] - DB is nil") // Added log
@@ -64,7 +70,7 @@ func New[T any](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 // Use returns a Thing instance for the specified type T, using the globally
 // configured DBAdapter and CacheClient.
 // The package MUST be configured using Configure() before calling Use[T].
-func Use[T any]() (*Thing[T], error) {
+func Use[T Model]() (*Thing[T], error) {
 	configMutex.RLock()
 	defer configMutex.RUnlock()
 	if !isConfigured {

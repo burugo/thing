@@ -335,30 +335,25 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 ## Project Status Board
 
-- [x] Refactor cache key generation for list/count queries to use a single GenerateCacheKey function in cache.go
-- [x] Update query.go and all tests to use GenerateCacheKey
-- [x] Remove duplicate cache key logic from tests
-- [x] All tests pass after refactor
-- [x] Fix test failure in TestCachedResult_First by updating test helpers to use GenerateCacheKey
+- [x] Reduce excessive log output in mock_cache_test.go (Executor)
+- [x] Fix pointer type issues in relationships and soft delete tests (Planner/Executor)
+  - [x] Audit and Fix Reflection/DB Adapter Pointer Usage (Executor)
+  - [ ] Fix SoftDelete/Save Logic Pointer Handling (Planner/Executor)
 
 ## Executor's Feedback or Assistance Requests
 
-- The test failure in TestCachedResult_First was due to a mismatch between test and production cache key generation. The test helpers now use the same GenerateCacheKey as production code, ensuring consistency. All tests now pass.
+- The pointer type fix in `preloadHasMany` was implemented (always passing `reflect.PtrTo(relatedModelType)` to `fetchModelsByIDsInternal`).
+- All relationship preloading tests now pass without pointer/double-pointer errors.
+- However, soft delete and transaction tests still fail. The error is now:
+    - `DB Get Error (Pointer Setup): ... destination must point to a struct, got **thing_test.User`
+    - This suggests that somewhere in the save/soft delete logic, a double pointer (`**User`) is being passed to the DBAdapter's `Get` method, which expects a single pointer (`*User`).
+- Next step: Planner should analyze the save/soft delete logic (especially how the "original" model is fetched for diffing) and break down the fix for Task 2.
 
 ## Lessons
+- When fixing pointer type issues, always check both the caller and callee for type invariants.
+- Relationship preloading is now robust, but CRUD/Save logic needs a similar audit for pointer correctness.
 
-- Always use the production cache key generator (GenerateCacheKey) in both code and tests to avoid subtle mismatches and test failures.
-
-## Current Status / Progress Tracking
-
-*   **Recent Work:**
-    *   Successfully refactored the project structure (Task 24).
-    *   Fixed all test failures introduced by the Task 24 refactoring (Task 25).
-    *   Completed Task 26: Further refactored `thing.go` by moving logic (config, metadata, relationships, diffing, SQL builders, helpers) into separate files (`config.go`, `metadata.go`, `relationships.go`, `diff.go`, `internal/sql/sqlbuilder.go`, `model.go`), resolving import cycles and ensuring tests pass.
-    *   Inlined simple cache helper functions (`GetCachedCount`, `SetCachedCount`) from `internal/cache/helpers.go` into `cache.go` to reduce internal dependencies.
-    *   **Implemented "Invalidate-on-Change" strategy for list caches:**
-        *   Modified `updateAffectedQueryCaches` and `handleDeleteInQueryCaches` to delete list cache keys instead of updating IDs.
-        *   Removed redundant list computation logic from these functions.
-        *   Updated relevant test assertions (`TestThing_Delete`, `TestThing_Query_IncrementalCacheUpdate`).
-*   **Current Focus:** Task 21: Implement JSON Serialization Features (Executor working).
-*   **Next Steps:** Proceed to implement Field Inclusion/Exclusion for JSON serialization (static via struct tags, dynamic at runtime).
+<details>
+<summary>Background and Motivation (archived)</summary>
+- User requested to reduce test log noise from mock cache implementation.
+</details>

@@ -30,21 +30,25 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 		return resultMap, nil
 	}
 
+	// Ensure modelType is a pointer type (e.g., *User)
+	if modelType.Kind() != reflect.Ptr {
+		return nil, fmt.Errorf("fetchModelsByIDsInternal: modelType must be a pointer to struct, got %s", modelType.Kind())
+	}
+
 	missingIDs := []int64{} // Initialize explicitly
 
 	// 1. Try fetching from cache
 	if cache != nil {
 		for _, id := range ids { // Iterate through original ids
 			cacheKey := generateCacheKey(modelInfo.TableName, id)
-			instancePtrVal := reflect.New(modelType) // Create pointer *T
-
-			// Pass pointer interface, e.g., *User
-			err := cache.GetModel(ctx, cacheKey, instancePtrVal.Interface())
+			instanceVal := reflect.New(modelType.Elem()).Elem() // User
+			instancePtr := instanceVal.Addr().Interface()       // *User
+			err := cache.GetModel(ctx, cacheKey, instancePtr)
 
 			if err == nil {
 				// Found in cache
-				setNewRecordFlagIfBaseModel(instancePtrVal.Interface(), false)
-				resultMap[id] = instancePtrVal                 // Store the reflect.Value pointer
+				setNewRecordFlagIfBaseModel(instancePtr, false)
+				resultMap[id] = reflect.ValueOf(instancePtr)   // Store the pointer
 				log.Printf("DEBUG CACHE HIT for %s", cacheKey) // Added log
 			} else if errors.Is(err, ErrCacheNoneResult) {
 				// Found NoneResult marker - this ID is handled, DO NOT add to missingIDs.
@@ -99,8 +103,8 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 			modelInfo.PkName,
 			placeholders)
 
-		// Create a slice of pointers to the concrete type T for scanning
-		sliceType := reflect.SliceOf(reflect.PointerTo(modelType)) // Use the passed modelType
+		// Create a slice of the concrete type (not pointer) for scanning
+		sliceType := reflect.SliceOf(modelType.Elem()) // []User
 		sliceVal := reflect.New(sliceType).Elem()
 
 		err := db.Select(ctx, sliceVal.Addr().Interface(), query, args...)
@@ -112,27 +116,27 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 
 		// Add fetched models to result map and cache them
 		for j := 0; j < sliceVal.Len(); j++ {
-			modelPtrVal := sliceVal.Index(j) // *T as reflect.Value
-			modelInterface := modelPtrVal.Interface()
-			baseModelPtr := getBaseModelPtr(modelInterface)
-			if baseModelPtr == nil {
-				log.Printf("WARN: Fetched model of type %s has no BaseModel embedded, cannot get ID", modelInfo.TableName)
+			modelVal := sliceVal.Index(j)           // User
+			modelPtr := modelVal.Addr().Interface() // *User
+			model, ok := modelPtr.(Model)
+			if !ok {
+				log.Printf("WARN: Fetched model of type %s does not implement Model interface, cannot get ID", modelInfo.TableName)
 				continue
 			}
 
-			id := baseModelPtr.GetID()
+			id := model.GetID()
 			if id == 0 {
 				log.Printf("WARN: Fetched model %s has zero ID", modelInfo.TableName)
 				continue
 			}
 
-			setNewRecordFlagIfBaseModel(modelInterface, false)
-			resultMap[id] = modelPtrVal // Store the reflect.Value pointer
+			setNewRecordFlagIfBaseModel(modelPtr, false)
+			resultMap[id] = reflect.ValueOf(modelPtr) // Store the pointer
 
 			// Cache the model
 			if cache != nil {
 				cacheKey := generateCacheKey(modelInfo.TableName, id)
-				if errCache := cache.SetModel(ctx, cacheKey, modelInterface, globalCacheTTL); errCache != nil { // USE globalCacheTTL
+				if errCache := cache.SetModel(ctx, cacheKey, modelPtr, globalCacheTTL); errCache != nil { // USE globalCacheTTL
 					log.Printf("WARN: Failed to cache model %s:%d after batch fetch: %v", modelInfo.TableName, id, errCache)
 				}
 			}
@@ -164,20 +168,9 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 // byIDInternal fetches a single model by its ID, now acting as a wrapper
 // around fetchModelsByIDsInternal.
 // The dest argument must be a pointer to the struct type (e.g., *User).
-func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest interface{}) error {
+func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest *T) error {
 	if id <= 0 {
 		return errors.New("invalid ID provided (must be > 0)")
-	}
-
-	// Validate dest is a pointer to the correct struct type
-	destVal := reflect.ValueOf(dest)
-	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
-		return errors.New("destination must be a non-nil pointer")
-	}
-	destElemType := destVal.Elem().Type()
-	if destElemType != reflect.TypeOf(*new(T)) {
-		return fmt.Errorf("destination type mismatch: expected *%s, got %s",
-			reflect.TypeOf(*new(T)).Name(), destElemType.String())
 	}
 
 	// Fetch using the batch function (handles cache logic internally)
@@ -192,15 +185,12 @@ func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest interface{})
 
 	// Check if the requested ID was found in the results
 	if modelVal, ok := resultsMap[id]; ok {
-		// Found the model. The caller might need to check the Deleted flag.
-		// We no longer return ErrNotFound here if Deleted is true.
-
-		// Copy the value from the result map to the destination pointer
-		if destVal.Elem().CanSet() {
-			destVal.Elem().Set(modelVal.Elem())
-			return nil // Success (even if soft-deleted)
+		// Assign the found model to dest
+		if typedModel, ok := modelVal.Interface().(T); ok {
+			*dest = typedModel
+			return nil
 		} else {
-			return fmt.Errorf("internal error: destination cannot be set for ID %d after fetch", id)
+			return fmt.Errorf("type assertion failed for model ID %d", id)
 		}
 	} else {
 		// ID not found in resultsMap, implies it wasn't in DB or cache (or marked NoneResult)
@@ -209,9 +199,13 @@ func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest interface{})
 }
 
 // saveInternal handles both creating and updating records.
-func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
+func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 	if t.db == nil || t.cache == nil {
 		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+	}
+
+	if reflect.ValueOf(value).IsNil() {
+		return errors.New("saveInternal: value (model pointer) is nil")
 	}
 
 	modelValue := reflect.ValueOf(value)
@@ -224,19 +218,16 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 		return fmt.Errorf("BeforeSave hook failed: %w", err)
 	}
 
-	baseModelPtr := getBaseModelPtr(value) // Uses helper defined later
-	if baseModelPtr == nil {
-		return errors.New("could not get BaseModel pointer, model must embed thing.BaseModel")
-	}
-
-	isNew := baseModelPtr.IsNewRecord() || baseModelPtr.ID == 0
+	// Use Model interface methods directly
+	id := value.GetID()
+	isNew := id == 0
 	now := time.Now()
 	var query string
 	var args []interface{}
 	var err error
 	var result sql.Result
 	var changedFields map[string]interface{} // Only used for update
-	var original *T                          // Declare original here for broader scope
+	var original T                           // Use T, not *T
 
 	if isNew {
 		// --- CREATE Path ---
@@ -306,24 +297,28 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 
 	} else {
 		// --- UPDATE Path ---
-		original = new(T) // Create a new instance of T to hold original data
 		// Fetch the original record to compare against (bypass cache)
 		// We need the original state to correctly update query caches incrementally.
-		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", sqlbuilder.BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName), baseModelPtr.ID) // Use exported PkName
+		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", sqlbuilder.BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName), id) // Use exported PkName
 		if err != nil {
-			return fmt.Errorf("failed to fetch original record for update (ID: %d): %w", baseModelPtr.ID, err)
-		}
-
-		setUpdatedAtTimestamp(value, now)
-
-		// Find changed fields
-		changedFields, err = findChangedFieldsSimple(original, value, t.info) // Use simple diff
-		if err != nil {
-			return fmt.Errorf("failed to find changed fields: %w", err)
+			// If not found, use zero value for original
+			var zero T
+			setUpdatedAtTimestamp(value, now)
+			changedFields, err = findChangedFieldsSimple(zero, value, t.info)
+			if err != nil {
+				return fmt.Errorf("failed to find changed fields: %w", err)
+			}
+			// Proceed with update as if all fields changed (or skip, depending on policy)
+		} else {
+			setUpdatedAtTimestamp(value, now)
+			changedFields, err = findChangedFieldsSimple(original, value, t.info) // Use simple diff, pass T
+			if err != nil {
+				return fmt.Errorf("failed to find changed fields: %w", err)
+			}
 		}
 
 		if len(changedFields) == 0 {
-			log.Printf("No fields changed for %s ID %d, skipping update.", t.info.TableName, baseModelPtr.ID)
+			log.Printf("No fields changed for %s ID %d, skipping update.", t.info.TableName, id)
 			return nil // Nothing to update
 		}
 
@@ -336,11 +331,11 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 		}
 
 		// Ensure ID is non-zero for update
-		if baseModelPtr.ID == 0 {
+		if id == 0 {
 			return errors.New("cannot update record with zero ID")
 		}
 
-		vals = append(vals, baseModelPtr.ID) // Add ID for WHERE clause
+		vals = append(vals, id) // Add ID for WHERE clause
 
 		query = fmt.Sprintf("UPDATE %s SET %s WHERE \"%s\" = ?",
 			t.info.TableName,
@@ -365,15 +360,21 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 			log.Printf("WARN: Could not get LastInsertId for %s: %v", t.info.TableName, errID)
 			// Consider returning error? Or just log?
 		} else {
-			baseModelPtr.SetID(lastID)
+			// Use reflection to set ID if needed
+			if setter, ok := any(value).(interface{ SetID(int64) }); ok {
+				setter.SetID(lastID)
+			}
 		}
 	}
-	baseModelPtr.SetNewRecordFlag(false)
+	// Use reflection to set NewRecord flag if needed
+	if setter, ok := any(value).(interface{ SetNewRecordFlag(bool) }); ok {
+		setter.SetNewRecordFlag(false)
+	}
 
 	// --- Update Cache ---
 	if t.cache != nil {
 		// Invalidate/Update the single object cache
-		cacheKey := generateCacheKey(t.info.TableName, baseModelPtr.ID)
+		cacheKey := generateCacheKey(t.info.TableName, value.GetID())
 
 		// Use a lock to prevent race conditions during cache update
 		lockKey := cacheKey + ":lock"
@@ -392,7 +393,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 		}
 
 		// --- Update Query Caches (Incremental) ---
-		t.updateAffectedQueryCaches(ctx, value, original, isNew) // Pass original
+		t.updateAffectedQueryCaches(ctx, value, original, isNew)
 		// --- End Update Query Caches ---
 	}
 
@@ -410,17 +411,12 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 }
 
 // deleteInternal handles deleting records.
-func (t *Thing[T]) deleteInternal(ctx context.Context, value interface{}) error {
+func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 	if t.db == nil || t.cache == nil {
 		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
 	}
 
-	baseModelPtr := getBaseModelPtr(value) // Uses helper defined later
-	if baseModelPtr == nil {
-		return errors.New("deleteInternal: value must embed BaseModel")
-	}
-
-	id := baseModelPtr.GetID()
+	id := value.GetID()
 	if id == 0 {
 		return errors.New("deleteInternal: cannot delete record with zero ID")
 	}
@@ -471,8 +467,8 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value interface{}) error 
 		// --- Incremental Query Cache Update for Delete ---
 		// Requires access to the global index or passing it in.
 		// Placeholder call, assumes handleDeleteInQueryCaches exists on Thing
-		t.handleDeleteInQueryCaches(ctx, value.(*T)) // Pass *T
-		return nil                                   // Success
+		t.handleDeleteInQueryCaches(ctx, value) // Pass T
+		return nil                              // Success
 	})
 
 	if err != nil {

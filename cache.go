@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,17 +94,15 @@ func (t *Thing[T]) ClearCacheByID(ctx context.Context, id int64) error {
 // updateAffectedQueryCaches is called after a Save operation
 // to incrementally update relevant list and count caches.
 // It's now a method of Thing[T].
-func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, originalModel *T, isCreate bool) {
+func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model T, originalModel T, isCreate bool) {
 	if t.cache == nil {
 		return // No cache configured
 	}
-	baseModelPtr := getBaseModelPtr(model) // Use local getBaseModelPtr
-	if baseModelPtr == nil || baseModelPtr.ID == 0 {
-		log.Printf("WARN: updateAffectedQueryCaches skipped for model without BaseModel or ID")
+	id := model.GetID()
+	if id == 0 {
+		log.Printf("WARN: updateAffectedQueryCaches skipped for model with zero ID")
 		return
 	}
-
-	id := baseModelPtr.ID
 	tableName := t.info.TableName
 
 	// 1. Get potentially affected query keys from the index
@@ -160,7 +159,7 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 		}
 
 		// Determine action
-		needsAdd, needsRemove := determineCacheAction(isCreate, matchesOriginal, matchesCurrent, baseModelPtr.KeepItem())
+		needsAdd, needsRemove := determineCacheAction(isCreate, matchesOriginal, matchesCurrent, model.KeepItem())
 
 		if needsAdd || needsRemove {
 			log.Printf("DEBUG Gather Task (%s): Action determined: Add=%v, Remove=%v", cacheKey, needsAdd, needsRemove)
@@ -390,17 +389,15 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 // handleDeleteInQueryCaches is called after a Delete operation
 // to incrementally update relevant list and count caches by removing the deleted item.
 // It's now a method of Thing[T].
-func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
+func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model T) {
 	if t.cache == nil {
 		return // No cache configured
 	}
-	baseModelPtr := getBaseModelPtr(model) // Use local getBaseModelPtr
-	if baseModelPtr == nil || baseModelPtr.ID == 0 {
-		log.Printf("WARN: handleDeleteInQueryCaches skipped for model without BaseModel or ID")
+	id := model.GetID()
+	if id == 0 {
+		log.Printf("WARN: handleDeleteInQueryCaches skipped for model with zero ID")
 		return
 	}
-
-	id := baseModelPtr.ID
 	tableName := t.info.TableName
 
 	// 1. Get potentially affected query keys from the index
@@ -649,7 +646,7 @@ func containsID(ids []int64, id int64) bool {
 
 // Helper function to check if a model matches query parameters.
 // This now acts as a wrapper calling the internal cache version.
-func (t *Thing[T]) checkModelMatchAgainstQuery(model *T, originalModel *T, params cache.QueryParams, isCreate bool) (bool, bool, error) {
+func (t *Thing[T]) checkModelMatchAgainstQuery(model T, originalModel T, params cache.QueryParams, isCreate bool) (bool, bool, error) {
 	var matchesCurrent, matchesOriginal bool
 	var matchErr error
 
@@ -674,7 +671,7 @@ func (t *Thing[T]) checkModelMatchAgainstQuery(model *T, originalModel *T, param
 	}
 
 	// Check original model state using internal function
-	if !isCreate && originalModel != nil {
+	if !isCreate && !reflect.ValueOf(originalModel).IsNil() {
 		matchesOriginal, matchErr = cache.CheckQueryMatch(originalModel, infoInternal, paramsInternal)
 		if matchErr != nil {
 			return false, false, fmt.Errorf("error checking query match for original model: %w", matchErr)

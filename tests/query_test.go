@@ -17,7 +17,7 @@ import (
 
 // TestCachedResult_Count tests the Count() method with caching.
 func TestCachedResult_Count(t *testing.T) {
-	th, mockCache, _, _ := setupCacheTest[User](t)
+	th, mockCache, _, _ := setupCacheTest[*User](t)
 
 	// --- Setup Data ---
 	err := th.Save(&User{Name: "Count User 1"})
@@ -72,7 +72,7 @@ func TestCachedResult_Count(t *testing.T) {
 
 // TestCachedResult_Fetch tests the Fetch() method with caching.
 func TestCachedResult_Fetch(t *testing.T) {
-	th, mockCache, _, _ := setupCacheTest[User](t)
+	th, mockCache, _, _ := setupCacheTest[*User](t)
 
 	// --- Setup Data ---
 	var expectedIDs []int64
@@ -135,11 +135,45 @@ func TestCachedResult_Fetch(t *testing.T) {
 	usersNoneCached, err := resultNone.Fetch(0, 10) // Cache Hit (NoneResult)
 	require.NoError(t, err)
 	assert.Len(t, usersNoneCached, 0, "Fetch for non-existent should return empty slice from cache")
+
+	// --- Test Fetch - Cache+DB Hybrid (offset+limit > cachedIDs) ---
+
+	t.Run("Cache+DB Hybrid Large", func(t *testing.T) {
+		th, mockCache, dbAdapter, _ := setupCacheTest[*User](t)
+		mockDB, ok := dbAdapter.(*mockDBAdapter)
+		require.True(t, ok)
+		mockDB.ResetCounts()
+
+		var expectedIDs []int64
+		for i := 0; i < 220; i++ {
+			u := &User{Name: fmt.Sprintf("Hybrid User %d", i)}
+			err := th.Save(u)
+			require.NoError(t, err)
+			expectedIDs = append(expectedIDs, u.ID)
+		}
+		params := cache.QueryParams{Order: "id ASC"}
+		result, err := th.Query(params)
+		require.NoError(t, err)
+		// 预热缓存
+		_, err = result.Fetch(0, 200)
+		require.NoError(t, err)
+		mockCache.ResetCounts()
+		// 触发混合补齐
+		users, err := result.Fetch(198, 10)
+		require.NoError(t, err)
+		require.Len(t, users, 10)
+		for i := 0; i < 10; i++ {
+			assert.Equal(t, expectedIDs[198+i], users[i].ID)
+		}
+		t.Logf("DEBUG: Hybrid Large - GetQueryIDsCalls: %d, SetQueryIDsCalls: %d, SelectCount: %d", mockCache.Counters["GetQueryIDs"], mockCache.Counters["SetQueryIDs"], mockDB.SelectCount)
+		// 断言 DB Select 被调用（即确实访问了数据库）
+		require.Greater(t, mockDB.SelectCount, 0, "DB Select should have been called for hybrid fetch")
+	})
 }
 
 // TestCachedResult_All tests the Fetch() method simulating an 'All' scenario
 func TestCachedResult_All(t *testing.T) {
-	th, _, _, _ := setupCacheTest[User](t)
+	th, _, _, _ := setupCacheTest[*User](t)
 	// ctx := context.Background() // Removed as Fetch doesn't use context
 
 	// Setup
@@ -177,7 +211,7 @@ func TestCachedResult_All(t *testing.T) {
 func TestCachedResult_First(t *testing.T) {
 	db, cacheClient, cleanup := setupTestDB(t)
 	defer cleanup()
-	thingInstance, err := thing.New[User](db, cacheClient)
+	thingInstance, err := thing.New[*User](db, cacheClient)
 	require.NoError(t, err)
 
 	// Type assert to *mockCacheClient for mock-only methods
@@ -232,7 +266,7 @@ func TestCachedResult_First(t *testing.T) {
 		countCacheKey := testGenerateCountCacheKey(t, thingInstance, params)
 
 		// Pre-populate list cache with ID
-		require.NoError(t, mockCache.SetListIDs(context.Background(), cacheKey, []int64{u1.ID}, 0, time.Minute))
+		require.NoError(t, mockCache.SetQueryIDs(context.Background(), cacheKey, []int64{u1.ID}, time.Minute))
 		require.NoError(t, mockCache.SetCount(context.Background(), countCacheKey, 1, time.Minute))
 		// Ensure model cache for u1 itself is empty initially
 		modelCacheKey := fmt.Sprintf("users:%d", u1.ID)
@@ -253,11 +287,11 @@ func TestCachedResult_First(t *testing.T) {
 		require.Equal(t, u1.ID, firstUser.ID)
 
 		// Assertions:
-		// 1. List cache was checked (GetListIDs called)
+		// 1. List cache was checked (GetQueryIDs called)
 		// 2. Model cache was checked for u1 (GetModel called for users:u1.ID)
 		// 3. DB was NOT called for the list (Select count should be 0)
 		// 4. DB *was* called to fetch u1 by ID (Get count should be 1)
-		require.GreaterOrEqual(t, mockCache.GetListIDsCount(), 1, "GetListIDs should have been called")
+		require.GreaterOrEqual(t, mockCache.Counters["GetQueryIDs"], 1, "GetQueryIDs should have been called")
 		require.GreaterOrEqual(t, mockCache.GetModelCount(), 1, "GetModel should have been called for the ID")
 		// DB call assertions can be added if db is a mock
 		// require.Equal(t, 0, mockDBAdapter.SelectCount, "DB Select (for list) should NOT have been called")
@@ -268,7 +302,7 @@ func TestCachedResult_First(t *testing.T) {
 }
 
 // Helper to generate list cache key for testing
-func testGenerateListCacheKey[T any](t *testing.T, instance *thing.Thing[T], params cache.QueryParams) string {
+func testGenerateListCacheKey[T thing.Model](t *testing.T, instance *thing.Thing[T], params cache.QueryParams) string {
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
 	info, err := thing.GetCachedModelInfo(modelType)
 	require.NoError(t, err)
@@ -276,7 +310,7 @@ func testGenerateListCacheKey[T any](t *testing.T, instance *thing.Thing[T], par
 }
 
 // Helper to generate count cache key for testing
-func testGenerateCountCacheKey[T any](t *testing.T, instance *thing.Thing[T], params cache.QueryParams) string {
+func testGenerateCountCacheKey[T thing.Model](t *testing.T, instance *thing.Thing[T], params cache.QueryParams) string {
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
 	info, err := thing.GetCachedModelInfo(modelType)
 	require.NoError(t, err)

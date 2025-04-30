@@ -25,7 +25,7 @@ type BaseModel struct {
 // --- BaseModel Methods ---
 
 // GetID returns the primary key value.
-func (b *BaseModel) GetID() int64 {
+func (b BaseModel) GetID() int64 {
 	return b.ID
 }
 
@@ -37,7 +37,7 @@ func (b *BaseModel) SetID(id int64) {
 // TableName returns the database table name for the model.
 // Default implementation returns empty string, relying on getTableNameFromType.
 // Override this method in your specific model struct for custom table names.
-func (b *BaseModel) TableName() string {
+func (b BaseModel) TableName() string {
 	// Default implementation, getTableNameFromType will be used if this returns ""
 	return ""
 }
@@ -48,7 +48,7 @@ func (b *BaseModel) IsNewRecord() bool {
 }
 
 // KeepItem checks if the record is considered active (not soft-deleted).
-func (b *BaseModel) KeepItem() bool {
+func (b BaseModel) KeepItem() bool {
 	return !b.Deleted
 }
 
@@ -61,7 +61,13 @@ func (b *BaseModel) SetNewRecordFlag(isNew bool) {
 
 // GetBaseModelPtr returns a pointer to the embedded BaseModel if it exists and is addressable.
 func getBaseModelPtr(value interface{}) *BaseModel {
+	if value == nil {
+		return nil
+	}
 	val := reflect.ValueOf(value)
+	if val.Kind() == reflect.Ptr && val.IsNil() {
+		return nil
+	}
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
 	}

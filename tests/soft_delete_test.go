@@ -15,9 +15,8 @@ import (
 
 // Basic test for the SoftDelete method
 func TestThing_SoftDelete_Basic(t *testing.T) {
-	th, _, _, cleanup := setupCacheTest[User](t) // Use setupCacheTest
+	th, _, _, cleanup := setupCacheTest[*User](t) // Use setupCacheTest
 	defer cleanup()
-	ctx := context.Background()
 
 	// 1. Create User
 	user := &User{Name: "Soft Delete Me", Email: "softdelete@example.com"}
@@ -30,7 +29,7 @@ func TestThing_SoftDelete_Basic(t *testing.T) {
 	time.Sleep(1 * time.Millisecond)
 
 	// 2. Soft Delete User
-	err = th.SoftDelete(ctx, user)
+	err = th.SoftDelete(user)
 	require.NoError(t, err)
 
 	// 3. Verify struct state
@@ -45,9 +44,9 @@ func TestThing_SoftDelete_Basic(t *testing.T) {
 	fetchedUser, err := th.ByID(user.ID)
 	require.NoError(t, err, "Fetching soft-deleted user by ID should succeed")
 	require.NotNil(t, fetchedUser, "Fetched user should not be nil")
-	assert.True(t, fetchedUser.Deleted, "Fetched user via ByID should have Deleted flag set to true")
-	assert.Equal(t, user.ID, fetchedUser.ID, "Fetched user ID should match")
-	assert.Equal(t, user.Name, fetchedUser.Name, "Fetched user Name should match") // Verify other fields too
+	assert.True(t, (*fetchedUser).Deleted, "Fetched user via ByID should have Deleted flag set to true")
+	assert.Equal(t, user.ID, (*fetchedUser).ID, "Fetched user ID should match")
+	assert.Equal(t, user.Name, (*fetchedUser).Name, "Fetched user Name should match") // Verify other fields too
 
 	// 5. Verify standard Query does not find the user
 	params := cache.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
@@ -65,9 +64,8 @@ func TestThing_SoftDelete_Basic(t *testing.T) {
 
 // Test the WithDeleted option for Query
 func TestThing_Query_WithDeleted(t *testing.T) {
-	th, _, _, cleanup := setupCacheTest[User](t) // Use setupCacheTest
+	th, _, _, cleanup := setupCacheTest[*User](t) // Use setupCacheTest
 	defer cleanup()
-	ctx := context.Background()
 
 	// 1. Create User
 	user := &User{Name: "Include Deleted Me", Email: "withdeleted@example.com"}
@@ -76,7 +74,7 @@ func TestThing_Query_WithDeleted(t *testing.T) {
 	require.NotZero(t, user.ID)
 
 	// 2. Soft Delete User
-	err = th.SoftDelete(ctx, user)
+	err = th.SoftDelete(user)
 	require.NoError(t, err)
 
 	// 3. Standard Query should not find the user
@@ -105,15 +103,14 @@ func TestThing_Query_WithDeleted(t *testing.T) {
 	deletedFetched, err := deletedQueryResult.Fetch(0, 1)
 	require.NoError(t, err)
 	require.Len(t, deletedFetched, 1, "WithDeleted query fetch should find 1")
-	assert.Equal(t, user.ID, deletedFetched[0].ID)
-	assert.True(t, deletedFetched[0].Deleted, "Fetched user should have Deleted flag set")
+	assert.Equal(t, user.ID, (*deletedFetched[0]).ID)
+	assert.True(t, (*deletedFetched[0]).Deleted, "Fetched user should have Deleted flag set")
 }
 
 // Test cache interactions during SoftDelete
 func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
-	th, mockCache, _, cleanup := setupCacheTest[User](t) // Use cache setup
+	th, mockCache, _, cleanup := setupCacheTest[*User](t) // Use cache setup
 	defer cleanup()
-	ctx := context.Background()
 
 	// 1. Create User
 	user := &User{Name: "Soft Delete Cache", Email: "softcache@example.com"}
@@ -142,16 +139,16 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	require.EqualValues(t, 1, count)
 
 	// Check caches are populated
-	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
+	_, err = mockCache.GetQueryIDs(context.Background(), listCacheKey)
 	require.NoError(t, err, "List cache should exist before soft delete")
-	_, err = mockCache.Get(ctx, countCacheKey)
+	_, err = mockCache.Get(context.Background(), countCacheKey)
 	require.NoError(t, err, "Count cache should exist before soft delete")
 
 	// Reset call counts before soft delete
 	mockCache.ResetCalls()
 
 	// 3. Soft Delete User
-	err = th.SoftDelete(ctx, user)
+	err = th.SoftDelete(user)
 	require.NoError(t, err)
 
 	// 4. Verify Cache Interactions
@@ -168,17 +165,17 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	// Model cache exists but is marked deleted (or updated by SetModel)
 	assert.True(t, mockCache.Exists(modelKey), "Model cache should still exist after SoftDelete (SetModel was called)")
 	var cachedUserVal User
-	err = mockCache.GetModel(ctx, modelKey, &cachedUserVal)                              // Pass pointer to struct
+	err = mockCache.GetModel(context.Background(), modelKey, &cachedUserVal)             // Pass pointer to struct
 	require.NoError(t, err, "GetModel from cache after soft delete failed unexpectedly") // Should find it
 	assert.True(t, cachedUserVal.Deleted, "Cached model should have Deleted = true")
 
 	// List cache should be gone
-	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
+	_, err = mockCache.GetQueryIDs(context.Background(), listCacheKey)
 	require.Error(t, err, "List cache should be invalidated")
 	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound for list cache")
 
 	// Count cache should be updated to 0
-	countStr, err := mockCache.Get(ctx, countCacheKey)
+	countStr, err := mockCache.Get(context.Background(), countCacheKey)
 	require.NoError(t, err, "Count cache should still exist")
 	assert.Equal(t, "0", countStr, "Count cache should be updated to 0")
 
@@ -187,7 +184,7 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	fetchedUserByID, errByID := th.ByID(user.ID)
 	require.NoError(t, errByID, "ByID should succeed for soft-deleted user")
 	require.NotNil(t, fetchedUserByID, "ByID result should not be nil")
-	assert.True(t, fetchedUserByID.Deleted, "Fetched user via ByID should have Deleted flag set")
+	assert.True(t, (*fetchedUserByID).Deleted, "Fetched user via ByID should have Deleted flag set")
 
 	// Standard Query should find 0
 	queryResultStd, err := th.Query(params)
@@ -209,19 +206,19 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	fetchDel, err := queryResultDel.Fetch(0, 1)
 	require.NoError(t, err)
 	require.Len(t, fetchDel, 1)
-	assert.Equal(t, user.ID, fetchDel[0].ID)
-	assert.True(t, fetchDel[0].Deleted)
+	assert.Equal(t, user.ID, (*fetchDel[0]).ID)
+	assert.True(t, (*fetchDel[0]).Deleted)
 }
 
 // Test that using WithDeleted doesn't affect the original query object
 func TestThing_WithDeleted_Immutability(t *testing.T) {
-	th, _, _, cleanup := setupCacheTest[User](t) // Use setupCacheTest
+	th, _, _, cleanup := setupCacheTest[*User](t) // Use setupCacheTest
 	defer cleanup()
 
 	// Create and soft delete a user
 	user := &User{Name: "Immutable Test", Email: "immutable@example.com"}
 	require.NoError(t, th.Save(user))
-	require.NoError(t, th.SoftDelete(context.Background(), user))
+	require.NoError(t, th.SoftDelete(user))
 
 	// Original query
 	params := cache.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}

@@ -14,11 +14,11 @@ import (
 
 // TestTransaction_Commit verifies that operations within a committed transaction persist.
 func TestTransaction_Commit(t *testing.T) {
-	th, _, dbAdapter, cleanup := setupCacheTest[User](t) // Get DBAdapter too
+	th, _, dbAdapter, cleanup := setupCacheTest[*User](t) // Get DBAdapter too
 	defer cleanup()
 
 	ctx := context.Background()
-	var originalUser User
+	var originalUser *User
 
 	// 1. Create initial data outside transaction using the ORM
 	userToCreate := &User{Name: "Commit Test User", Email: "commit@example.com"}
@@ -46,7 +46,7 @@ func TestTransaction_Commit(t *testing.T) {
 	assert.Equal(t, int64(1), rowsAffected, "Expected 1 row to be affected by update")
 
 	// 3c. Select the user again using Tx.Get to verify intermediate state
-	var updatedUserTx User
+	var updatedUserTx *User
 	err = tx.Get(ctx, &updatedUserTx, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", originalUser.ID)
 	require.NoError(t, err, "Failed to get updated user within transaction")
 	assert.Equal(t, newName, updatedUserTx.Name)
@@ -67,7 +67,7 @@ func TestTransaction_Commit(t *testing.T) {
 	assert.Equal(t, newName, finalUserPtr.Name, "User name should be updated after commit (checked via ByID)")
 
 	// 5b. Verify using raw DBAdapter.Get to bypass cache
-	var finalUserDb User
+	var finalUserDb *User
 	dbErr := dbAdapter.Get(ctx, &finalUserDb, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", originalUser.ID)
 	require.NoError(t, dbErr, "Failed raw DB get after commit")
 	assert.Equal(t, newName, finalUserDb.Name, "User name should be updated in DB after commit")
@@ -75,7 +75,7 @@ func TestTransaction_Commit(t *testing.T) {
 
 // TestTransaction_Rollback verifies that operations within a rolled-back transaction do not persist.
 func TestTransaction_Rollback(t *testing.T) {
-	th, _, dbAdapter, cleanup := setupCacheTest[User](t) // Get DBAdapter too
+	th, _, dbAdapter, cleanup := setupCacheTest[*User](t) // Get DBAdapter too
 	defer cleanup()
 
 	ctx := context.Background()
@@ -99,7 +99,7 @@ func TestTransaction_Rollback(t *testing.T) {
 	require.NoError(t, err, "Failed to update user within transaction")
 
 	// 3b. Select within transaction using Tx.Get to verify intermediate state
-	var updatedUserTx User
+	var updatedUserTx *User
 	err = tx.Get(ctx, &updatedUserTx, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", initialID)
 	require.NoError(t, err, "Failed to get user within transaction")
 	assert.Equal(t, updateName, updatedUserTx.Name, "Name should be updated within transaction")
@@ -134,7 +134,7 @@ func TestTransaction_Rollback(t *testing.T) {
 
 // TestTransaction_Select verifies that Select operations work correctly within a transaction.
 func TestTransaction_Select(t *testing.T) {
-	th, _, dbAdapter, cleanup := setupCacheTest[User](t)
+	th, _, dbAdapter, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	ctx := context.Background()

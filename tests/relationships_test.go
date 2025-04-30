@@ -15,10 +15,10 @@ func TestThing_Query_Preload_BelongsTo(t *testing.T) {
 	db, mockcache, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	userThing, err := thing.New[User](db, mockcache)
+	userThing, err := thing.New[*User](db, mockcache)
 	require.NoError(t, err)
 
-	bookThing, err := thing.New[Book](db, mockcache)
+	bookThing, err := thing.New[*Book](db, mockcache)
 	require.NoError(t, err)
 
 	// Create a test user
@@ -65,10 +65,10 @@ func TestThing_Query_Preload_HasMany(t *testing.T) {
 	db, mockcache, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	userThing, err := thing.New[User](db, mockcache)
+	userThing, err := thing.New[*User](db, mockcache)
 	require.NoError(t, err)
 
-	bookThing, err := thing.New[Book](db, mockcache)
+	bookThing, err := thing.New[*Book](db, mockcache)
 	require.NoError(t, err)
 
 	// Create a test user
@@ -128,10 +128,10 @@ func TestThing_Load_BelongsTo(t *testing.T) {
 	db, cache, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	userThing, err := thing.New[User](db, cache)
+	userThing, err := thing.New[*User](db, cache)
 	require.NoError(t, err)
 
-	bookThing, err := thing.New[Book](db, cache)
+	bookThing, err := thing.New[*Book](db, cache)
 	require.NoError(t, err)
 
 	// Create a test user
@@ -173,10 +173,10 @@ func TestThing_Load_HasMany(t *testing.T) {
 	db, cache, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	userThing, err := thing.New[User](db, cache)
+	userThing, err := thing.New[*User](db, cache)
 	require.NoError(t, err)
 
-	bookThing, err := thing.New[Book](db, cache)
+	bookThing, err := thing.New[*Book](db, cache)
 	require.NoError(t, err)
 
 	// Create a test user

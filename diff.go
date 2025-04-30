@@ -138,10 +138,21 @@ func findChangedFieldsReflection[T any](original, updated *T, info *ModelInfo) (
 
 // findChangedFieldsSimple compares two structs (original and updated) using cached metadata
 // for optimized comparison.
-func findChangedFieldsSimple[T any](original, updated *T, info *ModelInfo) (map[string]interface{}, error) {
+func findChangedFieldsSimple[T any](original, updated T, info *ModelInfo) (map[string]interface{}, error) {
 	changed := make(map[string]interface{})
-	originalVal := reflect.ValueOf(original).Elem()
-	updatedVal := reflect.ValueOf(updated).Elem()
+
+	// Robust nil pointer checks
+	origVal := reflect.ValueOf(original)
+	updVal := reflect.ValueOf(updated)
+	if origVal.Kind() == reflect.Ptr && origVal.IsNil() {
+		return changed, errors.New("findChangedFieldsSimple: original is nil pointer")
+	}
+	if updVal.Kind() == reflect.Ptr && updVal.IsNil() {
+		return changed, errors.New("findChangedFieldsSimple: updated is nil pointer")
+	}
+
+	originalVal := origVal.Elem()
+	updatedVal := updVal.Elem()
 
 	if originalVal.Type() != updatedVal.Type() {
 		return nil, errors.New("original and updated values must be of the same type")

@@ -1,7 +1,6 @@
 package thing_test
 
 import (
-	"context"
 	"testing"
 	"thing/internal/cache"
 
@@ -13,7 +12,7 @@ import (
 
 func TestThing_ByID_Found(t *testing.T) {
 	// Set up test DB and cache
-	th, _, _, cleanup := setupCacheTest[User](t)
+	th, _, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create a test user
@@ -34,7 +33,7 @@ func TestThing_ByID_Found(t *testing.T) {
 
 func TestThing_ByID_NotFound(t *testing.T) {
 	// Set up test DB and cache
-	th, _, _, cleanup := setupCacheTest[User](t)
+	th, _, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Try to retrieve a non-existent user
@@ -46,7 +45,7 @@ func TestThing_ByID_NotFound(t *testing.T) {
 
 func TestThing_Save_Create(t *testing.T) {
 	// Set up test DB and cache
-	th, _, _, cleanup := setupCacheTest[User](t)
+	th, _, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create a new user
@@ -75,7 +74,7 @@ func TestThing_Save_Create(t *testing.T) {
 
 func TestThing_Save_Update(t *testing.T) {
 	// Set up test DB and cache
-	th, _, _, cleanup := setupCacheTest[User](t)
+	th, _, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create a new user
@@ -110,7 +109,7 @@ func TestThing_Save_Update(t *testing.T) {
 
 func TestThing_Delete(t *testing.T) {
 	// Set up test DB and cache
-	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create a new user
@@ -150,7 +149,7 @@ func TestThing_Delete(t *testing.T) {
 	mockCache.ResetCalls() // Reset counters to isolate Delete actions
 
 	// Delete the user
-	err = th.Delete(context.Background(), user)
+	err = th.Delete(user)
 	require.NoError(t, err)
 
 	// Verify user no longer exists
@@ -179,7 +178,7 @@ func TestThing_Delete(t *testing.T) {
 
 func TestThing_Query(t *testing.T) {
 	// Set up test DB and cache
-	th, _, _, cleanup := setupCacheTest[User](t)
+	th, _, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create multiple users

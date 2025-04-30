@@ -79,12 +79,16 @@ func parseThingTag(tag string) (opts RelationshipOpts, err error) {
 }
 
 // preloadRelations handles the actual preloading logic based on parsed opts.
-func (t *Thing[T]) preloadRelations(ctx context.Context, results []*T, preloadName string) error {
+func (t *Thing[T]) preloadRelations(ctx context.Context, results []T, preloadName string) error {
 	if len(results) == 0 {
 		return nil // Nothing to preload
 	}
 
+	// Always use the struct type (not pointer) for FieldByName to avoid panic
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
 	field, ok := modelType.FieldByName(preloadName)
 	if !ok {
 		return fmt.Errorf("field '%s' not found in model %s", preloadName, modelType.Name())
@@ -102,7 +106,18 @@ func (t *Thing[T]) preloadRelations(ctx context.Context, results []*T, preloadNa
 		log.Printf("DEBUG: Using default local key '%s' for relation '%s'", opts.LocalKey, preloadName)
 	}
 
+	// --- Reflection fix: ensure resultsVal is a slice of pointers to struct ---
 	resultsVal := reflect.ValueOf(results)
+	if resultsVal.Kind() != reflect.Slice {
+		return fmt.Errorf("preloadRelations: results is not a slice (got %s)", resultsVal.Kind())
+	}
+	if resultsVal.Len() == 0 {
+		return nil // Nothing to preload
+	}
+	firstElem := resultsVal.Index(0)
+	if firstElem.Kind() != reflect.Ptr || firstElem.Elem().Kind() != reflect.Struct {
+		return fmt.Errorf("preloadRelations: elements in results must be pointers to struct, got %s", firstElem.Kind())
+	}
 
 	switch opts.RelationType {
 	case "belongsTo":
@@ -178,8 +193,11 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 		return fmt.Errorf("failed to get model info for related type %s: %w", relatedModelType.Name(), err)
 	}
 
-	// Call the internal helper, passing the concrete relatedModelType
-	relatedMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, relatedInfo, relatedModelType, uniqueFkList)
+	relatedPtrType := relatedModelType
+	if relatedPtrType.Kind() != reflect.Ptr {
+		relatedPtrType = reflect.PtrTo(relatedModelType)
+	}
+	relatedMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, relatedInfo, relatedPtrType, uniqueFkList)
 	if err != nil {
 		return fmt.Errorf("failed to fetch related %s models using internal helper: %w", relatedModelType.Name(), err)
 	}
@@ -399,7 +417,12 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 	if len(relatedIDs) > 0 {
 		// Use the internal helper which checks object cache
 		log.Printf("Fetching %d related %s models using fetchModelsByIDsInternal", len(relatedIDs), relatedModelType.Name())
-		relatedModelsMap, err = fetchModelsByIDsInternal(ctx, t.cache, t.db, relatedInfo, relatedModelType, relatedIDs)
+		// Always pass pointer type (*R) to fetchModelsByIDsInternal
+		relatedPtrType := reflect.PtrTo(relatedModelType)
+		if relatedPtrType.Kind() != reflect.Ptr {
+			return fmt.Errorf("preloadHasMany: relatedPtrType must be a pointer type, got %s", relatedPtrType.Kind())
+		}
+		relatedModelsMap, err = fetchModelsByIDsInternal(ctx, t.cache, t.db, relatedInfo, relatedPtrType, relatedIDs)
 		if err != nil {
 			// Log error but proceed to map any models that might have been fetched from cache before the error
 			log.Printf("WARN: Error during fetchModelsByIDsInternal for %s: %v. Proceeding with potentially partial results.", relatedModelType.Name(), err)
@@ -475,8 +498,8 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 // This is the internal implementation called by the public Load method.
 // model must be a pointer to a struct of type T.
 // relations are the string names of the fields representing the relationships to load.
-func (t *Thing[T]) loadInternal(ctx context.Context, model *T, relations ...string) error {
-	if model == nil {
+func (t *Thing[T]) loadInternal(ctx context.Context, model T, relations ...string) error {
+	if reflect.ValueOf(model).IsNil() {
 		return errors.New("model cannot be nil")
 	}
 	if len(relations) == 0 {
@@ -487,7 +510,7 @@ func (t *Thing[T]) loadInternal(ctx context.Context, model *T, relations ...stri
 	}
 
 	// Wrap the single model in a slice to reuse the preloadRelations helper
-	modelSlice := []*T{model}
+	modelSlice := []T{model}
 
 	for _, relationName := range relations {
 		// Use the provided context (ctx) when calling preloadRelations
@@ -501,7 +524,7 @@ func (t *Thing[T]) loadInternal(ctx context.Context, model *T, relations ...stri
 }
 
 // Load eagerly loads specified relationships for a given model instance.
-func (t *Thing[T]) Load(model *T, relations ...string) error {
+func (t *Thing[T]) Load(model T, relations ...string) error {
 	// Use the context stored in the Thing instance
 	return t.loadInternal(t.ctx, model, relations...)
 }

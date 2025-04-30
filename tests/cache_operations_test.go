@@ -19,7 +19,7 @@ func (m *mockCacheClient) FormatID(id int64) string {
 }
 
 func TestThing_ByID_Cache_MissAndSet(t *testing.T) {
-	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create a test user
@@ -41,7 +41,7 @@ func TestThing_ByID_Cache_MissAndSet(t *testing.T) {
 	foundUser, err := th.ByID(user.ID)
 	require.NoError(t, err)
 	require.NotNil(t, foundUser)
-	assert.Equal(t, user.ID, foundUser.ID)
+	assert.Equal(t, user.ID, (*foundUser).ID)
 	assert.Equal(t, user.Name, foundUser.Name)
 	assert.Equal(t, user.Email, foundUser.Email)
 
@@ -55,7 +55,7 @@ func TestThing_ByID_Cache_MissAndSet(t *testing.T) {
 }
 
 func TestThing_ByID_Cache_Hit(t *testing.T) {
-	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create a test user
@@ -91,13 +91,13 @@ func TestThing_ByID_Cache_Hit(t *testing.T) {
 	assert.Equal(t, setCount, mockCache.Counters["SetModel"], "Should not set in cache again")
 
 	// Verify the data was correct from cache
-	assert.Equal(t, user.ID, foundUser.ID)
+	assert.Equal(t, user.ID, (*foundUser).ID)
 	assert.Equal(t, user.Name, foundUser.Name)
 	assert.Equal(t, user.Email, foundUser.Email)
 }
 
 func TestThing_ByID_Cache_NoneResult(t *testing.T) {
-	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// 1. Create user
@@ -116,7 +116,7 @@ func TestThing_ByID_Cache_NoneResult(t *testing.T) {
 	require.NoError(t, err)
 
 	// 3. Delete the user (this should invalidate the object cache)
-	err = th.Delete(context.Background(), user)
+	err = th.Delete(user)
 	require.NoError(t, err)
 
 	// Reset mock cache call counts for clarity
@@ -162,7 +162,7 @@ func TestThing_ByID_Cache_NoneResult(t *testing.T) {
 }
 
 func TestThing_Query_Cache(t *testing.T) {
-	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create multiple users
@@ -191,7 +191,7 @@ func TestThing_Query_Cache(t *testing.T) {
 	fetchedUsers, fetchErr := queryResult.Fetch(0, 10) // Fetch up to 10
 	require.NoError(t, fetchErr)
 	require.Len(t, fetchedUsers, 1, "Expected to fetch 1 user named Alice Cache")
-	assert.Equal(t, userAlice.ID, fetchedUsers[0].ID)
+	assert.Equal(t, userAlice.ID, (*fetchedUsers[0]).ID)
 
 	// Verify cache operations for first query
 	assert.Equal(t, 1, mockCache.Counters["GetQueryIDs"], "Should attempt to get query from cache")
@@ -211,7 +211,7 @@ func TestThing_Query_Cache(t *testing.T) {
 	fetchedUsers2, fetchErr2 := query2Result.Fetch(0, 10) // Fetch up to 10
 	require.NoError(t, fetchErr2)
 	require.Len(t, fetchedUsers2, 1, "Expected to fetch 1 user from cache")
-	assert.Equal(t, userAlice.ID, fetchedUsers2[0].ID)
+	assert.Equal(t, userAlice.ID, (*fetchedUsers2[0]).ID)
 
 	// Verify cache operations for second query
 	assert.Equal(t, getQueryCount+1, mockCache.Counters["GetQueryIDs"], "Should attempt to get query from cache again")
@@ -221,7 +221,7 @@ func TestThing_Query_Cache(t *testing.T) {
 }
 
 func TestThing_Query_CacheInvalidation(t *testing.T) {
-	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create test user
@@ -289,7 +289,7 @@ func TestThing_Query_CacheInvalidation(t *testing.T) {
 }
 
 func TestThing_Save_Create_Cache(t *testing.T) {
-	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Reset cache metrics
@@ -319,7 +319,7 @@ func TestThing_Save_Create_Cache(t *testing.T) {
 }
 
 func TestThing_Save_Update_Cache(t *testing.T) {
-	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create a user
@@ -357,7 +357,7 @@ func TestThing_Save_Update_Cache(t *testing.T) {
 }
 
 func TestThing_Delete_Cache(t *testing.T) {
-	th, mockCache, _, cleanup := setupCacheTest[User](t)
+	th, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// Create a user
@@ -382,7 +382,7 @@ func TestThing_Delete_Cache(t *testing.T) {
 	assert.True(t, mockCache.Exists(modelKey), "Model should be in cache before delete")
 
 	// Delete the user
-	err = th.Delete(context.Background(), user)
+	err = th.Delete(user)
 	require.NoError(t, err)
 
 	// Verify the entity is no longer in cache
@@ -399,7 +399,7 @@ func sprintf(format string, args ...interface{}) string {
 // or deleted.
 func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	// Use setupCacheTest to get direct instance and mock cache
-	thingUser, cacheClient, _, cleanup := setupCacheTest[User](t)
+	thingUser, cacheClient, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
 	// --- Setup: Initial Query & Caching ---
@@ -455,7 +455,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	fetch2, err := cr2.Fetch(0, 10) // Should hit list cache
 	require.NoError(t, err)
 	require.Len(t, fetch2, 1)
-	assert.Equal(t, user1.ID, fetch2[0].ID)
+	assert.Equal(t, user1.ID, (*fetch2[0]).ID)
 	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Fetch query should hit list cache (GetQueryIDs)")
 	assert.Equal(t, 1, cacheClient.Counters["SetQueryIDs"], "Expected 1 SetQueryIDs (list cache write on miss)")
 
@@ -519,12 +519,12 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	fetch4, err := cr4.Fetch(0, 10) // Should hit cache
 	require.NoError(t, err)
 	require.Len(t, fetch4, 1)
-	assert.Equal(t, user1.ID, fetch4[0].ID)
+	assert.Equal(t, user1.ID, (*fetch4[0]).ID)
 
 	cacheClient.ResetCalls()
 
 	// --- Test Case 4: Delete the matching item ---
-	err = thingUser.Delete(context.Background(), &user1)
+	err = thingUser.Delete(&user1)
 	require.NoError(t, err)
 
 	// Verify caches were updated (item removed) via counters AFTER ResetCalls
@@ -559,7 +559,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	cacheClient.ResetCalls() // Reset after creation
 
 	// Soft delete using the dedicated method
-	err = thingUser.SoftDelete(context.Background(), &user2)
+	err = thingUser.SoftDelete(&user2)
 	require.NoError(t, err)
 
 	// Verify caches were updated (item removed due to KeepItem() check) via counters AFTER ResetCalls
@@ -593,7 +593,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 // TestThing_IncrementalQueryCacheUpdate tests the incremental update logic
 // for list and count caches triggered by Save and Delete operations.
 func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
-	thingInstance, mockCache, _, cleanup := setupCacheTest[User](t)
+	thingInstance, mockCache, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 	ctx := context.Background()
 
@@ -741,7 +741,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	mockCache.ResetCalls()
 
 	// --- Test Scenario 6: Delete a user that matches the query ---
-	require.NoError(t, thingInstance.Delete(context.Background(), user2), "Delete user2 failed")
+	require.NoError(t, thingInstance.Delete(user2), "Delete user2 failed")
 
 	// Check list cache: Cache should have been INVALIDATED by the Delete operation
 	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)

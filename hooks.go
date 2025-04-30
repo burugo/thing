@@ -53,10 +53,8 @@ func triggerEvent(ctx context.Context, eventType EventType, model interface{}, e
 
 	// Get model ID for logging
 	var modelID int64 = -1
-	// Note: This relies on getBaseModelPtr which might be moved later.
-	// If moved to a different package, this dependency needs resolution.
-	if bm := getBaseModelPtr(model); bm != nil { // Uses helper defined later
-		modelID = bm.GetID()
+	if m, ok := model.(Model); ok {
+		modelID = m.GetID()
 	}
 
 	// Execute listeners sequentially.
