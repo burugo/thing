@@ -1,21 +1,10 @@
 package cache
 
 import (
-	"context"
 	"errors"
-	"time"
 )
 
 // --- Local Interfaces/Structs/Vars for internal/cache --- //
-
-// Local CacheClient interface defining only methods needed internally
-type CacheClient interface {
-	Get(ctx context.Context, key string) (string, error)
-	Set(ctx context.Context, key string, value string, expiration time.Duration) error
-	SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error
-	// Add other methods like Delete, GetModel etc. if cache_helpers needs them
-}
-
 // Local QueryParams matching root structure
 type QueryParams struct {
 	Where    string

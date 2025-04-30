@@ -314,7 +314,8 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	// 5. Handle filtered DB results and cache appropriately
 	log.Printf("DB HIT: List Key: %s, Found %d valid IDs after filtering. Caching IDs.", listCacheKey, len(validIDs))
 	// Use the helper function to store the list (works for empty lists too)
-	cacheSetErr := cache.SetCachedListIDs(cr.thing.ctx, cr.thing.cache, listCacheKey, validIDs, globalCacheTTL) // Use helper
+	// cacheSetErr := cache.SetCachedListIDs(cr.thing.ctx, cr.thing.cache, listCacheKey, validIDs, globalCacheTTL) // Use helper
+	cacheSetErr := cr.thing.cache.SetQueryIDs(cr.thing.ctx, listCacheKey, validIDs, globalCacheTTL)
 	if cacheSetErr != nil {
 		log.Printf("WARN: Failed to cache list IDs for key %s: %v", listCacheKey, cacheSetErr) // Log remains the same
 	}

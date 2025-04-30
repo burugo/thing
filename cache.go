@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -203,16 +204,35 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 			}
 		} else if task.isCountKey {
 			if _, exists := initialCountValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
-				count, err := cache.GetCachedCount(ctx, t.cache, task.cacheKey) // Use exported helper
+				// Inline GetCachedCount logic
+				countStr, err := t.cache.Get(ctx, task.cacheKey)
+				var count int64
 				if err != nil {
-					// getCachedCount already logs specific errors and returns 0 for ErrNotFound
-					log.Printf("ERROR: Failed to read initial count cache for key %s: %v", task.cacheKey, err)
-					readErrors[task.cacheKey] = err        // Record error
-					initialCountValues[task.cacheKey] = -1 // Indicate error state if needed, though getCachedCount returns 0 on error
+					if errors.Is(err, ErrNotFound) {
+						count = 0 // Not found is not an error here, count is 0
+						err = nil // Clear the error
+					} else {
+						log.Printf("ERROR: Failed to read initial count cache for key %s: %v", task.cacheKey, err)
+						readErrors[task.cacheKey] = err        // Record error
+						initialCountValues[task.cacheKey] = -1 // Indicate error state
+						continue
+					}
+				} else if countStr == "" {
+					count = 0 // Handle empty string case
 				} else {
-					log.Printf("DEBUG Read (%s): Read initial count: %d.", task.cacheKey, count)
-					initialCountValues[task.cacheKey] = count
+					parsedCount, parseErr := strconv.ParseInt(countStr, 10, 64)
+					if parseErr != nil {
+						log.Printf("ERROR: Failed to parse count cache value '%s' for key %s: %v", countStr, task.cacheKey, parseErr)
+						readErrors[task.cacheKey] = parseErr   // Record error
+						initialCountValues[task.cacheKey] = -1 // Indicate error state
+						continue
+					} else {
+						count = parsedCount
+					}
 				}
+
+				log.Printf("DEBUG Read (%s): Read initial count: %d.", task.cacheKey, count)
+				initialCountValues[task.cacheKey] = count
 			}
 		}
 	}
@@ -329,12 +349,14 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 
 		var writeErr error
 		if writeTask.isListKey {
-			writeErr = cache.SetCachedListIDs(ctx, t.cache, key, writeTask.newList, globalCacheTTL)
+			writeErr = t.cache.SetQueryIDs(ctx, key, writeTask.newList, globalCacheTTL)
 			if writeErr == nil {
 				log.Printf("DEBUG Write (%s): Successfully updated cached ID list (size %d).", key, len(writeTask.newList))
 			}
 		} else { // isCountKey
-			writeErr = cache.SetCachedCount(ctx, t.cache, key, writeTask.newCount, globalCacheTTL)
+			// Inline SetCachedCount logic
+			countStr := strconv.FormatInt(writeTask.newCount, 10)
+			writeErr = t.cache.Set(ctx, key, countStr, globalCacheTTL)
 			if writeErr == nil {
 				log.Printf("DEBUG Write (%s): Successfully updated cached count (%d).", key, writeTask.newCount)
 			}
@@ -470,15 +492,35 @@ func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
 			}
 		} else if task.isCountKey {
 			if _, exists := initialCountValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
-				count, err := cache.GetCachedCount(ctx, t.cache, task.cacheKey)
+				// Inline GetCachedCount logic
+				countStr, err := t.cache.Get(ctx, task.cacheKey)
+				var count int64
 				if err != nil {
-					log.Printf("ERROR Delete Cache Update: Failed read initial count for key %s: %v", task.cacheKey, err)
-					readErrors[task.cacheKey] = err
-					initialCountValues[task.cacheKey] = -1
+					if errors.Is(err, ErrNotFound) {
+						count = 0 // Not found is not an error here, count is 0
+						err = nil // Clear the error
+					} else {
+						log.Printf("ERROR Delete Cache Update: Failed read initial count for key %s: %v", task.cacheKey, err)
+						readErrors[task.cacheKey] = err        // Record error
+						initialCountValues[task.cacheKey] = -1 // Indicate error state
+						continue
+					}
+				} else if countStr == "" {
+					count = 0 // Handle empty string case
 				} else {
-					initialCountValues[task.cacheKey] = count
-					log.Printf("DEBUG Delete Read (%s): Read initial count (%d).", task.cacheKey, count)
+					parsedCount, parseErr := strconv.ParseInt(countStr, 10, 64)
+					if parseErr != nil {
+						log.Printf("ERROR Delete Cache Update: Failed to parse count cache value '%s' for key %s: %v", countStr, task.cacheKey, parseErr)
+						readErrors[task.cacheKey] = parseErr   // Record error
+						initialCountValues[task.cacheKey] = -1 // Indicate error state
+						continue
+					} else {
+						count = parsedCount
+					}
 				}
+
+				initialCountValues[task.cacheKey] = count
+				log.Printf("DEBUG Delete Read (%s): Read initial count (%d).", task.cacheKey, count)
 			}
 		}
 	}
@@ -553,12 +595,14 @@ func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
 
 		var writeErr error
 		if writeTask.isListKey {
-			writeErr = cache.SetCachedListIDs(ctx, t.cache, key, writeTask.newList, globalCacheTTL)
+			writeErr = t.cache.SetQueryIDs(ctx, key, writeTask.newList, globalCacheTTL)
 			if writeErr == nil {
 				log.Printf("DEBUG Delete Write (%s): Successfully updated list (size %d).", key, len(writeTask.newList))
 			}
 		} else {
-			writeErr = cache.SetCachedCount(ctx, t.cache, key, writeTask.newCount, globalCacheTTL)
+			// Inline SetCachedCount logic
+			countStr := strconv.FormatInt(writeTask.newCount, 10)
+			writeErr = t.cache.Set(ctx, key, countStr, globalCacheTTL)
 			if writeErr == nil {
 				log.Printf("DEBUG Delete Write (%s): Successfully updated count (%d).", key, writeTask.newCount)
 			}
