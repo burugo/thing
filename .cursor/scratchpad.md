@@ -433,6 +433,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   Cache key prefixes must be consistent between where they are set/used (e.g., `CachedResult`) and where they might be invalidated (e.g., `updateAffectedQueryCaches`).
 *   Refactoring test logic sometimes requires careful adjustment of assertions based on underlying implementation changes (e.g., `Fetch` logic change affecting expected `ByIDs` calls).
 *   Deleting cache entries when `CheckQueryMatch` fails due to errors (like unsupported operators) is a safer default strategy than simply skipping the update, as it prevents potential data inconsistency.
+*   For simple helper functions within internal packages (like `GetCachedCount`, `SetCachedCount`), consider inlining their logic directly into the calling package (`thing`) if it significantly reduces dependencies and complexity without sacrificing readability.
 
 <details>
 <summary>Previous Status/Feedback (Archived)</summary>
