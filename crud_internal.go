@@ -179,31 +179,30 @@ func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest interface{})
 			reflect.TypeOf(*new(T)).Name(), destElemType.String())
 	}
 
-	// Get the concrete type T for the internal helper
+	// Fetch using the batch function (handles cache logic internally)
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
-
-	// Call the internal multi-fetch helper with a single ID
 	idsToFetch := []int64{id}
-	resultsMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, t.info, modelType, idsToFetch) // REMOVED TTLs
+
+	resultsMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, t.info, modelType, idsToFetch)
 	if err != nil {
-		// Propagate errors from the internal fetch
-		return fmt.Errorf("fetchModelsByIDsInternal failed for ID %d: %w", id, err)
+		// Propagate the error from fetchModelsByIDsInternal
+		return fmt.Errorf("failed to fetch model by ID %d: %w", id, err)
 	}
 
 	// Check if the requested ID was found in the results
 	if modelVal, ok := resultsMap[id]; ok {
-		// Found the model. Need to copy the value into the destination.
-		// Ensure dest is settable and types match.
+		// Found the model. The caller might need to check the Deleted flag.
+		// We no longer return ErrNotFound here if Deleted is true.
+
+		// Copy the value from the result map to the destination pointer
 		if destVal.Elem().CanSet() {
-			// modelVal is reflect.Value of type *T
-			destVal.Elem().Set(modelVal.Elem()) // Set the value T into dest (*T)
-			return nil                          // Success
+			destVal.Elem().Set(modelVal.Elem())
+			return nil // Success (even if soft-deleted)
 		} else {
-			// This should generally not happen if dest validation passed
-			return fmt.Errorf("internal error: destination cannot be set for ID %d", id)
+			return fmt.Errorf("internal error: destination cannot be set for ID %d after fetch", id)
 		}
 	} else {
-		// ID not found in the results map (could be DB miss or cached NoneResult)
+		// ID not found in resultsMap, implies it wasn't in DB or cache (or marked NoneResult)
 		return ErrNotFound
 	}
 }

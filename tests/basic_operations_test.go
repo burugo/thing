@@ -1,6 +1,7 @@
 package thing_test
 
 import (
+	"context"
 	"testing"
 	"thing/internal/cache"
 
@@ -149,7 +150,7 @@ func TestThing_Delete(t *testing.T) {
 	mockCache.ResetCalls() // Reset counters to isolate Delete actions
 
 	// Delete the user
-	err = th.Delete(user) // Delete -> should now find and invalidate populated caches
+	err = th.Delete(context.Background(), user)
 	require.NoError(t, err)
 
 	// Verify user no longer exists

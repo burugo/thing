@@ -12,7 +12,7 @@ type BaseModel struct {
 	ID        int64     `json:"id" db:"id"`                 // Primary key
 	CreatedAt time.Time `json:"created_at" db:"created_at"` // Timestamp for creation
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"` // Timestamp for last update
-	Deleted   bool      `json:"-" db:"deleted"`             // Soft delete flag
+	Deleted   bool      `json:"deleted" db:"deleted"`       // Soft delete flag
 
 	// --- Internal ORM state ---
 	// These fields should be populated by the ORM functions (ByID, Create, etc.).

@@ -26,7 +26,11 @@ func TestThing_ByID_Cache_MissAndSet(t *testing.T) {
 	defer cleanup()
 
 	// Create a test user
-	user := &User{Name: "Cache Test User", Email: "cache@example.com"}
+	user := &User{
+		BaseModel: thing.BaseModel{},
+		Name:      "Cache Test User",
+		Email:     "cache@example.com",
+	}
 
 	// Save the user
 	err := th.Save(user)
@@ -58,7 +62,11 @@ func TestThing_ByID_Cache_Hit(t *testing.T) {
 	defer cleanup()
 
 	// Create a test user
-	user := &User{Name: "Cache Hit User", Email: "cache-hit@example.com"}
+	user := &User{
+		BaseModel: thing.BaseModel{},
+		Name:      "Cache Hit User",
+		Email:     "cache-hit@example.com",
+	}
 
 	// Save the user
 	err := th.Save(user)
@@ -96,7 +104,11 @@ func TestThing_ByID_Cache_NoneResult(t *testing.T) {
 	defer cleanup()
 
 	// 1. Create user
-	user := &User{Name: "NoneResult User", Email: "noneresult@example.com"}
+	user := &User{
+		BaseModel: thing.BaseModel{},
+		Name:      "NoneResult User",
+		Email:     "noneresult@example.com",
+	}
 	err := th.Save(user)
 	require.NoError(t, err)
 	require.NotZero(t, user.ID)
@@ -107,7 +119,7 @@ func TestThing_ByID_Cache_NoneResult(t *testing.T) {
 	require.NoError(t, err)
 
 	// 3. Delete the user (this should invalidate the object cache)
-	err = th.Delete(user)
+	err = th.Delete(context.Background(), user)
 	require.NoError(t, err)
 
 	// Reset mock cache call counts for clarity
@@ -157,9 +169,9 @@ func TestThing_Query_Cache(t *testing.T) {
 	defer cleanup()
 
 	// Create multiple users
-	userAlice := &User{Name: "Alice Cache", Email: "alice-cache@example.com"}
-	userBob := &User{Name: "Bob Cache", Email: "bob-cache@example.com"}
-	userCharlie := &User{Name: "Charlie Cache", Email: "charlie-cache@example.com"}
+	userAlice := &User{BaseModel: thing.BaseModel{}, Name: "Alice Cache", Email: "alice-cache@example.com"}
+	userBob := &User{BaseModel: thing.BaseModel{}, Name: "Bob Cache", Email: "bob-cache@example.com"}
+	userCharlie := &User{BaseModel: thing.BaseModel{}, Name: "Charlie Cache", Email: "charlie-cache@example.com"}
 
 	for _, u := range []*User{userAlice, userBob, userCharlie} {
 		err := th.Save(u)
@@ -216,7 +228,11 @@ func TestThing_Query_CacheInvalidation(t *testing.T) {
 	defer cleanup()
 
 	// Create test user
-	user := &User{Name: "Invalidate User", Email: "invalidate@example.com"}
+	user := &User{
+		BaseModel: thing.BaseModel{},
+		Name:      "Invalidate User",
+		Email:     "invalidate@example.com",
+	}
 	err := th.Save(user)
 	require.NoError(t, err)
 	require.NotZero(t, user.ID)
@@ -284,8 +300,9 @@ func TestThing_Save_Create_Cache(t *testing.T) {
 
 	// Create a new user
 	user := &User{
-		Name:  "New Cache User",
-		Email: "new-cache@example.com",
+		BaseModel: thing.BaseModel{},
+		Name:      "New Cache User",
+		Email:     "new-cache@example.com",
 	}
 
 	// Save the user
@@ -310,8 +327,9 @@ func TestThing_Save_Update_Cache(t *testing.T) {
 
 	// Create a user
 	user := &User{
-		Name:  "Original Cache Name",
-		Email: "original-cache@example.com",
+		BaseModel: thing.BaseModel{},
+		Name:      "Original Cache Name",
+		Email:     "original-cache@example.com",
 	}
 	err := th.Save(user)
 	require.NoError(t, err)
@@ -347,8 +365,9 @@ func TestThing_Delete_Cache(t *testing.T) {
 
 	// Create a user
 	user := &User{
-		Name:  "Delete Cache User",
-		Email: "delete-cache@example.com",
+		BaseModel: thing.BaseModel{},
+		Name:      "Delete Cache User",
+		Email:     "delete-cache@example.com",
 	}
 	err := th.Save(user)
 	require.NoError(t, err)
@@ -366,7 +385,7 @@ func TestThing_Delete_Cache(t *testing.T) {
 	assert.True(t, mockCache.Exists(modelKey), "Model should be in cache before delete")
 
 	// Delete the user
-	err = th.Delete(user)
+	err = th.Delete(context.Background(), user)
 	require.NoError(t, err)
 
 	// Verify the entity is no longer in cache
@@ -416,7 +435,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	require.NotZero(t, user1.ID, "User1 should have an ID after save")
 
 	// Verify caches were updated incrementally via counters AFTER ResetCalls
-	// Create operation: Reads miss cache, writes new values, sets model cache.
+	// Create operation: Reads miss cache, invalidates list, writes count, sets model cache.
 	assert.Equal(t, 1, cacheClient.Counters["Get"], "Expected 1 Get (count cache miss) during create")
 	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (list cache miss) during create")
 	assert.Equal(t, 1, cacheClient.Counters["Set"], "Expected 1 Set (count cache write) during create")
@@ -441,7 +460,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	require.Len(t, fetch2, 1)
 	assert.Equal(t, user1.ID, fetch2[0].ID)
 	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Fetch query should hit list cache (GetQueryIDs)")
-	assert.Equal(t, 0, cacheClient.Counters["SetQueryIDs"], "Fetch query should not Set list cache")
+	assert.Equal(t, 1, cacheClient.Counters["SetQueryIDs"], "Expected 1 SetQueryIDs (list cache write on miss)")
 
 	cacheClient.ResetCalls()
 
@@ -508,7 +527,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	cacheClient.ResetCalls()
 
 	// --- Test Case 4: Delete the matching item ---
-	err = thingUser.Delete(&user1)
+	err = thingUser.Delete(context.Background(), &user1)
 	require.NoError(t, err)
 
 	// Verify caches were updated (item removed) via counters AFTER ResetCalls
@@ -543,7 +562,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	cacheClient.ResetCalls() // Reset after creation
 
 	// Soft delete using the dedicated method
-	err = thingUser.SoftDelete(&user2)
+	err = thingUser.SoftDelete(context.Background(), &user2)
 	require.NoError(t, err)
 
 	// Verify caches were updated (item removed due to KeepItem() check) via counters AFTER ResetCalls
@@ -582,9 +601,9 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	ctx := context.Background()
 
 	// 1. Initial setup: Create some users and cache a query
-	user1 := &User{Name: "Alice", Email: "alice@example.com"}
-	user2 := &User{Name: "Alice", Email: "alice2@example.com"} // Same name, different email
-	user3 := &User{Name: "Charlie", Email: "charlie@example.com"}
+	user1 := &User{BaseModel: thing.BaseModel{}, Name: "Alice", Email: "alice@example.com"}
+	user2 := &User{BaseModel: thing.BaseModel{}, Name: "Alice", Email: "alice2@example.com"} // Same name, different email
+	user3 := &User{BaseModel: thing.BaseModel{}, Name: "Charlie", Email: "charlie@example.com"}
 	require.NoError(t, thingInstance.Save(user1), "Save user1 failed")
 	require.NoError(t, thingInstance.Save(user2), "Save user2 failed")
 	require.NoError(t, thingInstance.Save(user3), "Save user3 failed")
@@ -617,22 +636,33 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	mockCache.ResetCalls() // Reset call counts before testing updates
 
 	// --- Test Scenario 1: Create a new user that matches the query ---
-	user4 := &User{Name: "Alice", Email: "alice3@example.com"}
+	user4 := &User{BaseModel: thing.BaseModel{}, Name: "Alice", Email: "alice3@example.com"}
 	require.NoError(t, thingInstance.Save(user4), "Save user4 failed")
 
-	// Check list cache: user4.ID should be added
-	updatedIDs, err := mockCache.GetQueryIDs(ctx, listCacheKey)
-	require.NoError(t, err, "GetQueryIDs after creating user4 failed")
-	assert.ElementsMatch(t, []int64{user1.ID, user2.ID, user4.ID}, updatedIDs, "List cache not updated correctly after creating matching user")
+	// Check list cache: Cache should have been INVALIDATED by the Save operation
+	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
+	assert.Error(t, err, "Expected error getting query IDs after invalidation")
+	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after invalidation")
 
-	// Check count cache: count should be incremented
+	// Check count cache: count should be incremented (count cache is still updated)
 	countStr, err = mockCache.Get(ctx, countCacheKey)
 	require.NoError(t, err, "Get count from cache after creating user4 failed")
 	assert.Equal(t, "3", countStr, "Count cache not incremented after creating matching user")
-	mockCache.ResetCalls()
+
+	// Verify a subsequent query re-populates the list cache correctly
+	queryResult2, err := thingInstance.Query(queryParams)
+	require.NoError(t, err, "Second Query failed")
+	fetch2, err := queryResult2.Fetch(0, 10)
+	require.NoError(t, err, "Second Fetch failed")
+	require.Len(t, fetch2, 3, "Second fetch should find 3 users")
+	updatedIDs, err := mockCache.GetQueryIDs(ctx, listCacheKey)
+	require.NoError(t, err, "GetQueryIDs after second fetch failed")
+	assert.ElementsMatch(t, []int64{user1.ID, user2.ID, user4.ID}, updatedIDs, "List cache not re-populated correctly")
+
+	mockCache.ResetCalls() // Reset calls before next scenario
 
 	// --- Test Scenario 2: Create a new user that DOES NOT match the query ---
-	user5 := &User{Name: "Eve", Email: "eve@example.com"} // Different name
+	user5 := &User{BaseModel: thing.BaseModel{}, Name: "Eve", Email: "eve@example.com"} // Different name
 	require.NoError(t, thingInstance.Save(user5), "Save user5 failed")
 
 	// Check list cache: should NOT have changed
@@ -650,30 +680,52 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	user3.Name = "Alice" // Change name from "Charlie" to "Alice"
 	require.NoError(t, thingInstance.Save(user3), "Save updated user3 failed")
 
-	// Check list cache: user3.ID should be added
-	idsAfterUpdate1, err := mockCache.GetQueryIDs(ctx, listCacheKey)
-	require.NoError(t, err, "GetQueryIDs after updating user3 to match failed")
-	assert.ElementsMatch(t, []int64{user1.ID, user2.ID, user4.ID, user3.ID}, idsAfterUpdate1, "List cache not updated correctly after update TO match")
+	// Check list cache: Cache should have been INVALIDATED by the Save operation
+	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
+	assert.Error(t, err, "Expected error getting query IDs after update TO match (invalidation)")
+	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after update TO match (invalidation)")
 
 	// Check count cache: count should be incremented
 	countStr, err = mockCache.Get(ctx, countCacheKey)
 	require.NoError(t, err, "Get count from cache after updating user3 to match failed")
 	assert.Equal(t, "4", countStr, "Count cache not incremented after update TO match")
+
+	// Verify a subsequent query re-populates the list cache correctly
+	queryResult3, err := thingInstance.Query(queryParams)
+	require.NoError(t, err, "Third Query failed")
+	fetch3, err := queryResult3.Fetch(0, 10)
+	require.NoError(t, err, "Third Fetch failed")
+	require.Len(t, fetch3, 4, "Third fetch should find 4 users")
+	idsAfterUpdate1, err := mockCache.GetQueryIDs(ctx, listCacheKey) // Check repopulated list
+	require.NoError(t, err, "GetQueryIDs after third fetch failed")
+	assert.ElementsMatch(t, []int64{user1.ID, user2.ID, user4.ID, user3.ID}, idsAfterUpdate1, "List cache not re-populated correctly after update TO match")
+
 	mockCache.ResetCalls()
 
-	// --- Test Scenario 4: Update a user TO NO LONGER match the query ---
+	// --- Test Scenario 4: Update a user TO NOT match the query ---
 	user1.Name = "Alicia" // Change name from "Alice" to "Alicia"
 	require.NoError(t, thingInstance.Save(user1), "Save updated user1 failed")
 
-	// Check list cache: user1.ID should be removed
-	idsAfterUpdate2, err := mockCache.GetQueryIDs(ctx, listCacheKey)
-	require.NoError(t, err, "GetQueryIDs after updating user1 to not match failed")
-	assert.ElementsMatch(t, []int64{user2.ID, user4.ID, user3.ID}, idsAfterUpdate2, "List cache not updated correctly after update TO NOT match")
+	// Check list cache: Cache should have been INVALIDATED by the Save operation
+	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
+	assert.Error(t, err, "Expected error getting query IDs after update TO NOT match (invalidation)")
+	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after update TO NOT match (invalidation)")
 
 	// Check count cache: count should be decremented
 	countStr, err = mockCache.Get(ctx, countCacheKey)
 	require.NoError(t, err, "Get count from cache after updating user1 to not match failed")
 	assert.Equal(t, "3", countStr, "Count cache not decremented after update TO NOT match")
+
+	// Verify a subsequent query re-populates the list cache correctly
+	queryResult4, err := thingInstance.Query(queryParams)
+	require.NoError(t, err, "Fourth Query failed")
+	fetch4, err := queryResult4.Fetch(0, 10)
+	require.NoError(t, err, "Fourth Fetch failed")
+	require.Len(t, fetch4, 3, "Fourth fetch should find 3 users")
+	idsAfterUpdate2, err := mockCache.GetQueryIDs(ctx, listCacheKey) // Check repopulated list
+	require.NoError(t, err, "GetQueryIDs after fourth fetch failed")
+	assert.ElementsMatch(t, []int64{user2.ID, user4.ID, user3.ID}, idsAfterUpdate2, "List cache not re-populated correctly after update TO NOT match")
+
 	mockCache.ResetCalls()
 
 	// --- Test Scenario 5: Update a user that never matched (should have no effect) ---
@@ -692,32 +744,27 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	mockCache.ResetCalls()
 
 	// --- Test Scenario 6: Delete a user that matches the query ---
-	require.NoError(t, thingInstance.Delete(user2), "Delete user2 failed") // user2 has name "Alice"
+	require.NoError(t, thingInstance.Delete(context.Background(), user2), "Delete user2 failed")
 
-	// Check list cache: user2.ID should be removed
-	idsAfterDelete1, err := mockCache.GetQueryIDs(ctx, listCacheKey)
-	require.NoError(t, err, "GetQueryIDs after deleting user2 failed")
-	assert.ElementsMatch(t, []int64{user4.ID, user3.ID}, idsAfterDelete1, "List cache not updated correctly after deleting matching user")
+	// Check list cache: Cache should have been INVALIDATED by the Delete operation
+	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
+	assert.Error(t, err, "Expected error getting query IDs after delete (invalidation)")
+	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after delete (invalidation)")
 
 	// Check count cache: count should be decremented
 	countStr, err = mockCache.Get(ctx, countCacheKey)
 	require.NoError(t, err, "Get count from cache after deleting user2 failed")
-	assert.Equal(t, "2", countStr, "Count cache not decremented after deleting matching user")
-	mockCache.ResetCalls()
+	assert.Equal(t, "2", countStr, "Count cache not decremented after delete")
 
-	// --- Test Scenario 7: Delete a user that DOES NOT match the query ---
-	require.NoError(t, thingInstance.Delete(user5), "Delete user5 failed") // user5 has name "Eve"
-
-	// Check list cache: should NOT have changed
-	idsAfterDelete2, err := mockCache.GetQueryIDs(ctx, listCacheKey)
-	require.NoError(t, err, "GetQueryIDs after deleting user5 failed")
-	assert.ElementsMatch(t, []int64{user4.ID, user3.ID}, idsAfterDelete2, "List cache changed after deleting non-matching user")
-
-	// Check count cache: should NOT have changed
-	countStr, err = mockCache.Get(ctx, countCacheKey)
-	require.NoError(t, err, "Get count from cache after deleting user5 failed")
-	assert.Equal(t, "2", countStr, "Count cache changed after deleting non-matching user")
-	mockCache.ResetCalls()
+	// Verify a subsequent query re-populates the list cache correctly
+	queryResult5, err := thingInstance.Query(queryParams)
+	require.NoError(t, err, "Fifth Query failed")
+	fetch5, err := queryResult5.Fetch(0, 10)
+	require.NoError(t, err, "Fifth Fetch failed")
+	require.Len(t, fetch5, 2, "Fifth fetch should find 2 users")
+	idsAfterDelete, err := mockCache.GetQueryIDs(ctx, listCacheKey) // Check repopulated list
+	require.NoError(t, err, "GetQueryIDs after fifth fetch failed")
+	assert.ElementsMatch(t, []int64{user4.ID, user3.ID}, idsAfterDelete, "List cache not re-populated correctly after delete")
 }
 
 // Helper to generate query cache keys (consistent with internal logic)

@@ -265,17 +265,16 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 			if task.needsAdd {
 				if !containsID(initialIDs, id) {
 					changed = true
-					log.Printf("DEBUG Compute (%s): Action determined: Needs Add. Invalidation Required.", task.cacheKey)
+					log.Printf("DEBUG Compute (%s): Needs Add - Adding ID %d. Marking changed.", task.cacheKey, id)
 				} else {
 					log.Printf("DEBUG Compute (%s): Skipping list add as ID %d already exists. No change needed.", task.cacheKey, id)
 				}
-			} else { // needsRemove
-				if len(initialIDs) > 0 && containsID(initialIDs, id) {
-					changed = true
-					log.Printf("DEBUG Compute (%s): Action determined: Needs Remove. Invalidation Required.", task.cacheKey)
-				} else {
-					log.Printf("DEBUG Compute (%s): Skipping list removal as ID %d not found or cache empty. No change needed.", task.cacheKey, id)
-				}
+			} else if task.needsRemove {
+				// If removal is needed (either due to query mismatch OR KeepItem=false),
+				// we always need to invalidate the cache, regardless of whether the ID
+				// was found in the potentially stale initial read.
+				changed = true
+				log.Printf("DEBUG Compute (%s): Needs Remove (due to query mismatch or soft delete). Marking changed.", task.cacheKey)
 			}
 
 			if changed {
@@ -682,11 +681,12 @@ func determineCacheAction(isCreate, matchesOriginal, matchesCurrent bool, isKept
 	needsRemove := false
 
 	if !isKept {
-		// If item is soft-deleted, it always needs removal (if it was previously matching)
-		// and never needs adding.
-		log.Printf("DEBUG Determine Action: Model is soft-deleted (KeepItem=false). Ensuring removal.")
-		needsRemove = true // Ensure removal attempt
+		// If item is soft-deleted, it always needs removal from standard caches.
+		log.Printf("DEBUG Determine Action: Model is soft-deleted (KeepItem=false). Needs Removal.")
+		needsRemove = true
 		needsAdd = false
+		// Return early, soft-delete removal takes precedence
+		return needsAdd, needsRemove
 	} else if isCreate {
 		if matchesCurrent {
 			needsAdd = true
@@ -704,9 +704,10 @@ func determineCacheAction(isCreate, matchesOriginal, matchesCurrent bool, isKept
 	}
 
 	// If it needs adding, it cannot simultaneously need removing based on match status change.
-	if needsAdd {
-		needsRemove = false
-	}
+	// This check is now redundant because the !isKept case returns early.
+	// if needsAdd {
+	// 	needsRemove = false
+	// }
 
 	return needsAdd, needsRemove
 }

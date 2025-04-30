@@ -14,12 +14,14 @@ type EventType string
 
 // Standard lifecycle event types
 const (
-	EventTypeBeforeSave   EventType = "BeforeSave"
-	EventTypeAfterSave    EventType = "AfterSave"
-	EventTypeBeforeCreate EventType = "BeforeCreate"
-	EventTypeAfterCreate  EventType = "AfterCreate"
-	EventTypeBeforeDelete EventType = "BeforeDelete"
-	EventTypeAfterDelete  EventType = "AfterDelete"
+	EventTypeBeforeSave       EventType = "BeforeSave"
+	EventTypeAfterSave        EventType = "AfterSave"
+	EventTypeBeforeCreate     EventType = "BeforeCreate"
+	EventTypeAfterCreate      EventType = "AfterCreate"
+	EventTypeBeforeDelete     EventType = "BeforeDelete"
+	EventTypeAfterDelete      EventType = "AfterDelete"
+	EventTypeBeforeSoftDelete EventType = "BeforeSoftDelete"
+	EventTypeAfterSoftDelete  EventType = "AfterSoftDelete"
 )
 
 // EventListener defines the signature for functions that can listen to events.

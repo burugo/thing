@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 	"strconv"
-	"sync"
 	"thing/internal/cache"
 	"thing/internal/utils"
 )
@@ -29,7 +28,6 @@ type CachedResult[T any] struct {
 	hasLoadedCount bool
 	hasLoadedAll   bool
 	all            []*T
-	loadMutex      sync.Mutex
 }
 
 // --- Thing Method for Querying ---
@@ -151,7 +149,16 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 
 	// 4. Cache miss or error, query database
 	// Assuming DBAdapter has a GetCount method
-	dbCount, dbErr := cr.thing.db.GetCount(cr.thing.ctx, cr.thing.info, cr.params)
+	// Add the soft delete condition implicitly here, *unless* IncludeDeleted is true
+	countParams := cr.params
+	if !countParams.IncludeDeleted { // Check the flag
+		if countParams.Where != "" {
+			countParams.Where = fmt.Sprintf("(%s) AND \"deleted\" = false", countParams.Where)
+		} else {
+			countParams.Where = "\"deleted\" = false"
+		}
+	}
+	dbCount, dbErr := cr.thing.db.GetCount(cr.thing.ctx, cr.thing.info, countParams)
 	if dbErr != nil {
 		log.Printf("DB ERROR: Count query failed: %v", dbErr)
 		return 0, fmt.Errorf("database count query failed: %w", dbErr)
@@ -171,6 +178,27 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, cacheKey, cr.params)
 
 	return cr.cachedCount, nil
+}
+
+// WithDeleted returns a new CachedResult instance that will include
+// soft-deleted records in its results.
+func (cr *CachedResult[T]) WithDeleted() *CachedResult[T] {
+	// Create a shallow copy of the original CachedResult
+	newCr := *cr
+	// Copy the params to avoid modifying the original
+	newParams := cr.params
+	newParams.IncludeDeleted = true
+	// Set the modified params on the new CachedResult
+	newCr.params = newParams
+	// Reset loaded state flags, as the query parameters have changed
+	newCr.hasLoadedCount = false
+	newCr.hasLoadedIDs = false
+	newCr.cachedIDs = nil
+	newCr.cachedCount = 0
+	newCr.hasLoadedAll = false
+	newCr.all = nil
+
+	return &newCr
 }
 
 // _fetch ensures that the list of IDs matching the query is loaded, either from cache or DB.
@@ -198,6 +226,7 @@ func (cr *CachedResult[T]) _fetch_ids_from_db(offset, limit int) ([]int64, error
 	}
 
 	// Build the SQL query with pagination
+	// Pass includeDeleted flag via params to the builder
 	query, args := buildSelectIDsSQL(cr.thing.info, cr.params)
 	queryWithPagination := fmt.Sprintf("%s LIMIT %d OFFSET %d", query, limit, offset)
 
@@ -296,8 +325,8 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 				continue // Invalid model, skip
 			}
 
-			// Only keep IDs for models that should be visible
-			if basePtr.KeepItem() {
+			// Keep the ID if either IncludeDeleted is true OR the item is not soft-deleted
+			if cr.params.IncludeDeleted || basePtr.KeepItem() {
 				validIDs = append(validIDs, id)
 			}
 		}
@@ -521,15 +550,17 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]*T, error) {
 				continue // Skip invalid models
 			}
 
-			// Check if item should be kept (i.e., not soft-deleted)
-			if basePtr.KeepItem() {
+			// Check if item should be kept based on IncludeDeleted flag
+			if cr.params.IncludeDeleted || basePtr.KeepItem() {
 				finalResults = append(finalResults, model)
 				remainingNeeded--
 				if remainingNeeded == 0 {
 					break // Got all we need
 				}
 			} else if fetchSource == "Cache" {
-				// Item is soft-deleted but still in cache
+				// Item is soft-deleted (KeepItem is false),
+				// we are NOT including deleted items,
+				// AND it came from cache -> inconsistency
 				anyIssueFound = true
 			}
 		}

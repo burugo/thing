@@ -302,6 +302,7 @@ func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interf
 		log.Printf("DEBUG SetModel: Error marshaling for key %s: %v", key, err)
 		return fmt.Errorf("mock cache marshal error for key '%s': %w", key, err)
 	}
+	// log.Printf("DEBUG MOCK SETMODEL: Marshaled data for key %s: %s", key, string(data)) // REMOVED LOG
 
 	// Important: Store serialized data
 	m.store.Store(key, data)

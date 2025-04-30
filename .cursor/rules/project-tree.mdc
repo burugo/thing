@@ -5,50 +5,52 @@ alwaysApply: false
 ---
 ## this is project-tree
 
+.
 ├── .gitignore
-├── cache
-│   └── redis
-│       └── client.go
-├── cache_helpers.go
-├── cache_index.go
-├── cache_locker.go
-├── cached_result.go
-│   └── thing.py
-├── drivers
-│   └── sqlite
-│       └── sqlite.go
+├── cache.go
+├── crud_internal.go
+├── crud.go
+├── docs
 ├── errors.go
 ├── examples
 │   ├── main.go
-│   ├── wire_gen.go
 │   └── wire.go
 ├── go.mod
 ├── go.sum
+├── hooks.go
 ├── interfaces.go
 ├── internal
 │   ├── cache
-│   │   └── cache.go
-│   ├── reflection
-│   │   └── reflection.go
-│   ├── sql
-│   │   └── sql.go
+│   │   ├── helpers.go
+│   │   ├── index.go
+│   │   ├── locker.go
+│   │   ├── query_match.go
+│   │   └── types.go
+│   ├── drivers
+│   │   ├── cache
+│   │   │   └── redis
+│   │   │       └── client.go
+│   │   └── db
+│   │       └── sqlite
+│   │           └── sqlite.go
 │   └── utils
 │       └── utils.go
 ├── LICENSE
-├── query_match.go
+├── model.go
+├── query.go
 ├── README.md
 ├── tests
 │   ├── basic_operations_test.go
+│   ├── cache_index_test.go
+│   ├── cache_locker_test.go
 │   ├── cache_operations_test.go
 │   ├── cached_result_test.go
 │   ├── mock_cache_test.go
 │   ├── model_test.go
+│   ├── query_match_test.go
 │   ├── relationships_test.go
 │   ├── setup_test.go
 │   ├── thing_test.go
 │   └── transaction_test.go
-├── thing.go
-└── utils
-    └── utils.go
+└── thing.go
 
-17 directories, 37 files

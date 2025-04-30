@@ -547,6 +547,7 @@ func buildSelectSQL(info *ModelInfo) string {
 }
 
 // buildSelectIDsSQL constructs a SELECT statement to fetch only primary key IDs.
+// MODIFIED: Takes includeDeleted flag via params.
 func buildSelectIDsSQL(info *ModelInfo, params cache.QueryParams) (string, []interface{}) {
 	var query strings.Builder
 	args := []interface{}{}
@@ -555,11 +556,24 @@ func buildSelectIDsSQL(info *ModelInfo, params cache.QueryParams) (string, []int
 		return "", nil
 	}
 	query.WriteString(fmt.Sprintf("SELECT \"%s\" FROM %s", info.PkName, info.TableName))
-	if params.Where != "" {
+
+	// Combine user WHERE with soft delete condition
+	whereClause := params.Where
+	// Use the flag from params directly
+	if !params.IncludeDeleted {
+		if whereClause != "" {
+			whereClause = fmt.Sprintf("(%s) AND \"deleted\" = false", whereClause)
+		} else {
+			whereClause = "\"deleted\" = false"
+		}
+	}
+
+	if whereClause != "" {
 		query.WriteString(" WHERE ")
-		query.WriteString(params.Where)
+		query.WriteString(whereClause)
 		args = append(args, params.Args...)
 	}
+
 	if params.Order != "" {
 		query.WriteString(" ORDER BY ")
 		query.WriteString(params.Order)
@@ -1161,106 +1175,7 @@ func (t *Thing[T]) loadInternal(ctx context.Context, model *T, relations ...stri
 	return nil
 }
 
-// ByIDs retrieves multiple records by their primary keys and optionally preloads relations.
-func (t *Thing[T]) ByIDs(ids []int64, preloads ...string) (map[int64]*T, error) {
-	modelType := reflect.TypeOf((*T)(nil)).Elem()
-	// REMOVED TTLs from call
-	resultsMapReflect, err := fetchModelsByIDsInternal(t.ctx, t.cache, t.db, t.info, modelType, ids)
-	if err != nil {
-		return nil, fmt.Errorf("ByIDs failed during internal fetch: %w", err)
-	}
-
-	// Convert map[int64]reflect.Value (containing *T) to map[int64]*T
-	resultsMapTyped := make(map[int64]*T, len(resultsMapReflect))
-	// Also collect results in a slice for preloading
-	resultsSliceForPreload := make([]*T, 0, len(resultsMapReflect))
-	for id, modelVal := range resultsMapReflect {
-		if typedModel, ok := modelVal.Interface().(*T); ok {
-			resultsMapTyped[id] = typedModel
-			resultsSliceForPreload = append(resultsSliceForPreload, typedModel)
-		} else {
-			log.Printf("WARN: ByIDs: Could not assert type for ID %d", id)
-		}
-	}
-
-	// Apply preloads if requested
-	if len(preloads) > 0 && len(resultsSliceForPreload) > 0 {
-		for _, preloadName := range preloads {
-			if preloadErr := t.preloadRelations(t.ctx, resultsSliceForPreload, preloadName); preloadErr != nil {
-				// Log error but return results obtained so far
-				log.Printf("WARN: ByIDs: failed to apply preload '%s': %v", preloadName, preloadErr)
-				// Optionally return error: return nil, fmt.Errorf("failed to apply preload '%s': %w", preloadName, preloadErr)
-			}
-		}
-	}
-
-	return resultsMapTyped, nil
-}
-
-// ByID retrieves a single record of type T by its primary key.
-func (t *Thing[T]) ByID(id int64) (*T, error) {
-	instance := new(T)
-	err := t.byIDInternal(t.ctx, id, instance) // Calls internal method
-	if err != nil {
-		return nil, err
-	}
-	return instance, nil
-}
-
-// Save updates an existing record or creates a new one if its primary key is zero
-// or it's explicitly marked as new. Also updates timestamps.
-func (t *Thing[T]) Save(value *T) error {
-	// Delegate directly to the internal save logic
-	return t.saveInternal(t.ctx, value) // Calls internal method
-}
-
-// Delete removes a record of type T.
-func (t *Thing[T]) Delete(value *T) error {
-	return t.deleteInternal(t.ctx, value) // Calls internal method
-}
-
-// SoftDelete marks a record as deleted by setting the Deleted flag and updating
-// the UpdatedAt timestamp. It then saves the changes.
-func (t *Thing[T]) SoftDelete(model *T) error {
-	if model == nil {
-		return errors.New("cannot soft delete a nil model")
-	}
-
-	baseModelPtr := getBaseModelPtr(model)
-	if baseModelPtr == nil {
-		// This case might be less likely if model is *T, but good practice
-		return errors.New("SoftDelete: model must embed BaseModel")
-	}
-
-	// Set Deleted flag and update timestamp
-	baseModelPtr.Deleted = true
-	baseModelPtr.UpdatedAt = time.Now()
-
-	// Use Save to persist changes and handle cache invalidation
-	// Note: saveInternal triggers BeforeSave/AfterSave but not Before/AfterDelete
-	if err := t.saveInternal(t.ctx, model); err != nil {
-		// If save fails, attempt to revert the flags in memory?
-		// baseModelPtr.Deleted = false // Maybe? Or rely on caller to retry?
-		return fmt.Errorf("SoftDelete failed during save: %w", err)
-	}
-
-	return nil
-}
-
-// Query prepares a query based on QueryParams and returns a *CachedResult[T] for lazy execution.
-// MOVED to query.go
-// func (t *Thing[T]) Query(params QueryParams) (*CachedResult[T], error) {
-// 	// TODO: Add validation for params if necessary?
-// 	return &CachedResult[T]{
-// 		thing:  t,
-// 		params: params,
-// 		// cachedIDs, cachedCount, hasLoadedIDs, hasLoadedCount, hasLoadedAll, all initialized to zero values
-// 	}, nil
-// }
-
-// Load explicitly loads relationships for a given model instance using the Thing's context.
-// model must be a pointer to a struct of type T.
-// relations are the string names of the fields representing the relationships to load.
+// Load eagerly loads specified relationships for a given model instance.
 func (t *Thing[T]) Load(model *T, relations ...string) error {
 	// Use the context stored in the Thing instance
 	return t.loadInternal(t.ctx, model, relations...)
@@ -1354,111 +1269,3 @@ func findChangedFieldsSimple[T any](original, updated *T, info *ModelInfo) (map[
 
 	return changed, nil
 }
-
-// --- Incremental Cache Update Methods --- // MOVED to cache.go
-
-// // updateAffectedQueryCaches is called after a Save operation
-// // to incrementally update relevant list and count caches.
-// // It's now a method of Thing[T].
-// func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, originalModel *T, isCreate bool) {
-// ... (rest of updateAffectedQueryCaches code omitted)
-// }
-
-// // handleDeleteInQueryCaches is called after a Delete operation
-// // to incrementally update relevant list and count caches by removing the deleted item.
-// // It's now a method of Thing[T].
-// func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
-// ... (rest of handleDeleteInQueryCaches code omitted)
-// }
-
-// --- Helper functions for list/count cache --- // MOSTLY MOVED to cache.go
-
-// // containsID checks if an ID exists in a slice of int64.
-// // ... (rest of containsID)
-// func containsID(ids []int64, id int64) bool {
-// 	for _, currentID := range ids {
-// 		if currentID == id {
-// 			return true
-// 		}
-// 	}
-// 	return false
-// }
-
-// // checkModelMatchAgainstQuery checks if a model matches query params.
-// // ... (rest of checkModelMatchAgainstQuery)
-// func (t *Thing[T]) checkModelMatchAgainstQuery(model *T, originalModel *T, params QueryParams, isCreate bool) (bool, bool, error) {
-// 	var matchesCurrent, matchesOriginal bool
-// 	var matchErr error
-//
-// 	// Check current model state
-// 	matchesCurrent, matchErr = t.CheckQueryMatch(model, params) // CheckQueryMatch is defined in query_match.go
-// 	if matchErr != nil {
-// 		return false, false, fmt.Errorf("error checking query match for current model: %w", matchErr)
-// 	}
-//
-// 	// Check original model state (only relevant for updates)
-// 	if !isCreate && originalModel != nil {
-// 		matchesOriginal, matchErr = t.CheckQueryMatch(originalModel, params) // CheckQueryMatch is defined in query_match.go
-// 		if matchErr != nil {
-// 			return false, false, fmt.Errorf("error checking query match for original model: %w", matchErr)
-// 		}
-// 	}
-// 	return matchesCurrent, matchesOriginal, nil
-// }
-
-// // determineCacheAction determines cache add/remove actions.
-// // ... (rest of determineCacheAction)
-// func determineCacheAction(isCreate, matchesOriginal, matchesCurrent bool, isKept bool) (bool, bool) {
-// 	needsAdd := false
-// 	needsRemove := false
-//
-// 	if !isKept {
-// 		// If item is soft-deleted, it always needs removal (if it was previously matching)
-// 		// and never needs adding.
-// 		log.Printf("DEBUG Determine Action: Model is soft-deleted (KeepItem=false). Ensuring removal.")
-// 		needsRemove = true // Ensure removal attempt
-// 		needsAdd = false
-// 	} else if isCreate {
-// 		if matchesCurrent {
-// 			needsAdd = true
-// 			log.Printf("DEBUG Determine Action: Create matches query. Needs Add.")
-// 		}
-// 	} else { // Update
-// 		if matchesCurrent && !matchesOriginal {
-// 			needsAdd = true
-// 			log.Printf("DEBUG Determine Action: Update now matches query (didn't before). Needs Add.")
-// 		} else if !matchesCurrent && matchesOriginal {
-// 			needsRemove = true
-// 			log.Printf("DEBUG Determine Action: Update no longer matches query (did before). Needs Remove.")
-// 		}
-// 		// If match status didn't change (both true or both false), neither add nor remove is needed.
-// 	}
-//
-// 	// If it needs adding, it cannot simultaneously need removing based on match status change.
-// 	if needsAdd {
-// 		needsRemove = false
-// 	}
-//
-// 	return needsAdd, needsRemove
-// }
-
-// --- Cache Helpers --- // MOVED to cache.go
-
-// // updateAffectedQueryCaches is called after a Save operation
-// // to incrementally update relevant list and count caches.
-// // It's now a method of Thing[T].
-// func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, originalModel *T, isCreate bool) {
-// ... (rest of updateAffectedQueryCaches code omitted)
-// }
-
-// // handleDeleteInQueryCaches is called after a Delete operation
-// // to incrementally update relevant list and count caches by removing the deleted item.
-// // It's now a method of Thing[T].
-// func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
-// ... (rest of handleDeleteInQueryCaches code omitted)
-// }
-
-// --- ClearCacheByID MOVED to cache.go ---
-// func (t *Thing[T]) ClearCacheByID(ctx context.Context, id int64) error {
-// ... (rest of ClearCacheByID code omitted)
-// }
