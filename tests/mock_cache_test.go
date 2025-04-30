@@ -46,6 +46,12 @@ type mockCacheClient struct {
 	AcquireLockCalls    int
 	ReleaseLockCalls    int
 	DeleteByPrefixCalls int
+	// New counters for query_test.go
+	FlushAllCalls   int
+	SetListIDsCalls int
+	GetListIDsCalls int
+	SetCountCalls   int
+	GetCountCalls   int
 }
 
 // newMockCacheClient creates a new initialized mock cache client.
@@ -118,6 +124,20 @@ func (m *mockCacheClient) ResetCalls() {
 	m.AcquireLockCalls = 0
 	m.ReleaseLockCalls = 0
 	m.DeleteByPrefixCalls = 0
+	// Reset new counters
+	m.FlushAllCalls = 0
+	m.SetListIDsCalls = 0
+	m.GetListIDsCalls = 0
+	m.SetCountCalls = 0
+	m.GetCountCalls = 0
+}
+
+// ResetCounts is an alias for ResetCalls, used in query_test
+// TODO: Consolidate ResetCalls/ResetCounts if possible
+func (m *mockCacheClient) ResetCounts() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ResetCalls() // Reuse existing logic
 }
 
 // Helper method to increment a counter safely
@@ -603,4 +623,83 @@ func assertMockCacheCounts(t *testing.T, mockCache *mockCacheClient, expected ma
 	}
 	assert.Equal(t, expected, actual, "Mock cache call counts mismatch")
 	*/
+}
+
+// FlushAll simulates flushing the cache (clears store and expiry).
+func (m *mockCacheClient) FlushAll(ctx context.Context) error {
+	m.incrementCounter("FlushAll")
+	m.Reset() // Reuse Reset logic
+	return nil
+}
+
+// SetListIDs simulates storing a list of IDs for a query key.
+func (m *mockCacheClient) SetListIDs(ctx context.Context, key string, ids []int64, limit int, expiration time.Duration) error {
+	m.incrementCounter("SetListIDs")
+	data, err := marshalForMock(ids)
+	if err != nil {
+		return fmt.Errorf("mock SetListIDs marshal error: %w", err)
+	}
+	m.store.Store(key, data)
+	if expiration > 0 {
+		m.expiryStore.Store(key, time.Now().Add(expiration))
+	}
+	return nil
+}
+
+// GetListIDs simulates retrieving a list of IDs for a query key.
+func (m *mockCacheClient) GetListIDs(ctx context.Context, key string) ([]int64, error) {
+	m.incrementCounter("GetListIDs")
+	storedBytes, ok := m.GetValue(key) // Uses expiry check
+	if !ok {
+		return nil, thing.ErrNotFound
+	}
+	var ids []int64
+	err := unmarshalFromMock(storedBytes, &ids)
+	if err != nil {
+		return nil, fmt.Errorf("mock GetListIDs unmarshal error: %w", err)
+	}
+	return ids, nil
+}
+
+// SetCount simulates storing a count value for a key.
+func (m *mockCacheClient) SetCount(ctx context.Context, key string, count int64, expiration time.Duration) error {
+	m.incrementCounter("SetCount")
+	data, err := marshalForMock(count)
+	if err != nil {
+		return fmt.Errorf("mock SetCount marshal error: %w", err)
+	}
+	m.store.Store(key, data)
+	if expiration > 0 {
+		m.expiryStore.Store(key, time.Now().Add(expiration))
+	}
+	return nil
+}
+
+// GetCount simulates retrieving a count value for a key.
+func (m *mockCacheClient) GetCount(ctx context.Context, key string) (int64, error) {
+	m.incrementCounter("GetCount")
+	storedBytes, ok := m.GetValue(key) // Uses expiry check
+	if !ok {
+		return 0, thing.ErrNotFound
+	}
+	var count int64
+	err := unmarshalFromMock(storedBytes, &count)
+	if err != nil {
+		return 0, fmt.Errorf("mock GetCount unmarshal error: %w", err)
+	}
+	return count, nil
+}
+
+// GetListIDsCount returns the number of times GetListIDs was called.
+func (m *mockCacheClient) GetListIDsCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.Counters["GetListIDs"]
+}
+
+// GetModelCount returns the number of times GetModel was called.
+func (m *mockCacheClient) GetModelCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.Counters["GetModel"]
 }

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"thing/internal/cache" // Import internal cache package
+	"thing/internal/utils"
 	// "thing/internal/helpers" // Removed import
 )
 
@@ -777,9 +778,17 @@ func GenerateQueryHash(params cache.QueryParams) string {
 	return hex.EncodeToString(hasher.Sum(nil))
 }
 
-// --- Test Helpers (Exported) ---
+// GenerateCacheKey generates a cache key for list or count queries with normalized arguments.
+// prefix should be either "list" or "count". This ensures consistent cache key generation across the codebase.
+func GenerateCacheKey(prefix, tableName string, params cache.QueryParams) string {
+	// Normalize args for consistent hashing
+	normalizedParams := params
+	normalizedArgs := make([]interface{}, len(params.Args))
+	for i, arg := range params.Args {
+		normalizedArgs[i] = utils.NormalizeValue(arg)
+	}
+	normalizedParams.Args = normalizedArgs
 
-// TestHelper_GenerateQueryHash exposes query hash generation for testing purposes.
-func TestHelper_GenerateQueryHash(params cache.QueryParams) string {
-	return GenerateQueryHash(params)
+	hash := GenerateQueryHash(normalizedParams)
+	return fmt.Sprintf("%s:%s:%s", prefix, tableName, hash)
 }

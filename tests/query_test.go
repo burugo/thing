@@ -1,9 +1,15 @@
 package thing_test
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
 	"strconv"
 	"testing"
+	"thing"
 	"thing/internal/cache"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -167,12 +173,112 @@ func TestCachedResult_All(t *testing.T) {
 	assert.Equal(t, allUsersFetched, allUsersCachedFetched, "Fetching again should return same result (pointers might differ based on ByIDs cache)")
 }
 
-// TestCachedResult replaces the old TestCachedResult
-// func TestCachedResult(t *testing.T) {
-// 	// ... old code ...
-// }
+// TestCachedResult_First tests the First() method with caching.
+func TestCachedResult_First(t *testing.T) {
+	db, cacheClient, cleanup := setupTestDB(t)
+	defer cleanup()
+	thingInstance, err := thing.New[User](db, cacheClient)
+	require.NoError(t, err)
 
-// Remove TestThing_ByIDs as it tests the Thing method, not CachedResult
-// func TestThing_ByIDs(t *testing.T) {
-// 	// ... old code ...
-// }
+	// Type assert to *mockCacheClient for mock-only methods
+	mockCache, ok := cacheClient.(*mockCacheClient)
+	require.True(t, ok, "cacheClient is not a *mockCacheClient")
+
+	// Seed data
+	u1 := User{Name: "FirstUser", Email: "first@example.com"}
+	require.NoError(t, thingInstance.Save(&u1))
+	u2 := User{Name: "SecondUser", Email: "second@example.com"}
+	require.NoError(t, thingInstance.Save(&u2))
+
+	t.Run("Find First Match", func(t *testing.T) {
+		mockCache.FlushAll(context.Background())
+		params := cache.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id ASC"}
+		cr, err := thingInstance.Query(params)
+		require.NoError(t, err)
+		firstUser, err := cr.First()
+		require.NoError(t, err)
+		require.NotNil(t, firstUser)
+		require.Equal(t, u1.ID, firstUser.ID)
+		require.Equal(t, u1.Name, firstUser.Name)
+	})
+
+	t.Run("Find First Match (Different Order)", func(t *testing.T) {
+		mockCache.FlushAll(context.Background())
+		params := cache.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id DESC"}
+		cr, err := thingInstance.Query(params)
+		require.NoError(t, err)
+		firstUser, err := cr.First()
+		require.NoError(t, err)
+		require.NotNil(t, firstUser)
+		require.Equal(t, u2.ID, firstUser.ID) // Should be u2 because of DESC order
+		require.Equal(t, u2.Name, firstUser.Name)
+	})
+
+	t.Run("Not Found", func(t *testing.T) {
+		mockCache.FlushAll(context.Background())
+		params := cache.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
+		cr, err := thingInstance.Query(params)
+		require.NoError(t, err)
+		firstUser, err := cr.First()
+		require.Error(t, err)
+		require.True(t, errors.Is(err, thing.ErrNotFound))
+		require.Nil(t, firstUser)
+	})
+
+	t.Run("Cache Hit (List Cache -> ByID)", func(t *testing.T) {
+		mockCache.FlushAll(context.Background())
+		params := cache.QueryParams{Where: "name = ?", Args: []interface{}{u1.Name}}
+		cacheKey := testGenerateListCacheKey(t, thingInstance, params)
+		countCacheKey := testGenerateCountCacheKey(t, thingInstance, params)
+
+		// Pre-populate list cache with ID
+		require.NoError(t, mockCache.SetListIDs(context.Background(), cacheKey, []int64{u1.ID}, 0, time.Minute))
+		require.NoError(t, mockCache.SetCount(context.Background(), countCacheKey, 1, time.Minute))
+		// Ensure model cache for u1 itself is empty initially
+		modelCacheKey := fmt.Sprintf("users:%d", u1.ID)
+		require.NoError(t, mockCache.Delete(context.Background(), modelCacheKey))
+
+		// Reset DB call counts
+		// If you need to assert DB calls, you can type assert db to *mockDBAdapter here
+		// mockDBAdapter, ok := db.(*mockDBAdapter)
+		// require.True(t, ok, "Test setup error: db is not a mockDBAdapter")
+		// mockDBAdapter.ResetCounts()
+		mockCache.ResetCounts()
+
+		cr, err := thingInstance.Query(params)
+		require.NoError(t, err)
+		firstUser, err := cr.First()
+		require.NoError(t, err)
+		require.NotNil(t, firstUser)
+		require.Equal(t, u1.ID, firstUser.ID)
+
+		// Assertions:
+		// 1. List cache was checked (GetListIDs called)
+		// 2. Model cache was checked for u1 (GetModel called for users:u1.ID)
+		// 3. DB was NOT called for the list (Select count should be 0)
+		// 4. DB *was* called to fetch u1 by ID (Get count should be 1)
+		require.GreaterOrEqual(t, mockCache.GetListIDsCount(), 1, "GetListIDs should have been called")
+		require.GreaterOrEqual(t, mockCache.GetModelCount(), 1, "GetModel should have been called for the ID")
+		// DB call assertions can be added if db is a mock
+		// require.Equal(t, 0, mockDBAdapter.SelectCount, "DB Select (for list) should NOT have been called")
+		// require.Equal(t, 1, mockDBAdapter.GetCount, "DB Get (for ID) should have been called")
+	})
+
+	// TODO: Add test case for cache miss -> DB query with LIMIT 1
+}
+
+// Helper to generate list cache key for testing
+func testGenerateListCacheKey[T any](t *testing.T, instance *thing.Thing[T], params cache.QueryParams) string {
+	modelType := reflect.TypeOf((*T)(nil)).Elem()
+	info, err := thing.GetCachedModelInfo(modelType)
+	require.NoError(t, err)
+	return thing.GenerateCacheKey("list", info.TableName, params)
+}
+
+// Helper to generate count cache key for testing
+func testGenerateCountCacheKey[T any](t *testing.T, instance *thing.Thing[T], params cache.QueryParams) string {
+	modelType := reflect.TypeOf((*T)(nil)).Elem()
+	info, err := thing.GetCachedModelInfo(modelType)
+	require.NoError(t, err)
+	return thing.GenerateCacheKey("count", info.TableName, params)
+}

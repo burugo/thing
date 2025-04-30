@@ -1,16 +1,12 @@
 package thing
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"strconv"
 	"thing/internal/cache"
 	"thing/internal/sql"
-	"thing/internal/utils"
 )
 
 const (
@@ -50,59 +46,13 @@ func (t *Thing[T]) Query(params cache.QueryParams) (*CachedResult[T], error) {
 
 // Helper function to generate cache key for count queries.
 // Similar to generateQueryCacheKey but with a different prefix.
-func (cr *CachedResult[T]) generateCountCacheKey() (string, error) {
-	if cr.thing == nil || cr.thing.info == nil {
-		return "", errors.New("generateCountCacheKey: Thing or model info not initialized")
-	}
-	tableName := cr.thing.info.TableName
-	// Use the same normalization logic as the query key generation
-	normalizedParams := cr.params // Assuming QueryParams is simple enough or normalization happens elsewhere if needed
-	normalizedArgs := make([]interface{}, len(cr.params.Args))
-	for i, arg := range cr.params.Args {
-		normalizedArgs[i] = utils.NormalizeValue(arg) // Already uses utils.
-	}
-	normalizedParams.Args = normalizedArgs
-
-	paramsBytes, err := json.Marshal(normalizedParams)
-	if err != nil {
-		log.Printf("ERROR: json.Marshal(params) failed in generateCountCacheKey: %v\nParams: %+v", err, normalizedParams)
-		return "", fmt.Errorf("failed to marshal query params for count cache key: %w", err)
-	}
-
-	hasher := sha256.New()
-	hasher.Write([]byte(tableName))
-	hasher.Write(paramsBytes)
-	hash := hex.EncodeToString(hasher.Sum(nil))
-	// Using format: count:{tableName}:{hash}
-	return fmt.Sprintf("count:%s:%s", tableName, hash), nil
+func (cr *CachedResult[T]) generateCountCacheKey() string {
+	return GenerateCacheKey("count", cr.thing.info.TableName, cr.params)
 }
 
 // Helper function to generate cache key for list queries.
-func (cr *CachedResult[T]) generateListCacheKey() (string, error) {
-	if cr.thing == nil || cr.thing.info == nil {
-		return "", errors.New("generateListCacheKey: Thing or model info not initialized")
-	}
-	tableName := cr.thing.info.TableName
-	// Use the same normalization logic as the query key generation
-	normalizedParams := cr.params // Assuming QueryParams is simple enough or normalization happens elsewhere if needed
-	normalizedArgs := make([]interface{}, len(cr.params.Args))
-	for i, arg := range cr.params.Args {
-		normalizedArgs[i] = utils.NormalizeValue(arg) // Already uses utils.
-	}
-	normalizedParams.Args = normalizedArgs
-
-	paramsBytes, err := json.Marshal(normalizedParams)
-	if err != nil {
-		log.Printf("ERROR: json.Marshal(params) failed in generateListCacheKey: %v\nParams: %+v", err, normalizedParams)
-		return "", fmt.Errorf("failed to marshal query params for list cache key: %w", err)
-	}
-
-	hasher := sha256.New()
-	hasher.Write([]byte(tableName))
-	hasher.Write(paramsBytes)
-	hash := hex.EncodeToString(hasher.Sum(nil))
-	// Using format: list:{tableName}:{hash}
-	return fmt.Sprintf("list:%s:%s", tableName, hash), nil
+func (cr *CachedResult[T]) generateListCacheKey() string {
+	return GenerateCacheKey("list", cr.thing.info.TableName, cr.params)
 }
 
 // Count returns the total number of records matching the query.
@@ -118,13 +68,7 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 	}
 
 	// 2. Generate cache key
-	cacheKey, err := cr.generateCountCacheKey()
-	if err != nil {
-		log.Printf("Error generating count cache key: %v", err)
-		// Fallback to DB query without caching?
-		// For now, return error
-		return 0, fmt.Errorf("failed to generate cache key for count: %w", err)
-	}
+	cacheKey := cr.generateCountCacheKey()
 
 	// 3. Check cache (using a generic Get method, assuming it returns string)
 	cacheValStr, cacheErr := cr.thing.cache.Get(cr.thing.ctx, cacheKey)
@@ -251,11 +195,7 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	}
 
 	// 1. Generate List Cache Key
-	listCacheKey, err := cr.generateListCacheKey()
-	if err != nil {
-		log.Printf("Error generating list cache key: %v", err)
-		return nil, fmt.Errorf("failed to generate cache key for list: %w", err)
-	}
+	listCacheKey := cr.generateListCacheKey()
 
 	// 2. Check Cache directly using GetQueryIDs
 	cachedIDs, idsCacheErr := cr.thing.cache.GetQueryIDs(cr.thing.ctx, listCacheKey)
@@ -354,20 +294,17 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 
 	// If fetched count <= limit, update Count cache as well (handles count=0 correctly)
 	if len(validIDs) <= cacheListCountLimit { // Changed to <= for clarity, but < also works for count 0
-		countCacheKey, keyErr := cr.generateCountCacheKey()
-		if keyErr == nil {
-			countStr := strconv.FormatInt(int64(len(validIDs)), 10) // Correctly gets "0" if len is 0
-			countSetErr := cr.thing.cache.Set(cr.thing.ctx, countCacheKey, countStr, globalCacheTTL)
-			if countSetErr != nil {
-				log.Printf("WARN: Failed to update count cache (key: %s) after list fetch: %v", countCacheKey, countSetErr)
-			} else {
-				log.Printf("Updated count cache (key: %s) with count %d after list fetch", countCacheKey, len(validIDs))
-			}
-			// Register the count key
-			cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, cr.params)
+		countCacheKey := cr.generateCountCacheKey()
+		countStr := strconv.FormatInt(int64(len(validIDs)), 10) // Correctly gets "0" if len is 0
+		countSetErr := cr.thing.cache.Set(cr.thing.ctx, countCacheKey, countStr, globalCacheTTL)
+		if countSetErr != nil {
+			log.Printf("WARN: Failed to update count cache (key: %s) after list fetch: %v", countCacheKey, countSetErr)
 		} else {
-			log.Printf("WARN: Failed to generate count cache key for update after list fetch: %v", keyErr)
+			log.Printf("Updated count cache (key: %s) with count %d after list fetch", countCacheKey, len(validIDs))
 		}
+		// Register the count key
+		cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, cr.params)
+
 	}
 	return validIDs, nil // Return filtered valid IDs (or empty slice)
 }
@@ -379,10 +316,7 @@ func (cr *CachedResult[T]) invalidateCache() error {
 	}
 
 	// 1. Invalidate list cache
-	listCacheKey, err := cr.generateListCacheKey()
-	if err != nil {
-		return fmt.Errorf("failed to generate list cache key for invalidation: %w", err)
-	}
+	listCacheKey := cr.generateListCacheKey()
 
 	deleteErr := cr.thing.cache.Delete(cr.thing.ctx, listCacheKey)
 	if deleteErr != nil && !errors.Is(deleteErr, ErrNotFound) {
@@ -393,10 +327,7 @@ func (cr *CachedResult[T]) invalidateCache() error {
 	}
 
 	// 2. Invalidate count cache
-	countCacheKey, err := cr.generateCountCacheKey()
-	if err != nil {
-		return fmt.Errorf("failed to generate count cache key for invalidation: %w", err)
-	}
+	countCacheKey := cr.generateCountCacheKey()
 
 	deleteErr = cr.thing.cache.Delete(cr.thing.ctx, countCacheKey)
 	if deleteErr != nil && !errors.Is(deleteErr, ErrNotFound) {
@@ -632,4 +563,25 @@ func (cr *CachedResult[T]) All() ([]*T, error) {
 	cr.all = results
 	cr.hasLoadedAll = true
 	return results, nil
+}
+func (cr *CachedResult[T]) First() (*T, error) {
+	// 1. Try fetching just the first item using Fetch
+	// This leverages the existing caching logic within Fetch
+	results, err := cr.Fetch(0, 1)
+	if err != nil {
+		// Propagate errors from Fetch (e.g., DB connection issues)
+		return nil, err
+	}
+
+	// 2. Check if any result was returned
+	if len(results) == 0 {
+		// No results found, return ErrNotFound
+		// Check if Count is 0 first to potentially set NoneResult for count cache?
+		// For simplicity now, just return ErrNotFound directly.
+		// TODO: Consider integrating with NoneResult caching for the query itself?
+		return nil, ErrNotFound // Use the existing ErrNotFound
+	}
+
+	// 3. Return the first result
+	return results[0], nil
 }

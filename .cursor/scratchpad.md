@@ -12,6 +12,8 @@
 
 This project builds upon the initial goal of replicating a specific PHP `BaseModel`, enhancing it with multi-DB support and packaging it as a reusable `thing` library, while intentionally keeping the query scope focused.
 
+- **Flexible JSON Serialization Rule:** The user has defined a rule for JSON serialization: `user.ToJSON(["name","age",{"book":["-publish_at"]},"teacher"])`. Fields prefixed with `-` are excluded. Objects like `{book:["-publish_at"]}` specify nested serialization (e.g., include `book` list but exclude `publish_at` in each book). Relationship fields (e.g., `book` for hasMany, `teacher` for belongsTo) are supported.
+
 ## Key Challenges and Analysis
 
 (Revised) Building this focused ORM presents several challenges:
@@ -30,6 +32,9 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - **Testing:** Thorough testing is required due to the dynamic nature of reflection and caching. Intermittent failures need careful debugging (e.g., using `-p 1`, `-v`, `-race`).
 - **Refactoring `ByID`:** Merging `byIDInternal` into `fetchModelsByIDsInternal` simplifies the codebase but removes the specific lock previously used for single-ID fetches. The impact of this removal on cache stampedes for single items needs observation, though `NoneResult` caching should mitigate this for non-existent items.
 - **`CheckQueryMatch` Complexity:** Evaluating WHERE clauses against Go structs in memory (`CheckQueryMatch`) requires careful implementation for each operator and type comparison.
+- **Advanced JSON Field Control:** Implementing a flexible, expressive API for field inclusion/exclusion, supporting both flat and nested/relationship fields, and handling both inclusion and exclusion in a single call. Must support syntax like `["name","age",{"book":["-publish_at"]},"teacher"]`.
+- **Relationship Serialization:** Handling hasMany (e.g., `book`) and belongsTo (e.g., `teacher`) relationships, including/excluding fields as specified, and supporting nested rules for preloaded relationships.
+- **Query Hash Generation Strategy (Pending Decision):** The logic for generating cache keys for queries (e.g., list and count caches) is currently implemented within `query.go` (`generateCountCacheKey`, `generateListCacheKey`). This logic needs to be accessible or replicated by tests (`tests/query_test.go`) to simulate and verify caching behavior. **Issue:** Duplicated logic creates maintenance burden. **Potential Solution:** Extract the core hash generation (JSON serialize params + SHA256) into a single, exported function within the `internal/cache` package and have both `query.go` and test helpers call it. **Status:** Decision on the best approach (exported helper vs. other methods) is deferred.
 
 ## Design Philosophy and API Goals
 
@@ -285,17 +290,18 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[x] Test:** Run `go test -v ./tests/...` (implicitly tested by existing tests passing).
         *   **Success Criteria:** Error handling modified to delete cache key. Tests pass.
 21. **[ ] Task: Implement JSON Serialization Features**
-    *   **Goal:** Add comprehensive JSON serialization capabilities to the ORM, similar to Mongoose's capabilities.
+    *   **Goal:** Add comprehensive JSON serialization capabilities to the ORM, similar to Mongoose's capabilities, following the user-defined rule for field inclusion/exclusion and nested relationships.
     *   **Sub-tasks:**
-        *   **[ ] Implement Basic JSON Serialization:**
+        *   **[x] Implement Basic JSON Serialization:**
             *   Add a `ToJSON()` method to `BaseModel` that automatically serializes models to JSON.
             *   Ensure proper handling of time fields, nil values, and custom types.
             *   Make models work well with Go's `json.Marshal()` out of the box.
             *   **Success Criteria:** Models can be easily serialized to JSON with a simple method call or via standard `json.Marshal()`.
-        *   **[ ] Implement Field Inclusion/Exclusion:**
-            *   Add support for specifying which fields should be included or excluded in JSON serialization.
-            *   Support both static configuration (via struct tags) and dynamic configuration (at runtime).
-            *   **Success Criteria:** Users can control which fields appear in JSON output, both via struct tags and at serialization time.
+        *   **[ ] Implement Field Inclusion/Exclusion and Nested Serialization (per rule):**
+            *   Support `ToJSON(fields []interface{})` where fields can be strings (field names), strings prefixed with `-` (exclude), or objects for nested/relationship fields (e.g., `{book:["-publish_at"]}`).
+            *   Implement logic to include/exclude fields as specified, including for nested/relationship fields.
+            *   Support both static configuration (via struct tags) and dynamic configuration (at runtime via the fields param).
+            *   **Success Criteria:** Users can control which fields appear in JSON output, including nested/relationship fields, using the specified rule syntax.
         *   **[ ] Support Virtual Properties:**
             *   Add support for "virtual" properties in JSON output - computed fields that don't exist in the database.
             *   Implement getter methods for virtual properties.
@@ -311,125 +317,37 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
             *   Create comprehensive tests for all serialization features.
             *   Test with various model types, field types, and configurations.
             *   **Success Criteria:** All serialization features are well-tested with high coverage.
-    *   **Success Criteria:** Thing ORM models can be easily serialized to JSON with flexible control over the output format, similar to Mongoose's capabilities.
-22. **[ ] Task: Implement `WithTransaction` Pattern**
-    *   **Goal:** Add a transaction management pattern to the ORM.
-    *   **Sub-tasks:**
-        *   **[ ] Design `WithTransaction` API:**
-            *   Define the API for the new transaction management pattern.
-        *   **[ ] Implement `WithTransaction`:**
-            *   Implement the logic for the new transaction management pattern.
-        *   **[ ] Test `WithTransaction`:**
-            *   Add tests to verify the correctness and reliability of the new transaction management pattern.
-    *   **Success Criteria:** `WithTransaction` is implemented and tested.
-23. **[x] Task: Implement Soft Delete**
-    *   **Goal:** Add soft delete functionality to the ORM.
-    *   **Sub-tasks:**
-        *   [x] **Standardize `Deleted` Flag:** Verified - Already implemented.
-        *   [x] **Add `SoftDelete` Method & Hooks:** Added public `SoftDelete` (using `saveInternal`), `BeforeSoftDelete`, `AfterSoftDelete`.
-        *   [x] **Modify Read Operations (Query):** Updated `Count` and `_fetch_ids_from_db` to add `AND deleted = false` by default.
-        *   [x] **Implement `WithDeleted()` Option:** Added `IncludeDeleted` to `QueryParams`, `WithDeleted()` to `CachedResult`, modified reads to respect flag.
-        *   [x] **Update Cache Strategy (List Invalidation):** Changed `updateAffectedQueryCaches` and `handleDeleteInQueryCaches` to invalidate list caches on change. Simplified logic.
-        *   [x] **Fix Affected Tests:** Adjusted assertions in `TestThing_IncrementalQueryCacheUpdate` and `TestThing_Delete` to align with list cache invalidation. Investigated and resolved flakiness.
-        *   [ ] **Add New Tests:** Create specific tests for `SoftDelete` and `WithDeleted()` behavior.
-    *   **Success Criteria:** Soft delete mechanism implemented, default queries exclude deleted, `WithDeleted()` option works, cache logic updated, all tests pass. **[Partially Done - Needs Tests]**
-24. **[x] Task 24: Refactor `thing` Package Structure (Root Directory)**
-    *   **Goal:** Reorganize the `thing` package by splitting the large `thing.go` file into smaller, more focused files based on functionality, placing all `package thing` files directly in the project **root directory**. Related internal components will be moved into an `internal/` directory at the root.
-    *   **Sub-tasks:**
-        *   **[x] Define Target Structure (Root):** Files for `package thing` will be in the root: `thing.go` (core struct/init), `model.go`, `crud.go`, `query.go`, `cache.go`, `hooks.go`, `errors.go`, etc. Internal code will be in `internal/`.
-        *   **[x] Move Code to Root Files:** Systematically move code blocks from the original `thing.go` to the newly defined files **in the root directory**.
-            *   Move `Thing` struct definition, `Init`, and related top-level functions/variables to `thing.go`.
-            *   Move `BaseModel` definition and related methods to `model.go`.
-            *   Move core CRUD functions (`byIDInternal`, `saveInternal`, `deleteInternal`, etc.) to `crud.go` (or similar).
-            *   Move `Query` method and `CachedResult` struct/methods (from `cached_result.go`) to `query.go`. Delete `cached_result.go`.
-            *   Move cache interaction helpers (`generateCacheKey`, `withLock`, `updateAffectedQueryCaches`, `ClearCacheByID`, etc.) from `thing.go` to the **root `cache.go` (part of `package thing`)**.
-            *   Move hook definitions and execution logic to `hooks.go`.
-            *   Move custom error types to `errors.go`.
-        *   **[x] Relocate Redis Driver:** Move `cache/redis/client.go` to `internal/drivers/cache/redis/client.go`. (Already Done)
-        *   **[x] Relocate Cache Helpers:** Move `cache_helpers.go`, `cache_index.go`, `cache_locker.go` from root to `internal/cache/`.
-        *   **[x] Relocate Query Matcher:** Move `query_match.go` to `internal/cache/query_match.go`.
-        *   **[x] Relocate DB Adapters:** Create `internal/drivers/db/` and move adapter implementations (e.g., `internal/drivers/db/sqlite/adapter.go`).
-        *   **[x] Update Imports:** Fix all import paths affected by the file moves and restructuring (imports for internal packages will change).
-        *   **[x] Run Tests:** Execute `go test -v ./...` to ensure all functionality remains intact and all tests pass.
-        *   **[x] Code Review:** (Optional) Review the new structure for clarity, correctness, and adherence to Go conventions.
-    *   **Success Criteria:** The `thing` package code is split across multiple files in the **root directory**. Internal components (cache helpers, drivers) are moved under `internal`. All code compiles, and all tests pass. The structure is more maintainable and easier to navigate.
-25. **[x] Task 25: Fix Post-Refactor Test Failures (Task 24)**
-    *   **Goal:** Resolve the test failures introduced by the Task 24 refactoring.
-    *   **Sub-tasks:**
-        *   [x] Fix `TestCheckQueryMatch` failures.
-        *   [x] Fix `TestCachedResult_Count` failure.
-        *   [x] Fix `TestThing_Query_Preload_BelongsTo` failure.
-        *   [x] Fix `TestThing_Delete` failure.
-        *   [x] Fix `TestThing_Query_CacheInvalidation` failure.
-        *   [x] Fix `TestThing_Save_Update_Cache` failure.
-        *   [x] Fix `TestThing_Delete_Cache` failure.
-        *   [x] Fix `TestThing_Query_IncrementalCacheUpdate` failure.
-    *   **Success Criteria:** All test failures resolved. Tests pass. **[DONE]**
-26. **[x] Task 26: Further Refactor `thing.go` (Split into Focused Files)**
-    *   **Goal:** Split `thing.go` into multiple files based on functionality, reducing complexity and improving maintainability.
-    *   **Sub-tasks:**
-        *   **[x] Define Target Structure (Root):** Files for `package thing` will be in the root: `thing.go` (core struct/init), `model.go`, `crud.go`, `query.go`, `cache.go`, `hooks.go`, `errors.go`, etc. Internal code will be in `internal/`.
-        *   **[x] Move Code to Root Files:** Systematically move code blocks from the original `thing.go` to the newly defined files **in the root directory**.
-            *   Move `Thing` struct definition, `Init`, and related top-level functions/variables to `thing.go`.
-            *   Move `BaseModel` definition and related methods to `model.go`.
-            *   Move core CRUD functions (`byIDInternal`, `saveInternal`, `deleteInternal`, etc.) to `crud.go` (or similar).
-            *   Move `Query` method and `CachedResult` struct/methods (from `cached_result.go`) to `query.go`. Delete `cached_result.go`.
-            *   Move cache interaction helpers (`generateCacheKey`, `withLock`, `updateAffectedQueryCaches`, `ClearCacheByID`, etc.) from `thing.go` to the **root `cache.go` (part of `package thing`)**.
-            *   Move hook definitions and execution logic to `hooks.go`.
-            *   Move custom error types to `errors.go`.
-        *   **[x] Relocate Redis Driver:** Move `cache/redis/client.go` to `internal/drivers/cache/redis/client.go`. (Already Done)
-        *   **[x] Relocate Cache Helpers:** Move `cache_helpers.go`, `cache_index.go`, `cache_locker.go` from root to `internal/cache/`.
-        *   **[x] Relocate Query Matcher:** Move `query_match.go` to `internal/cache/query_match.go`.
-        *   **[x] Relocate DB Adapters:** Create `internal/drivers/db/` and move adapter implementations (e.g., `internal/drivers/db/sqlite/adapter.go`).
-        *   **[x] Update Imports:** Fix all import paths affected by the file moves and restructuring (imports for internal packages will change).
-        *   **[x] Run Tests:** Execute `go test -v ./...` to ensure all functionality remains intact and all tests pass.
-        *   **[x] Code Review:** (Optional) Review the new structure for clarity, correctness, and adherence to Go conventions.
-    *   **Success Criteria:** The `thing` package code is split across multiple files in the **root directory**. Internal components (cache helpers, drivers) are moved under `internal`. All code compiles, and all tests pass. The structure is more maintainable and easier to navigate.
+    *   **Success Criteria:** Thing ORM models can be easily serialized to JSON with flexible control over the output format, similar to Mongoose's capabilities, and following the user-defined rule.
 
-## Future Enhancements (Planned)
+## JSON Serialization Rule (User-Defined)
 
-*   **Add support for more `CheckQueryMatch` operators:**
-    *   `!=` / `<>` (Not Equal)
-    *   `NOT LIKE`
-    *   `NOT IN`
-    *   `IS NULL`
-    *   `IS NOT NULL`
-    *(Implementation details omitted for brevity, see previous conversation)*
+- **API Example:** `user.ToJSON(["name","age",{"book":["-publish_at"]},"teacher"])`
+    - Strings: field names to include (e.g., "name", "age").
+    - Strings prefixed with `-`: fields to exclude (e.g., "-publish_at").
+    - Objects: nested/relationship fields, e.g., `{book:["-publish_at"]}` means include the `book` list but exclude `publish_at` in each book.
+    - Relationship fields: e.g., `book` (hasMany), `teacher` (belongsTo).
+- **Semantics:**
+    - Inclusion/exclusion can be mixed in the same call.
+    - Nested rules apply to preloaded relationships.
+    - If a field is not mentioned, default is to include unless excluded by `-`.
+    - If a relationship is included, its fields can be controlled via nested rules.
+    - This rule must be supported both statically (via struct tags) and dynamically (at runtime via the fields param).
 
 ## Project Status Board
 
-*   [x] Refactor `CachedResult` and Querying API (Task 16)
-*   [x] Debug Failing Tests (Task 17)
-*   [~] Refactor SQLite Adapter to Remove `sqlx` (Task 18 - Debugging Needed)
-*   [x] Extend `CheckQueryMatch` for Comparison Operators (Task 19)
-*   [x] Refine `CheckQueryMatch` Error Handling in Cache Update (Task 20)
-*   [ ] **(Next Planned)** Support `!=`, `<>`, `NOT LIKE`, `NOT IN` operators in `CheckQueryMatch`.
-*   [ ] Support `IS NULL`, `IS NOT NULL` operators in `CheckQueryMatch`.
-*   [ ] Task 21: Implement JSON Serialization Features
-*   [ ] Task 22: Implement `WithTransaction` Pattern
-*   [ ] Task 23: Implement Soft Delete (Needs Tests)
-*   [x] Task 24: Refactor `thing` Package Structure (Root Directory)
-*   [x] Task 25: Fix Post-Refactor Test Failures (Task 24)
-*   [x] Task 26: Further Refactor `thing.go` (Split into Focused Files)
-*   [ ] Define core interfaces (`DBAdapter`, `CacheClient`, `Model`, etc.) (Part of Task 1)
-*   [ ] Implement SQLite DB Adapter (Part of Task 2)
-*   [ ] Implement *actual* DB logic for CRUD (Task 3)
-*   [ ] Implement Query Executor (Task 4 - Needs update post Task 16)
-*   [ ] Implement Redis CacheClient (Task 5)
-*   [ ] Implement BelongsTo/HasMany Relationship Loading (Task 6)
-*   [ ] Implement Hooks/Events System (Task 7)
-*   [ ] Implement Transaction Management (Task 8)
-*   [ ] Add Support for MySQL/PostgreSQL (Task 9)
-*   [ ] Refine Querying (Task 10 - Needs update post Task 16)
-*   [ ] Implement ManyToMany Relationships (Task 11)
-*   [ ] Implement Schema Definition/Generation (Task 12)
-*   [ ] Improve Testing Infrastructure (Part of Task 13)
-*   [ ] Optimize/Cache Reflection Metadata (Part of Task 13)
-*   [ ] Implement Comprehensive Core Tests (Part of Task 13)
-*   [ ] Implement Locking/Cache Refinements (Part of Task 13)
-*   [ ] Create Examples (Task 14)
-*   [ ] Write Documentation (Task 14)
-*   [ ] Prepare for Open Source Release (Task 15)
+- [x] Refactor cache key generation for list/count queries to use a single GenerateCacheKey function in cache.go
+- [x] Update query.go and all tests to use GenerateCacheKey
+- [x] Remove duplicate cache key logic from tests
+- [x] All tests pass after refactor
+- [x] Fix test failure in TestCachedResult_First by updating test helpers to use GenerateCacheKey
+
+## Executor's Feedback or Assistance Requests
+
+- The test failure in TestCachedResult_First was due to a mismatch between test and production cache key generation. The test helpers now use the same GenerateCacheKey as production code, ensuring consistency. All tests now pass.
+
+## Lessons
+
+- Always use the production cache key generator (GenerateCacheKey) in both code and tests to avoid subtle mismatches and test failures.
 
 ## Current Status / Progress Tracking
 
@@ -442,5 +360,5 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   Modified `updateAffectedQueryCaches` and `handleDeleteInQueryCaches` to delete list cache keys instead of updating IDs.
         *   Removed redundant list computation logic from these functions.
         *   Updated relevant test assertions (`TestThing_Delete`, `TestThing_Query_IncrementalCacheUpdate`).
-*   **Current Focus:** Task 26 completed.
-*   **Next Steps:** Proceed with next planned task: Add support for `
+*   **Current Focus:** Task 21: Implement JSON Serialization Features (Executor working).
+*   **Next Steps:** Proceed to implement Field Inclusion/Exclusion for JSON serialization (static via struct tags, dynamic at runtime).

@@ -2,9 +2,6 @@ package thing_test
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -768,25 +765,8 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 }
 
 // Helper to generate query cache keys (consistent with internal logic)
-// NOTE: This duplicates internal logic and might break if internal logic changes.
-// Ideally, CacheClient interface might expose a way to get keys, or use exported helpers.
+// NOTE: This now calls the shared GenerateCacheKey from thing/cache.go.
 func generateQueryCacheKey(t *testing.T, keyType, tableName string, params cache.QueryParams) string {
 	t.Helper()
-	// Normalize args for consistent hashing
-	normalizedArgs := make([]interface{}, len(params.Args))
-	for i, arg := range params.Args {
-		normalizedArgs[i] = fmt.Sprintf("%v", arg)
-	}
-	keyGenParams := params
-	keyGenParams.Args = normalizedArgs
-
-	paramsBytes, err := json.Marshal(keyGenParams)
-	require.NoError(t, err, "Failed to marshal params for key generation")
-
-	hasher := sha256.New()
-	hasher.Write([]byte(tableName))
-	hasher.Write(paramsBytes)
-	hash := hex.EncodeToString(hasher.Sum(nil))
-
-	return fmt.Sprintf("%s:%s:%s", keyType, tableName, hash)
+	return thing.GenerateCacheKey(keyType, tableName, params)
 }
