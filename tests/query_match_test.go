@@ -1,6 +1,7 @@
 package thing_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -8,265 +9,350 @@ import (
 	// Import the package we are testing
 	// Adjust the import path if your module structure is different
 	"thing"
+	"thing/internal/cache" // Import internal cache
 )
 
 // Use a model defined within the main thing package or define one here if needed.
 // Reusing setup_test.go models if possible is good practice.
 
-func TestThing_CheckQueryMatch(t *testing.T) {
-	// Context is not needed for Save or CheckQueryMatch based on current usage
-	// ctx := context.Background()
-	// Get the Thing instance, ignore mockCache and dbAdapter for this test
-	userThing, _, _, cleanup := setupCacheTest[User](t)
-	defer cleanup()
+// Mock Model for testing CheckQueryMatch
+type MatchTestModel struct {
+	thing.BaseModel
+	Name   string  `db:"name"`
+	Status int     `db:"status"`
+	Count  int64   `db:"count"`
+	Amount float64 `db:"amount"`
+	Code   *string `db:"code"`  // Pointer type
+	Flags  []int   `db:"flags"` // Slice type
+}
 
-	// --- Setup: Create initial user ---
-	user := User{Name: "Charlie", Email: "charlie@example.com"}
-	err := userThing.Save(&user) // Use Save for creation
+func (m MatchTestModel) TableName() string {
+	return "match_test_models"
+}
+
+func TestCheckQueryMatch(t *testing.T) {
+	// Get ModelInfo for the test model
+	modelInfo, err := thing.GetCachedModelInfo(reflect.TypeOf(MatchTestModel{}))
 	require.NoError(t, err)
-	require.NotZero(t, user.ID)
-	t.Logf("Created user: %+v", user)
+	require.NotNil(t, modelInfo)
 
-	// --- Define Queries to check against ---
-	exactMatchQuery := thing.QueryParams{
-		Where: "name = ?",
-		Args:  []interface{}{"Charlie"},
-	}
-	likeQuery := thing.QueryParams{
-		Where: "email LIKE ?",
-		Args:  []interface{}{"%@example.com"},
-	}
-	mismatchQuery := thing.QueryParams{
-		Where: "name = ?",
-		Args:  []interface{}{"David"},
-	}
-	multiConditionMatchQuery := thing.QueryParams{
-		Where: "name = ? AND email = ?",
-		Args:  []interface{}{"Charlie", "charlie@example.com"},
-	}
-	multiConditionMismatchQuery := thing.QueryParams{
-		Where: "name = ? AND email = ?",
-		Args:  []interface{}{"Charlie", "wrong@example.com"},
+	strPtr := func(s string) *string { return &s }
+
+	model := MatchTestModel{
+		Name:   "Test Name",
+		Status: 1,
+		Count:  100,
+		Amount: 99.99,
+		Code:   strPtr("ABC"),
+		Flags:  []int{10, 20, 30},
 	}
 
-	// --- Test Case 1: Exact Match ---
-	t.Run("Exact Match", func(t *testing.T) {
-		match, err := userThing.CheckQueryMatch(&user, exactMatchQuery) // Pass model pointer and query
-		require.NoError(t, err)
-		require.True(t, match, "Expected CheckQueryMatch to return true for initial user and exact match query")
-		t.Logf("CheckQueryMatch (Exact Match) returned: %v", match)
-	})
+	// Define test cases
+	tests := []struct {
+		name        string
+		params      cache.QueryParams // Use internal type
+		expected    bool
+		expectError bool
+	}{
+		{
+			name: "Simple Equality Match",
+			params: cache.QueryParams{
+				Where: "status = ?",
+				Args:  []interface{}{1},
+			},
+			expected: true,
+		},
+		{
+			name: "Simple Equality Mismatch",
+			params: cache.QueryParams{
+				Where: "status = ?",
+				Args:  []interface{}{2},
+			},
+			expected: false,
+		},
+		{
+			name: "Equality Match String",
+			params: cache.QueryParams{
+				Where: "name = ?",
+				Args:  []interface{}{"Test Name"},
+			},
+			expected: true,
+		},
+		{
+			name: "Equality Mismatch String",
+			params: cache.QueryParams{
+				Where: "name = ?",
+				Args:  []interface{}{"Wrong Name"},
+			},
+			expected: false,
+		},
+		{
+			name: "Multiple AND Conditions Match",
+			params: cache.QueryParams{
+				Where: "status = ? AND name = ?",
+				Args:  []interface{}{1, "Test Name"},
+			},
+			expected: true,
+		},
+		{
+			name: "Multiple AND Conditions Mismatch (First)",
+			params: cache.QueryParams{
+				Where: "status = ? AND name = ?",
+				Args:  []interface{}{0, "Test Name"},
+			},
+			expected: false,
+		},
+		{
+			name: "Multiple AND Conditions Mismatch (Second)",
+			params: cache.QueryParams{
+				Where: "status = ? AND name = ?",
+				Args:  []interface{}{1, "Wrong Name"},
+			},
+			expected: false,
+		},
+		{
+			name: "LIKE Match End Wildcard",
+			params: cache.QueryParams{
+				Where: "name LIKE ?",
+				Args:  []interface{}{"Test %"},
+			},
+			expected: true,
+		},
+		{
+			name: "LIKE Match Start Wildcard",
+			params: cache.QueryParams{
+				Where: "name LIKE ?",
+				Args:  []interface{}{"% Name"},
+			},
+			expected: true,
+		},
+		{
+			name: "LIKE Match Both Wildcards",
+			params: cache.QueryParams{
+				Where: "name LIKE ?",
+				Args:  []interface{}{"% Na%"},
+			},
+			expected: true,
+		},
+		{
+			name: "LIKE Match No Wildcards (Exact)",
+			params: cache.QueryParams{
+				Where: "name LIKE ?",
+				Args:  []interface{}{"Test Name"},
+			},
+			expected: true,
+		},
+		{
+			name: "LIKE Mismatch",
+			params: cache.QueryParams{
+				Where: "name LIKE ?",
+				Args:  []interface{}{"Non%"},
+			},
+			expected: false,
+		},
+		{
+			name: "LIKE Case Sensitive Mismatch",
+			params: cache.QueryParams{
+				Where: "name LIKE ?",
+				Args:  []interface{}{"test %"},
+			},
+			expected: false,
+		},
+		{
+			name: "LIKE With Non-String Field (Error)",
+			params: cache.QueryParams{
+				Where: "status LIKE ?",
+				Args:  []interface{}{"1%"},
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "Greater Than Match",
+			params: cache.QueryParams{
+				Where: "count > ?",
+				Args:  []interface{}{50},
+			},
+			expected: true,
+		},
+		{
+			name: "Greater Than Mismatch (Equal)",
+			params: cache.QueryParams{
+				Where: "count > ?",
+				Args:  []interface{}{100},
+			},
+			expected: false,
+		},
+		{
+			name: "Greater Than Mismatch (Less)",
+			params: cache.QueryParams{
+				Where: "count > ?",
+				Args:  []interface{}{150},
+			},
+			expected: false,
+		},
+		{
+			name: "Greater Than or Equal Match (Equal)",
+			params: cache.QueryParams{
+				Where: "count >= ?",
+				Args:  []interface{}{100},
+			},
+			expected: true,
+		},
+		{
+			name: "Greater Than or Equal Match (Greater)",
+			params: cache.QueryParams{
+				Where: "count >= ?",
+				Args:  []interface{}{99},
+			},
+			expected: true,
+		},
+		{
+			name: "Greater Than or Equal Mismatch",
+			params: cache.QueryParams{
+				Where: "count >= ?",
+				Args:  []interface{}{101},
+			},
+			expected: false,
+		},
+		{
+			name: "Less Than Match",
+			params: cache.QueryParams{
+				Where: "amount < ?",
+				Args:  []interface{}{100.0},
+			},
+			expected: true,
+		},
+		{
+			name: "Less Than Mismatch (Equal)",
+			params: cache.QueryParams{
+				Where: "amount < ?",
+				Args:  []interface{}{99.99},
+			},
+			expected: false,
+		},
+		{
+			name: "Less Than or Equal Match",
+			params: cache.QueryParams{
+				Where: "amount <= ?",
+				Args:  []interface{}{99.99},
+			},
+			expected: true,
+		},
+		{
+			name: "IN Match Integer",
+			params: cache.QueryParams{
+				Where: "status IN (?)",
+				Args:  []interface{}{[]int{1, 2, 3}},
+			},
+			expected: true,
+		},
+		{
+			name: "IN Mismatch Integer",
+			params: cache.QueryParams{
+				Where: "status IN (?)",
+				Args:  []interface{}{[]int{5, 6, 7}},
+			},
+			expected: false,
+		},
+		{
+			name: "IN Match String",
+			params: cache.QueryParams{
+				Where: "name IN (?)",
+				Args:  []interface{}{[]string{"Other Name", "Test Name", "Another"}},
+			},
+			expected: true,
+		},
+		{
+			name: "IN Mismatch String",
+			params: cache.QueryParams{
+				Where: "name IN (?)",
+				Args:  []interface{}{[]string{"Other", "Another"}},
+			},
+			expected: false,
+		},
+		{
+			name: "IN With Empty Slice",
+			params: cache.QueryParams{
+				Where: "status IN (?)",
+				Args:  []interface{}{[]int{}},
+			},
+			expected: false, // SQL IN () is false
+		},
+		{
+			name: "IN With Incorrect Arg Type (Error)",
+			params: cache.QueryParams{
+				Where: "status IN (?)",
+				Args:  []interface{}{123}, // Not a slice
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "Unsupported Operator (!=)",
+			params: cache.QueryParams{
+				Where: "status != ?",
+				Args:  []interface{}{5},
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "Invalid WHERE Clause Format",
+			params: cache.QueryParams{
+				Where: "status = 1", // No placeholder
+				Args:  []interface{}{},
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "Mismatched Args/Placeholders",
+			params: cache.QueryParams{
+				Where: "status = ? AND name = ?",
+				Args:  []interface{}{1}, // Only one arg
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "Column Not Found",
+			params: cache.QueryParams{
+				Where: "nonexistent_col = ?",
+				Args:  []interface{}{1},
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "Empty WHERE Clause",
+			params: cache.QueryParams{
+				Where: "",
+				Args:  []interface{}{},
+			},
+			expected: true, // Empty WHERE matches everything
+		},
+	}
 
-	// --- Test Case 2: LIKE Match ---
-	t.Run("LIKE Match", func(t *testing.T) {
-		match, err := userThing.CheckQueryMatch(&user, likeQuery)
-		require.NoError(t, err)
-		require.True(t, match, "Expected CheckQueryMatch to return true for user and LIKE query")
-		t.Logf("CheckQueryMatch (LIKE Match) returned: %v", match)
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Convert root ModelInfo to internal ModelInfo for the call
+			infoInternal := &cache.ModelInfo{
+				TableName:        modelInfo.TableName,
+				ColumnToFieldMap: modelInfo.ColumnToFieldMap,
+				// Add other fields if needed by CheckQueryMatch
+			}
 
-	// --- Test Case 3: Mismatch ---
-	t.Run("Mismatch", func(t *testing.T) {
-		match, err := userThing.CheckQueryMatch(&user, mismatchQuery)
-		require.NoError(t, err)
-		require.False(t, match, "Expected CheckQueryMatch to return false for user and mismatch query")
-		t.Logf("CheckQueryMatch (Mismatch) returned: %v", match)
-	})
+			// Call the function from internal/cache directly
+			// Pass model, internal modelInfo, and params
+			match, err := cache.CheckQueryMatch(&model, infoInternal, tt.params)
 
-	// --- Test Case 4: Multi-Condition Match ---
-	t.Run("Multi-Condition Match", func(t *testing.T) {
-		match, err := userThing.CheckQueryMatch(&user, multiConditionMatchQuery)
-		require.NoError(t, err)
-		require.True(t, match, "Expected true for multi-condition match query")
-		t.Logf("CheckQueryMatch (Multi-Condition Match) returned: %v", match)
-	})
-
-	// --- Test Case 5: Multi-Condition Mismatch ---
-	t.Run("Multi-Condition Mismatch", func(t *testing.T) {
-		match, err := userThing.CheckQueryMatch(&user, multiConditionMismatchQuery)
-		require.NoError(t, err)
-		require.False(t, match, "Expected false for multi-condition mismatch query")
-		t.Logf("CheckQueryMatch (Multi-Condition Mismatch) returned: %v", match)
-	})
-
-	// --- Test Case 6: Match after unrelated update ---
-	t.Run("Match after unrelated update", func(t *testing.T) {
-		// Modify a field NOT in the exactMatchQuery
-		user.Email = "charlie.updated@example.com"
-		err = userThing.Save(&user) // Use Save for update
-		require.NoError(t, err)
-		t.Logf("Updated user email: %+v", user)
-
-		// Check against the original query (name = "Charlie")
-		match, err := userThing.CheckQueryMatch(&user, exactMatchQuery)
-		require.NoError(t, err)
-		require.True(t, match, "Expected CheckQueryMatch to return true after unrelated field update")
-		t.Logf("CheckQueryMatch after email update returned: %v", match)
-	})
-
-	// --- Test Case 7: Mismatch after relevant update ---
-	t.Run("Mismatch after relevant update", func(t *testing.T) {
-		// Modify a field THAT IS in the exactMatchQuery
-		user.Name = "Charles"
-		err = userThing.Save(&user) // Use Save for update
-		require.NoError(t, err)
-		t.Logf("Updated user name: %+v", user)
-
-		// Check against the original query (name = "Charlie")
-		match, err := userThing.CheckQueryMatch(&user, exactMatchQuery)
-		require.NoError(t, err)
-		require.False(t, match, "Expected CheckQueryMatch to return false after relevant field (name) update")
-		t.Logf("CheckQueryMatch after name update returned: %v", match)
-
-		// Verify it matches a query for the new name
-		matchWithNewNameQuery := thing.QueryParams{Where: "name = ?", Args: []interface{}{"Charles"}}
-		match, err = userThing.CheckQueryMatch(&user, matchWithNewNameQuery)
-		require.NoError(t, err)
-		require.True(t, match, "Expected CheckQueryMatch to return true for updated user and new name query")
-	})
-
-	// --- Test Case 8: Greater Than (>) Match ---
-	t.Run("Greater Than Match", func(t *testing.T) {
-		// Assuming user.ID is at least 1
-		query := thing.QueryParams{Where: "id > ?", Args: []interface{}{user.ID - 1}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.True(t, match, "Expected true for id > (id-1)")
-		t.Logf("CheckQueryMatch (>) returned: %v", match)
-	})
-
-	// --- Test Case 9: Greater Than (>) Mismatch ---
-	t.Run("Greater Than Mismatch", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id > ?", Args: []interface{}{user.ID}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.False(t, match, "Expected false for id > id")
-		t.Logf("CheckQueryMatch (>) mismatch returned: %v", match)
-	})
-
-	// --- Test Case 10: Less Than (<) Match ---
-	t.Run("Less Than Match", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id < ?", Args: []interface{}{user.ID + 1}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.True(t, match, "Expected true for id < (id+1)")
-		t.Logf("CheckQueryMatch (<) returned: %v", match)
-	})
-
-	// --- Test Case 11: Less Than (<) Mismatch ---
-	t.Run("Less Than Mismatch", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id < ?", Args: []interface{}{user.ID}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.False(t, match, "Expected false for id < id")
-		t.Logf("CheckQueryMatch (<) mismatch returned: %v", match)
-	})
-
-	// --- Test Case 12: Greater Than Or Equal (>=) Match (Equal) ---
-	t.Run("Greater Than Or Equal Match (Equal)", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id >= ?", Args: []interface{}{user.ID}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.True(t, match, "Expected true for id >= id")
-		t.Logf("CheckQueryMatch (>=, equal) returned: %v", match)
-	})
-
-	// --- Test Case 13: Greater Than Or Equal (>=) Match (Greater) ---
-	t.Run("Greater Than Or Equal Match (Greater)", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id >= ?", Args: []interface{}{user.ID - 1}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.True(t, match, "Expected true for id >= (id-1)")
-		t.Logf("CheckQueryMatch (>=, greater) returned: %v", match)
-	})
-
-	// --- Test Case 14: Greater Than Or Equal (>=) Mismatch ---
-	t.Run("Greater Than Or Equal Mismatch", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id >= ?", Args: []interface{}{user.ID + 1}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.False(t, match, "Expected false for id >= (id+1)")
-		t.Logf("CheckQueryMatch (>=) mismatch returned: %v", match)
-	})
-
-	// --- Test Case 15: Less Than Or Equal (<=) Match (Equal) ---
-	t.Run("Less Than Or Equal Match (Equal)", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id <= ?", Args: []interface{}{user.ID}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.True(t, match, "Expected true for id <= id")
-		t.Logf("CheckQueryMatch (<=, equal) returned: %v", match)
-	})
-
-	// --- Test Case 16: Less Than Or Equal (<=) Match (Less) ---
-	t.Run("Less Than Or Equal Match (Less)", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id <= ?", Args: []interface{}{user.ID + 1}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.True(t, match, "Expected true for id <= (id+1)")
-		t.Logf("CheckQueryMatch (<=, less) returned: %v", match)
-	})
-
-	// --- Test Case 17: Less Than Or Equal (<=) Mismatch ---
-	t.Run("Less Than Or Equal Mismatch", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id <= ?", Args: []interface{}{user.ID - 1}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.False(t, match, "Expected false for id <= (id-1)")
-		t.Logf("CheckQueryMatch (<=) mismatch returned: %v", match)
-	})
-
-	// --- Test Case 18: IN Match (String) ---
-	t.Run("IN Match (String)", func(t *testing.T) {
-		// Remember user.Name is "Charles" at this point from previous test
-		query := thing.QueryParams{Where: "name IN ?", Args: []interface{}{[]string{"Alice", "Bob", "Charles"}}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.True(t, match, "Expected true for name IN ('Alice', 'Bob', 'Charles')")
-		t.Logf("CheckQueryMatch (IN string) returned: %v", match)
-	})
-
-	// --- Test Case 19: IN Mismatch (String) ---
-	t.Run("IN Mismatch (String)", func(t *testing.T) {
-		query := thing.QueryParams{Where: "name IN ?", Args: []interface{}{[]string{"Alice", "Bob", "David"}}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.False(t, match, "Expected false for name IN ('Alice', 'Bob', 'David')")
-		t.Logf("CheckQueryMatch (IN string mismatch) returned: %v", match)
-	})
-
-	// --- Test Case 20: IN Match (Int64) ---
-	t.Run("IN Match (Int64)", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id IN ?", Args: []interface{}{[]int64{user.ID - 1, user.ID, user.ID + 1}}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.True(t, match, "Expected true for id IN (id-1, id, id+1)")
-		t.Logf("CheckQueryMatch (IN int64) returned: %v", match)
-	})
-
-	// --- Test Case 21: IN Mismatch (Int64) ---
-	t.Run("IN Mismatch (Int64)", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id IN ?", Args: []interface{}{[]int64{user.ID + 1, user.ID + 2}}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.False(t, match, "Expected false for id IN (id+1, id+2)")
-		t.Logf("CheckQueryMatch (IN int64 mismatch) returned: %v", match)
-	})
-
-	// --- Test Case 22: IN with Empty Slice ---
-	t.Run("IN with Empty Slice", func(t *testing.T) {
-		query := thing.QueryParams{Where: "name IN ?", Args: []interface{}{[]string{}}}
-		match, err := userThing.CheckQueryMatch(&user, query)
-		require.NoError(t, err)
-		require.False(t, match, "Expected false for name IN (empty slice)")
-		t.Logf("CheckQueryMatch (IN empty slice) returned: %v", match)
-	})
-
-	// --- Test Case 23: Unsupported Operator (Error) ---
-	t.Run("Unsupported Operator", func(t *testing.T) {
-		query := thing.QueryParams{Where: "id != ?", Args: []interface{}{user.ID}}
-		_, err := userThing.CheckQueryMatch(&user, query)
-		require.Error(t, err, "Expected an error for unsupported operator !=")
-		t.Logf("CheckQueryMatch with unsupported operator returned error: %v", err)
-	})
+			if tt.expectError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.expected, match)
+			}
+		})
+	}
 }

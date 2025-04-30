@@ -3,8 +3,7 @@ package thing_test
 import (
 	"strconv"
 	"testing"
-
-	"thing"
+	"thing/internal/cache"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,7 +19,7 @@ func TestCachedResult_Count(t *testing.T) {
 	err = th.Save(&User{Name: "Count User 2"})
 	require.NoError(t, err)
 
-	params := thing.QueryParams{ /* Define params if needed, e.g., WHERE */ }
+	params := cache.QueryParams{ /* Define params if needed, e.g., WHERE */ }
 	result, err := th.Query(params)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -43,7 +42,7 @@ func TestCachedResult_Count(t *testing.T) {
 
 	// --- Test Count - Zero Results & NoneResult Caching ---
 	mockCache.Reset() // Clear cache
-	paramsNone := thing.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
+	paramsNone := cache.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
 	resultNone, err := th.Query(paramsNone)
 	require.NoError(t, err)
 	require.NotNil(t, resultNone)
@@ -79,7 +78,7 @@ func TestCachedResult_Fetch(t *testing.T) {
 		expectedIDs = append(expectedIDs, u.ID)
 	}
 
-	params := thing.QueryParams{Order: "id ASC"}
+	params := cache.QueryParams{Order: "id ASC"}
 	result, err := th.Query(params)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -112,7 +111,7 @@ func TestCachedResult_Fetch(t *testing.T) {
 
 	// --- Test Fetch - Zero Results & NoneResult Caching ---
 	mockCache.Reset()
-	paramsNone := thing.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
+	paramsNone := cache.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
 	resultNone, err := th.Query(paramsNone)
 	require.NoError(t, err)
 	require.NotNil(t, resultNone)
@@ -147,7 +146,7 @@ func TestCachedResult_All(t *testing.T) {
 		expectedIDs = append(expectedIDs, u.ID)
 	}
 
-	params := thing.QueryParams{Order: "id ASC"}
+	params := cache.QueryParams{Order: "id ASC"}
 	result, err := th.Query(params)
 	require.NoError(t, err)
 

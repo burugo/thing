@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"thing/internal/cache"
 	"time"
 
 	// "github.com/jmoiron/sqlx" // Removed sqlx import
@@ -227,7 +228,7 @@ func (a *SQLiteAdapter) Exec(ctx context.Context, query string, args ...interfac
 
 // GetCount executes a SELECT COUNT(*) query based on the provided parameters.
 // TODO: Needs reimplementation using QueryRowContext and Scan.
-func (a *SQLiteAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params thing.QueryParams) (int64, error) {
+func (a *SQLiteAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params cache.QueryParams) (int64, error) {
 	if a.isClosed() {
 		return 0, fmt.Errorf("adapter is closed")
 	}

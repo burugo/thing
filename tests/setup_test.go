@@ -10,7 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"thing"
-	"thing/drivers/sqlite"
+	"thing/internal/cache"
+	"thing/internal/drivers/db/sqlite"
 )
 
 // setupTestDB creates a new file-based SQLite database for testing.
@@ -53,11 +54,11 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	)
 	require.NoError(tb, err, "Failed to create books table")
 
-	// Initialize mock cache
-	cache := &mockCacheClient{}
+	// Initialize mock mockcache
+	mockcache := &mockCacheClient{}
 
 	// Reset the global query cache index to prevent interference between tests
-	thing.ResetGlobalCacheIndex()
+	cache.ResetGlobalCacheIndex()
 
 	cleanup := func() {
 		tb.Logf("--- setupTestDB: Running cleanup function ---")
@@ -75,7 +76,7 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 		tb.Logf("--- setupTestDB: Cleanup function finished ---")
 	}
 
-	return adapter, cache, cleanup
+	return adapter, mockcache, cleanup
 }
 
 // setupCacheTest creates test setup specifically for cache tests.
@@ -89,7 +90,7 @@ func setupCacheTest[T any](tb testing.TB) (*thing.Thing[T], *mockCacheClient, th
 	mockCache.Reset()
 
 	// Reset the global query cache index to prevent interference between tests
-	thing.ResetGlobalCacheIndex()
+	cache.ResetGlobalCacheIndex()
 
 	// Create Thing instance with the given adapter and cache using New
 	// This ensures the instance uses the specific DB/cache we created.

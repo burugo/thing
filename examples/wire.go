@@ -11,7 +11,7 @@ import (
 
 	// Import necessary packages
 	"thing"
-	"thing/cache/redis" // Import the new redis cache package
+	"thing/drivers/redis" // Import the new redis cache package
 	"thing/drivers/sqlite"
 )
 

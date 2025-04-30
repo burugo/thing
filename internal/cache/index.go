@@ -1,4 +1,4 @@
-package thing
+package cache
 
 import (
 	"log"
@@ -7,11 +7,12 @@ import (
 
 // Global instance of the cache index.
 // This should be initialized once, potentially during application startup.
-var globalCacheIndex = NewCacheIndex()
+var GlobalCacheIndex = NewCacheIndex()
 
 // CacheIndex tracks which query cache keys might be affected by changes to a specific table.
 // It maintains a map from table names to a set of cache keys, and a map from cache keys
 // back to their corresponding QueryParams.
+// EXPORTED
 type CacheIndex struct {
 	// tableToQueries maps a table name (string) to a set of query cache keys (map[string]bool)
 	// associated with that table.
@@ -99,7 +100,7 @@ func (idx *CacheIndex) GetQueryParamsForKey(cacheKey string) (QueryParams, bool)
 // ResetGlobalCacheIndex resets the global cache index to a new empty state.
 // Primarily useful for testing purposes to ensure test isolation.
 func ResetGlobalCacheIndex() {
-	globalCacheIndex = NewCacheIndex()
+	GlobalCacheIndex = NewCacheIndex()
 	log.Println("DEBUG: Global Cache Index Reset") // Add log for visibility
 }
 

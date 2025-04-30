@@ -1,4 +1,4 @@
-package thing
+package cache
 
 import (
 	"log"
@@ -72,6 +72,6 @@ func (m *CacheKeyLockManager) Unlock(key string) {
 
 // --- Global Instance ---
 
-// globalCacheKeyLocker provides a global instance of the lock manager.
-// Initialized using the constructor NewCacheKeyLockManager.
-var globalCacheKeyLocker = NewCacheKeyLockManager()
+// // GlobalCacheKeyLocker provides a global instance of the lock manager.
+// // Initialized using the constructor NewCacheKeyLocker.
+// var GlobalCacheKeyLocker = NewCacheKeyLockManager() // Capitalized to export, corrected constructor name

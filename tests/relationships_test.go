@@ -2,6 +2,7 @@ package thing_test
 
 import (
 	"testing"
+	"thing/internal/cache"
 
 	"thing"
 
@@ -10,14 +11,14 @@ import (
 )
 
 func TestThing_Query_Preload_BelongsTo(t *testing.T) {
-	// Set up test DB and cache
-	db, cache, cleanup := setupTestDB(t)
+	// Set up test DB and mockcache
+	db, mockcache, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	userThing, err := thing.New[User](db, cache)
+	userThing, err := thing.New[User](db, mockcache)
 	require.NoError(t, err)
 
-	bookThing, err := thing.New[Book](db, cache)
+	bookThing, err := thing.New[Book](db, mockcache)
 	require.NoError(t, err)
 
 	// Create a test user
@@ -39,7 +40,7 @@ func TestThing_Query_Preload_BelongsTo(t *testing.T) {
 	require.NotZero(t, book.ID)
 
 	// Query for the book with preloaded user
-	params := thing.QueryParams{
+	params := cache.QueryParams{
 		Where:    "id = ?",
 		Args:     []interface{}{book.ID},
 		Preloads: []string{"User"},
@@ -60,14 +61,14 @@ func TestThing_Query_Preload_BelongsTo(t *testing.T) {
 }
 
 func TestThing_Query_Preload_HasMany(t *testing.T) {
-	// Set up test DB and cache
-	db, cache, cleanup := setupTestDB(t)
+	// Set up test DB and mockcache
+	db, mockcache, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	userThing, err := thing.New[User](db, cache)
+	userThing, err := thing.New[User](db, mockcache)
 	require.NoError(t, err)
 
-	bookThing, err := thing.New[Book](db, cache)
+	bookThing, err := thing.New[Book](db, mockcache)
 	require.NoError(t, err)
 
 	// Create a test user
@@ -93,7 +94,7 @@ func TestThing_Query_Preload_HasMany(t *testing.T) {
 	}
 
 	// Query for the user
-	params := thing.QueryParams{
+	params := cache.QueryParams{
 		Where:    "id = ?",
 		Args:     []interface{}{user.ID},
 		Preloads: []string{"Books"},

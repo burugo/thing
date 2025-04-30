@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"sync"
+	"thing/internal/cache"
 	"thing/internal/utils"
 )
 
@@ -20,14 +22,32 @@ const (
 // It allows for efficient querying with pagination and caching.
 type CachedResult[T any] struct {
 	thing          *Thing[T]
-	params         QueryParams
+	params         cache.QueryParams
 	cachedIDs      []int64
 	cachedCount    int64
 	hasLoadedIDs   bool
 	hasLoadedCount bool
 	hasLoadedAll   bool
 	all            []*T
+	loadMutex      sync.Mutex
 }
+
+// --- Thing Method for Querying ---
+
+// Query prepares a query based on QueryParams and returns a *CachedResult[T] for lazy execution.
+// The actual database query happens when Count() or Fetch() is called on the result.
+// It returns the CachedResult instance and a nil error, assuming basic validation passed.
+// Error handling for query execution is done within CachedResult methods.
+func (t *Thing[T]) Query(params cache.QueryParams) (*CachedResult[T], error) {
+	// TODO: Add validation for params if necessary?
+	return &CachedResult[T]{
+		thing:  t,
+		params: params,
+		// cachedIDs, cachedCount, hasLoadedIDs, hasLoadedCount, hasLoadedAll, all initialized to zero values
+	}, nil
+}
+
+// --- CachedResult Methods ---
 
 // Helper function to generate cache key for count queries.
 // Similar to generateQueryCacheKey but with a different prefix.
@@ -123,11 +143,11 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 			// Optionally delete the invalid cache entry here
 			_ = cr.thing.cache.Delete(cr.thing.ctx, cacheKey)
 		}
-	} else if !errors.Is(cacheErr, ErrNotFound) {
-		// Unexpected cache error, log but proceed to DB
-		log.Printf("WARN: Cache Get error for count key %s: %v", cacheKey, cacheErr)
+	} else if errors.Is(cacheErr, cache.ErrNotFound) {
+		// Cache Miss
+		log.Printf("CACHE MISS (Count): Key %s not found.", cacheKey)
+		// Fall through to DB fetch
 	}
-	log.Printf("CACHE MISS: Count Key: %s", cacheKey)
 
 	// 4. Cache miss or error, query database
 	// Assuming DBAdapter has a GetCount method
@@ -148,7 +168,7 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 	}
 
 	// Register the count key
-	globalCacheIndex.RegisterQuery(cr.thing.info.TableName, cacheKey, cr.params)
+	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, cacheKey, cr.params)
 
 	return cr.cachedCount, nil
 }
@@ -294,12 +314,12 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	// 5. Handle filtered DB results and cache appropriately
 	log.Printf("DB HIT: List Key: %s, Found %d valid IDs after filtering. Caching IDs.", listCacheKey, len(validIDs))
 	// Use the helper function to store the list (works for empty lists too)
-	cacheSetErr := setCachedListIDs(cr.thing.ctx, cr.thing.cache, listCacheKey, validIDs, globalCacheTTL) // Use helper
+	cacheSetErr := cache.SetCachedListIDs(cr.thing.ctx, cr.thing.cache, listCacheKey, validIDs, globalCacheTTL) // Use helper
 	if cacheSetErr != nil {
 		log.Printf("WARN: Failed to cache list IDs for key %s: %v", listCacheKey, cacheSetErr) // Log remains the same
 	}
 	// Register the list key
-	globalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, cr.params)
+	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, cr.params)
 
 	// If fetched count <= limit, update Count cache as well (handles count=0 correctly)
 	if len(validIDs) <= cacheListCountLimit { // Changed to <= for clarity, but < also works for count 0
@@ -313,7 +333,7 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 				log.Printf("Updated count cache (key: %s) with count %d after list fetch", countCacheKey, len(validIDs))
 			}
 			// Register the count key
-			globalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, cr.params)
+			cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, cr.params)
 		} else {
 			log.Printf("WARN: Failed to generate count cache key for update after list fetch: %v", keyErr)
 		}

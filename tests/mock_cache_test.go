@@ -8,6 +8,7 @@ import (
 	"log"
 	"sync"
 	"testing"
+	"thing/internal/cache"
 	"time"
 
 	"thing"
@@ -513,7 +514,7 @@ func (m *mockDBAdapter) Exec(ctx context.Context, query string, args ...interfac
 	return mockSqlResult{rowsAffected: 1, lastInsertId: 0}, nil // Return mock result
 }
 
-func (m *mockDBAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params thing.QueryParams) (int64, error) {
+func (m *mockDBAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params cache.QueryParams) (int64, error) {
 	// Simulate count
 	return 0, nil
 }

@@ -1,4 +1,4 @@
-package thing
+package cache
 
 import (
 	"errors"
@@ -7,19 +7,21 @@ import (
 	"reflect"
 	"strings"
 	// Import regexp for potential future use or complex LIKE
+	// "thing" // REMOVED import of root package
 )
 
 // CheckQueryMatch evaluates if a given model instance satisfies the WHERE clause
 // defined in the provided QueryParams.
+// It now takes the model as interface{} and requires ModelInfo to be passed in.
 //
 // Supports =, LIKE, >, <, >=, <=, IN operators joined by AND.
 // Support for OR clauses or complex LIKE patterns is NOT yet implemented.
-func (t *Thing[T]) CheckQueryMatch(model *T, params QueryParams) (bool, error) {
+func CheckQueryMatch(model interface{}, info *ModelInfo, params QueryParams) (bool, error) {
 	if model == nil {
 		return false, errors.New("model cannot be nil")
 	}
-	if t.info == nil {
-		return false, errors.New("Thing instance missing model info")
+	if info == nil {
+		return false, errors.New("model info cannot be nil")
 	}
 
 	whereClause := strings.TrimSpace(params.Where)
@@ -69,20 +71,27 @@ func (t *Thing[T]) CheckQueryMatch(model *T, params QueryParams) (bool, error) {
 			continue
 		}
 
-		// Expect "column OP ?" format
+		// Expect "column OP ?" format or "column IN (?)"
 		parts := strings.Fields(condition) // Split by whitespace
-		if len(parts) != 3 || parts[2] != "?" {
-			log.Printf("WARN: CheckQueryMatch could not parse condition: '%s'. Expected 'column OP ?'", condition)
-			return false, fmt.Errorf("unsupported condition format: '%s'. Expected 'column OP ?'", condition)
+		operator := ""
+		if len(parts) >= 2 {
+			operator = strings.ToUpper(parts[1])
+		}
+
+		// Validate format: either 3 parts ending in '?' or 3 parts with 'IN' and '(?)'
+		validFormat := (len(parts) == 3 && parts[2] == "?") || (len(parts) == 3 && operator == "IN" && parts[2] == "(?)")
+
+		if !validFormat {
+			log.Printf("WARN: CheckQueryMatch could not parse condition: %s. Expected column OP ? or column IN (?)", condition)
+			return false, fmt.Errorf("unsupported condition format: %s. Expected column OP ? or column IN (?)", condition)
 		}
 
 		colName := strings.Trim(parts[0], "\\\"`'") // Remove potential quotes
-		operator := strings.ToUpper(parts[1])
 		argValue := args[currentArgIndex]
 		currentArgIndex++
 
 		// Find the Go field name corresponding to the DB column name
-		goFieldName, ok := t.info.columnToFieldMap[colName]
+		goFieldName, ok := info.ColumnToFieldMap[colName]
 		if !ok {
 			// Maybe the WHERE clause uses the Go field name directly? Check that.
 			if _, directFieldOK := modelVal.Type().FieldByName(colName); directFieldOK {

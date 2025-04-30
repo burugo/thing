@@ -332,18 +332,48 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[ ] Test Soft Delete:**
             *   Add tests to verify the correctness and reliability of soft delete functionality.
     *   **Success Criteria:** Soft delete is implemented and tested.
-24. **[ ] Task: Refactor `thing.go` and Project Structure**
-    *   **Goal:** Split the large `thing.go` file into smaller, more logical files and reorganize related internal files/drivers into appropriate directories (mainly under `internal`).
+24. **[ ] Task: Refactor `thing` Package Structure (Root Directory)**
+    *   **Goal:** Reorganize the `thing` package by splitting the large `thing.go` file into smaller, more focused files based on functionality, placing all `package thing` files directly in the project **root directory**. Related internal components will be moved into an `internal/` directory at the root.
     *   **Sub-tasks:**
-        *   **[ ] Analyze `thing.go`:** Identify functional blocks (core struct/init, CRUD internals, hooks, errors, BaseModel, etc.).
-        *   **[ ] Split `thing.go`:** Create new files (e.g., `core.go`, `crud_internal.go`, `hooks.go`, `errors.go`, `model.go`) within the `thing` package and move corresponding code.
-        *   **[ ] Move Redis Driver:** Relocate `cache/redis/client.go` to `internal/drivers/cache/redis/client.go`.
-        *   **[ ] Move Cache Internals:** Relocate root `cache_helpers.go`, `cache_index.go`, `cache_locker.go` to `internal/cache/`.
-        *   **[ ] Move Query Matcher:** Relocate `query_match.go` to `internal/cache/query_match.go`.
-        *   **[ ] Update Imports:** Adjust any necessary import paths due to file moves.
-        *   **[ ] Run Tests:** Execute `go test -v ./...` to ensure all tests pass after refactoring.
-        *   **[ ] Code Review:** (Optional) Review the new structure for clarity and correctness.
-    *   **Success Criteria:** `thing.go` is split logically. Cache driver and internal helpers are moved under `internal`. All code compiles, and all tests pass.
+        *   **[ ] Define Target Structure (Root):** Files for `package thing` will be in the root: `thing.go` (core struct/init), `model.go`, `crud.go`, `query.go`, `cache.go`, `hooks.go`, `errors.go`, etc. Internal code will be in `internal/`.
+        *   **[ ] Move Code to Root Files:** Systematically move code blocks from the original `thing.go` to the newly defined files **in the root directory**.
+            *   Move `Thing` struct definition, `Init`, and related top-level functions/variables to `thing.go`.
+            *   Move `BaseModel` definition and related methods to `model.go`.
+            *   Move core CRUD functions (`byIDInternal`, `saveInternal`, `deleteInternal`, etc.) to `crud.go` (or similar).
+            *   Move `Query` method and `CachedResult` struct/methods (from `cached_result.go`) to `query.go`. Delete `cached_result.go`.
+            *   Move cache interaction helpers (`generateCacheKey`, `withLock`, `updateAffectedQueryCaches`, `ClearCacheByID`, etc.) from `thing.go` to the **root `cache.go` (part of `package thing`)**.
+            *   Move hook definitions and execution logic to `hooks.go`.
+            *   Move custom error types to `errors.go`.
+        *   **[x] Relocate Redis Driver:** Move `cache/redis/client.go` to `internal/drivers/cache/redis/client.go`. (Already Done)
+        *   **[ ] Relocate Cache Helpers:** Move `cache_helpers.go`, `cache_index.go`, `cache_locker.go` from root to `internal/cache/`.
+        *   **[ ] Relocate Query Matcher:** Move `query_match.go` to `internal/cache/query_match.go`.
+        *   **[ ] Relocate DB Adapters:** Create `internal/drivers/db/` and move adapter implementations (e.g., `internal/drivers/db/sqlite/adapter.go`).
+        *   **[ ] Update Imports:** Fix all import paths affected by the file moves and restructuring (imports for internal packages will change).
+        *   **[ ] Run Tests:** Execute `go test -v ./...` to ensure all functionality remains intact and all tests pass.
+        *   **[ ] Code Review:** (Optional) Review the new structure for clarity, correctness, and adherence to Go conventions.
+    *   **Success Criteria:** The `thing` package code is split across multiple files in the **root directory**. Internal components (cache helpers, drivers) are moved under `internal`. All code compiles, and all tests pass. The structure is more maintainable and easier to navigate.
+25. **[ ] Task: Fix Post-Refactor Test Failures (Task 24)**
+    *   **Goal:** Restore all tests to a passing state after the Task 24 refactoring.
+    *   **Sub-tasks:**
+        *   **[x] Fix `TestCheckQueryMatch` (`IN` Operator):**
+            *   Investigate `internal/cache/query_match.go:CheckQueryMatch` and the condition parsing logic (`parseCondition`).
+            *   Modify the parsing logic to correctly handle the `column IN (?)` format.
+            *   Ensure the `checkInOperator` helper is correctly called after parsing.
+            *   Run `go test -v ./... -run ^TestCheckQueryMatch/IN` to verify the fix.
+            *   **Success Criteria:** All `TestCheckQueryMatch/IN_` sub-tests pass.
+        *   **[x] Fix `TestCachedResult_Count`:**
+            *   Trace the `Count()` call (`query.go`) and its interaction with `GetCachedCount` (`cache.go`) and `cache.GetCachedCount` (`internal/cache/cache_index.go`).
+            *   Verify cache key generation and how/when the count is set/invalidated, especially the interaction between root `query.go` (`_fetch_data`) and `internal/cache`.
+            *   Run `go test -v ./... -run ^TestCachedResult_Count$` to verify the fix.
+            *   **Success Criteria:** `TestCachedResult_Count` passes.
+        *   **[ ] Fix `TestThing_Query_Preload_BelongsTo` Panic:**
+            *   Analyze the panic trace and the `Preload("User")` logic (`query.go` -> `processPreloads` -> `preloadBelongsTo`).
+            *   Check foreign key retrieval, related user fetching (`thing.ByIDs`), and mapping back to the parent struct field (`mapBelongsToResults`) post-refactor.
+            *   Run `go test -v ./... -run ^TestThing_Query_Preload_BelongsTo$` to verify the fix.
+            *   **Success Criteria:** `TestThing_Query_Preload_BelongsTo` passes without panic and assertion holds.
+        *   **[ ] Final Verification:**
+            *   Run `go test -v ./...`
+            *   **Success Criteria:** All tests pass.
 
 ## Future Enhancements (Planned)
 
@@ -367,7 +397,8 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   [ ] Task 21: Implement JSON Serialization Features
 *   [ ] Task 22: Implement `WithTransaction` Pattern
 *   [ ] Task 23: Implement Soft Delete
-*   [ ] Task 24: Refactor `thing.go` and Project Structure
+*   [ ] Task 24: Refactor `thing` Package Structure (Root Directory)
+*   [ ] **(Next Planned)** Task 25: Fix Post-Refactor Test Failures (Task 24)
 *   [ ] Define core interfaces (`DBAdapter`, `CacheClient`, `Model`, etc.) (Part of Task 1)
 *   [ ] Implement SQLite DB Adapter (Part of Task 2)
 *   [ ] Implement *actual* DB logic for CRUD (Task 3)
@@ -391,15 +422,15 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 ## Current Status / Progress Tracking
 
 *   **Recent Work:**
-    *   Successfully extended `CheckQueryMatch` in `query_match.go` to support `>`, `<`, `>=`, `<=`, and `IN` operators (Task 19).
-    *   Added corresponding test cases for these new operators in `tests/query_match_test.go`, covering matches, mismatches, and edge cases.
-    *   Refined error handling in `updateAffectedQueryCaches` within `thing.go`. If `CheckQueryMatch` fails (e.g., due to an unsupported future operator), the specific problematic cache key (`list:` or `count:`) is now deleted to maintain consistency, instead of just being skipped (Task 20).
-    *   All tests, including the new ones, are passing (`go test -v ./tests/...`).
-*   **Current Focus:** The core logic for `CheckQueryMatch` is significantly enhanced. The immediate next step could be implementing the next batch of planned operators (`!=`, `<>`, `NOT LIKE`, `NOT IN`) or addressing the remaining SQLite adapter debugging (Task 18).
+    *   Successfully refactored the project structure (Task 24), moving `package thing` files to the root and internal components to `internal/`. Resolved resulting import cycles and build errors.
+*   **Current Focus:** Addressing test failures introduced by the Task 24 refactoring. 
+    *   Fixed the `TestCheckQueryMatch` failures related to the `IN` operator.
+    *   Fixed the `TestCachedResult_Count` failure.
+    *   Remaining failure: `TestThing_Query_Preload_BelongsTo` (panic).
 
 ## Executor's Feedback or Assistance Requests
 
-*   None currently. Ready for the next implementation step or debugging task.
+*   None currently. Awaiting instructions to proceed in Executor mode for Task 25.
 
 ## Lessons
 
@@ -425,4 +456,5 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   **(Previous)** **Awaiting Manual Edits (Task 20):** Need user to manually edit `thing.go` (remove `InvalidateQueriesContainingID` calls, update `saveInternal` to use `invalidateObjectCache`), then re-run tests before Task 20 can be marked complete.
 *   **(Previous)** **Starting Task 19:** Beginning implementation of incremental cache updates. Starting with the `CheckQueryMatch` function.
 *   **(Previous)** **Task 19 Completed:** Implemented incremental cache update logic in Save/Delete, using CacheIndex, CacheKeyLocker, and CheckQueryMatch. Added unit tests for helpers and an integration test (`TestThing_IncrementalQueryCacheUpdate`) in `cache_operations_test.go`. Fixed redundant calls in `saveInternal`. Fixed linter errors in test files related to mock definitions and package structure.
+*   **(Previous)** **Task 24 Completed:** Refactored project structure. Moved core `thing` files to root, internal helpers/drivers to `internal/`. Resolved import cycles by creating `internal/cache/types.go` and updating imports/exports. Ran `go build ./...` successfully. Tests still need to be run/fixed.
 </details>

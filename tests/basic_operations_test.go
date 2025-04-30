@@ -2,6 +2,7 @@ package thing_test
 
 import (
 	"testing"
+	"thing/internal/cache"
 
 	"thing"
 
@@ -127,8 +128,8 @@ func TestThing_Delete(t *testing.T) {
 	require.NoError(t, err, "User should exist before deletion")
 
 	// Define query params used for caching tests
-	countParams := thing.QueryParams{Where: "name = ?", Args: []interface{}{user.Name}}
-	listParams := thing.QueryParams{Where: "email LIKE ?", Args: []interface{}{"%example.com"}}
+	countParams := cache.QueryParams{Where: "name = ?", Args: []interface{}{user.Name}}
+	listParams := cache.QueryParams{Where: "email LIKE ?", Args: []interface{}{"%example.com"}}
 
 	// --- Populate caches BEFORE delete ---
 	// Perform a count query to cache it
@@ -191,7 +192,7 @@ func TestThing_Query(t *testing.T) {
 	}
 
 	// Query for all users
-	params := thing.QueryParams{
+	params := cache.QueryParams{
 		Where: "",
 	}
 	allUsersResult, err := th.Query(params)
@@ -202,7 +203,7 @@ func TestThing_Query(t *testing.T) {
 	assert.GreaterOrEqual(t, len(allUsersFetched), 3, "Should find at least the 3 users we created")
 
 	// Query with a filter
-	filterParams := thing.QueryParams{
+	filterParams := cache.QueryParams{
 		Where: "name = ?",
 		Args:  []interface{}{"Bob"},
 	}

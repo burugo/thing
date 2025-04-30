@@ -9,11 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"log" // For placeholder logging
+	"thing/internal/cache"
 
 	// Added for environment variables
 	"os"
-	"reflect"
-	"sort" // Added for parsing env var
+	"reflect" // Added for parsing env var
 	"strings"
 	"sync"
 	"time"
@@ -28,22 +28,6 @@ const (
 	LockDuration   = 5 * time.Second
 	LockRetryDelay = 50 * time.Millisecond
 	LockMaxRetries = 5
-)
-
-const (
-	// Lifecycle Events (Used by Event System)
-	EventTypeBeforeSave   EventType = "BeforeSave"
-	EventTypeAfterSave    EventType = "AfterSave"
-	EventTypeBeforeCreate EventType = "BeforeCreate"
-	EventTypeAfterCreate  EventType = "AfterCreate"
-	EventTypeBeforeDelete EventType = "BeforeDelete"
-	EventTypeAfterDelete  EventType = "AfterDelete"
-)
-
-// --- Errors ---
-
-var (
-// Definitions moved to errors.go
 )
 
 // --- Global Configuration ---
@@ -182,597 +166,11 @@ func (t *Thing[T]) WithContext(ctx context.Context) *Thing[T] { // Returns *Thin
 	return &newThing   // Return pointer to the copy
 }
 
-// --- BaseModel Struct ---
+// --- BaseModel Struct --- // REMOVED - Moved to model.go
 
-// BaseModel provides common fields and functionality for database models.
-// It should be embedded into specific model structs.
-type BaseModel struct {
-	ID        int64     `json:"id" db:"id"`                 // Primary key
-	CreatedAt time.Time `json:"created_at" db:"created_at"` // Timestamp for creation
-	UpdatedAt time.Time `json:"updated_at" db:"updated_at"` // Timestamp for last update
-	Deleted   bool      `json:"-" db:"deleted"`             // Soft delete flag
+// --- Core Internal CRUD & Fetching Logic --- // MOVED to crud_internal.go
 
-	// --- Internal ORM state ---
-	// These fields should be populated by the ORM functions (ByID, Create, etc.).
-	// They are NOT saved to the DB or cache.
-	isNewRecord bool `json:"-" db:"-"` // Flag to indicate if the record is new
-}
-
-// --- BaseModel Methods ---
-
-// GetID returns the primary key value.
-func (b *BaseModel) GetID() int64 {
-	return b.ID
-}
-
-// SetID sets the primary key value.
-func (b *BaseModel) SetID(id int64) {
-	b.ID = id
-}
-
-// TableName returns the database table name for the model.
-// Default implementation returns empty string, relying on getTableNameFromType.
-// Override this method in your specific model struct for custom table names.
-func (b *BaseModel) TableName() string {
-	// Default implementation, getTableNameFromType will be used if this returns ""
-	return ""
-}
-
-// IsNewRecord returns whether this is a new record.
-func (b *BaseModel) IsNewRecord() bool {
-	return b.isNewRecord
-}
-
-// KeepItem checks if the record is considered active (not soft-deleted).
-func (b *BaseModel) KeepItem() bool {
-	return !b.Deleted
-}
-
-// SetNewRecordFlag sets the internal isNewRecord flag.
-func (b *BaseModel) SetNewRecordFlag(isNew bool) {
-	b.isNewRecord = isNew
-}
-
-// --- Internal `Thing` Methods ---
-
-// fetchModelsByIDsInternal is the core logic for fetching models by their primary keys,
-// handling cache checks, database queries for misses, and caching results.
-// It requires the concrete modelType to instantiate objects and slices correctly.
-// REMOVED TTL arguments
-func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapter, modelInfo *ModelInfo, modelType reflect.Type, ids []int64) (map[int64]reflect.Value, error) {
-	resultMap := make(map[int64]reflect.Value)
-	if len(ids) == 0 {
-		return resultMap, nil
-	}
-
-	missingIDs := []int64{} // Initialize explicitly
-
-	// 1. Try fetching from cache
-	if cache != nil {
-		for _, id := range ids { // Iterate through original ids
-			cacheKey := generateCacheKey(modelInfo.TableName, id)
-			instancePtrVal := reflect.New(modelType) // Create pointer *T
-
-			// Pass pointer interface, e.g., *User
-			err := cache.GetModel(ctx, cacheKey, instancePtrVal.Interface())
-
-			if err == nil {
-				// Found in cache
-				setNewRecordFlagIfBaseModel(instancePtrVal.Interface(), false)
-				resultMap[id] = instancePtrVal                 // Store the reflect.Value pointer
-				log.Printf("DEBUG CACHE HIT for %s", cacheKey) // Added log
-			} else if errors.Is(err, ErrCacheNoneResult) {
-				// Found NoneResult marker - this ID is handled, DO NOT add to missingIDs.
-				log.Printf("DEBUG CACHE HIT (NoneResult) for %s", cacheKey) // Added log
-			} else if errors.Is(err, ErrNotFound) {
-				// True cache miss
-				log.Printf("DEBUG CACHE MISS for %s", cacheKey) // Added log
-				missingIDs = append(missingIDs, id)
-			} else {
-				// Unexpected cache error
-				log.Printf("WARN: Cache error during batch fetch for key %s: %v", cacheKey, err)
-				missingIDs = append(missingIDs, id) // Treat as missing if error
-			}
-		}
-	} else {
-		missingIDs = ids // No cache, all IDs are missing
-	}
-
-	// 2. If all found in cache (or marked as NoneResult), return early
-	if len(missingIDs) == 0 {
-		return resultMap, nil
-	}
-
-	// 3. Fetch missing models from database (in batches if needed)
-	for i := 0; i < len(missingIDs); i += ByIDBatchSize {
-		end := i + ByIDBatchSize
-		if end > len(missingIDs) {
-			end = len(missingIDs)
-		}
-
-		batchIDs := missingIDs[i:end]
-		if len(batchIDs) == 0 {
-			continue
-		}
-
-		// Keep track of IDs actually found in this batch DB query
-		fetchedIDsInBatch := make(map[int64]bool)
-
-		// Create placeholders for SQL IN clause
-		placeholders := strings.Repeat("?,", len(batchIDs))
-		placeholders = placeholders[:len(placeholders)-1] // Remove trailing comma
-
-		// Convert IDs to interface{} for query args
-		args := make([]interface{}, len(batchIDs))
-		for j, id := range batchIDs {
-			args[j] = id
-		}
-
-		// Build and execute query
-		query := fmt.Sprintf("%s WHERE %s IN (%s)",
-			buildSelectSQL(modelInfo), // Use passed modelInfo
-			modelInfo.pkName,
-			placeholders)
-
-		// Create a slice of pointers to the concrete type T for scanning
-		sliceType := reflect.SliceOf(reflect.PointerTo(modelType)) // Use the passed modelType
-		sliceVal := reflect.New(sliceType).Elem()
-
-		err := db.Select(ctx, sliceVal.Addr().Interface(), query, args...)
-		if err != nil {
-			// Log error but continue processing potentially found results
-			log.Printf("Error fetching batch %v-%v for type %s: %v", i, end-1, modelInfo.TableName, err)
-			continue // Continue to next batch if any
-		}
-
-		// Add fetched models to result map and cache them
-		for j := 0; j < sliceVal.Len(); j++ {
-			modelPtrVal := sliceVal.Index(j) // *T as reflect.Value
-			modelInterface := modelPtrVal.Interface()
-			baseModelPtr := getBaseModelPtr(modelInterface)
-			if baseModelPtr == nil {
-				log.Printf("WARN: Fetched model of type %s has no BaseModel embedded, cannot get ID", modelInfo.TableName)
-				continue
-			}
-
-			id := baseModelPtr.GetID()
-			if id == 0 {
-				log.Printf("WARN: Fetched model %s has zero ID", modelInfo.TableName)
-				continue
-			}
-
-			setNewRecordFlagIfBaseModel(modelInterface, false)
-			resultMap[id] = modelPtrVal // Store the reflect.Value pointer
-
-			// Cache the model
-			if cache != nil {
-				cacheKey := generateCacheKey(modelInfo.TableName, id)
-				if errCache := cache.SetModel(ctx, cacheKey, modelInterface, globalCacheTTL); errCache != nil { // USE globalCacheTTL
-					log.Printf("WARN: Failed to cache model %s:%d after batch fetch: %v", modelInfo.TableName, id, errCache)
-				}
-			}
-			// Mark this ID as successfully fetched from DB in this batch
-			fetchedIDsInBatch[id] = true
-		}
-
-		// --- Cache NoneResult for IDs not found in this batch ---
-		if cache != nil {
-			for _, batchID := range batchIDs {
-				if !fetchedIDsInBatch[batchID] {
-					// This ID was queried but not returned by DB
-					cacheKey := generateCacheKey(modelInfo.TableName, batchID)
-					log.Printf("DEBUG DB NOT FOUND for %s (in batch %v). Caching NoneResult.", cacheKey, batchIDs)
-					errCacheSet := cache.Set(ctx, cacheKey, NoneResult, globalCacheTTL) // USE globalCacheTTL
-					if errCacheSet != nil {
-						log.Printf("WARN: Failed to set NoneResult in cache for key %s: %v", cacheKey, errCacheSet)
-					}
-				}
-			}
-		}
-		// --- End Cache NoneResult ---
-
-	}
-
-	return resultMap, nil
-}
-
-// byIDInternal fetches a single model by its ID, now acting as a wrapper
-// around fetchModelsByIDsInternal.
-// The dest argument must be a pointer to the struct type (e.g., *User).
-func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest interface{}) error {
-	if id <= 0 {
-		return errors.New("invalid ID provided (must be > 0)")
-	}
-
-	// Validate dest is a pointer to the correct struct type
-	destVal := reflect.ValueOf(dest)
-	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
-		return errors.New("destination must be a non-nil pointer")
-	}
-	destElemType := destVal.Elem().Type()
-	if destElemType != reflect.TypeOf(*new(T)) {
-		return fmt.Errorf("destination type mismatch: expected *%s, got %s",
-			reflect.TypeOf(*new(T)).Name(), destElemType.String())
-	}
-
-	// Get the concrete type T for the internal helper
-	modelType := reflect.TypeOf((*T)(nil)).Elem()
-
-	// Call the internal multi-fetch helper with a single ID
-	idsToFetch := []int64{id}
-	resultsMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, t.info, modelType, idsToFetch) // REMOVED TTLs
-	if err != nil {
-		// Propagate errors from the internal fetch
-		return fmt.Errorf("fetchModelsByIDsInternal failed for ID %d: %w", id, err)
-	}
-
-	// Check if the requested ID was found in the results
-	if modelVal, ok := resultsMap[id]; ok {
-		// Found the model. Need to copy the value into the destination.
-		// Ensure dest is settable and types match.
-		if destVal.Elem().CanSet() {
-			// modelVal is reflect.Value of type *T
-			destVal.Elem().Set(modelVal.Elem()) // Set the value T into dest (*T)
-			return nil                          // Success
-		} else {
-			// This should generally not happen if dest validation passed
-			return fmt.Errorf("internal error: destination cannot be set for ID %d", id)
-		}
-	} else {
-		// ID not found in the results map (could be DB miss or cached NoneResult)
-		return ErrNotFound
-	}
-}
-
-// saveInternal handles both creating and updating records.
-func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
-	if t.db == nil || t.cache == nil {
-		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
-	}
-
-	modelValue := reflect.ValueOf(value)
-	if modelValue.Kind() != reflect.Ptr || modelValue.IsNil() {
-		return errors.New("value must be a non-nil pointer")
-	}
-
-	// --- Trigger BeforeSave hook ---
-	if err := triggerEvent(ctx, EventTypeBeforeSave, value, nil); err != nil { // Uses helper defined later
-		return fmt.Errorf("BeforeSave hook failed: %w", err)
-	}
-
-	baseModelPtr := getBaseModelPtr(value) // Uses helper defined later
-	if baseModelPtr == nil {
-		return errors.New("could not get BaseModel pointer, model must embed thing.BaseModel")
-	}
-
-	isNew := baseModelPtr.IsNewRecord() || baseModelPtr.ID == 0
-	now := time.Now()
-	var query string
-	var args []interface{}
-	var err error
-	var result sql.Result
-	var changedFields map[string]interface{} // Only used for update
-	var original *T                          // Declare original here for broader scope
-
-	if isNew {
-		// --- CREATE Path ---
-		// Trigger BeforeCreate hook
-		if err := triggerEvent(ctx, EventTypeBeforeCreate, value, nil); err != nil { // Uses helper defined later
-			return fmt.Errorf("BeforeCreate hook failed: %w", err)
-		}
-
-		setCreatedAtTimestamp(value, now) // Uses helper defined later
-		setUpdatedAtTimestamp(value, now) // Uses helper defined later
-
-		colsToInsert := []string{}
-		placeholders := []string{}
-		vals := []interface{}{}
-
-		// Iterate through known columns from cached info
-		for _, fieldName := range t.info.fields {
-			colName := t.info.fieldToColumnMap[fieldName]
-			// Skip PK column during insert (assuming auto-increment)
-			if colName == t.info.pkName {
-				continue
-			}
-			// Get field value using reflection
-			fieldVal := modelValue.Elem().FieldByName(fieldName)
-			if !fieldVal.IsValid() {
-				log.Printf("WARN: Field %s not found in model during insert preparation", fieldName)
-				continue
-			}
-			colsToInsert = append(colsToInsert, colName)
-			placeholders = append(placeholders, "?")
-			vals = append(vals, fieldVal.Interface())
-		}
-
-		if len(colsToInsert) == 0 {
-			return errors.New("no columns determined for insert")
-		}
-
-		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-			t.info.TableName, // Renamed: tableName -> TableName
-			strings.Join(colsToInsert, ", "),
-			strings.Join(placeholders, ", "),
-		)
-		args = vals
-
-		log.Printf("DB INSERT: %s [%v]", query, args)
-		result, err = t.db.Exec(ctx, query, args...)
-		if err != nil {
-			return fmt.Errorf("database insert failed: %w", err)
-		}
-
-		newID, errId := result.LastInsertId()
-		if errId != nil {
-			log.Printf("WARN: Could not get LastInsertId after insert: %v", errId)
-		} else {
-			baseModelPtr.SetID(newID)
-			// --- Cache Set on Create ---
-			cacheKey := generateCacheKey(t.info.TableName, newID) // Renamed: tableName -> TableName
-			cacheSetStart := time.Now()
-			errCacheSet := t.cache.SetModel(ctx, cacheKey, value, globalCacheTTL) // USE globalCacheTTL
-			cacheSetDuration := time.Since(cacheSetStart)
-			if errCacheSet != nil {
-				log.Printf("WARN: Failed to cache model after create for key %s: %v (%s)", cacheKey, errCacheSet, cacheSetDuration)
-			}
-			// --- End Cache Set ---
-		}
-
-		// --- Trigger AfterCreate hook ---
-		if errHook := triggerEvent(ctx, EventTypeAfterCreate, value, nil); errHook != nil { // Uses helper defined later
-			log.Printf("WARN: AfterCreate hook failed: %v", errHook)
-		}
-
-	} else {
-		// --- UPDATE Path ---
-		id := baseModelPtr.ID
-		if id == 0 {
-			return errors.New("cannot update record with zero ID")
-		}
-
-		// Need to fetch the original record to find changed fields
-		// Assign to the already declared original variable
-		original = reflect.New(modelValue.Elem().Type()).Interface().(*T)
-		if errFetch := t.byIDInternal(ctx, id, original); errFetch != nil { // byIDInternal now passes TTLs
-			return fmt.Errorf("failed to fetch original record for update (ID: %d): %w", id, errFetch)
-		}
-
-		// Find changed fields using reflection helper (keys are DB column names)
-		changedFields, err = findChangedFields(original, value) // Uses helper defined later
-		if err != nil {
-			return fmt.Errorf("failed to find changed fields for update: %w", err)
-		}
-
-		// If no fields changed (excluding UpdatedAt logic handled in findChangedFieldsAdvanced), skip DB update
-		if len(changedFields) == 0 {
-			log.Printf("Skipping update for %s %d: No relevant fields changed", t.info.TableName, id)
-			if errHook := triggerEvent(ctx, EventTypeAfterSave, value, changedFields); errHook != nil { // Uses helper defined later
-				log.Printf("WARN: AfterSave hook failed (no changes): %v", errHook)
-			}
-			baseModelPtr.SetNewRecordFlag(false) // Ensure flag is correct
-			return nil
-		}
-
-		// Always update the UpdatedAt timestamp in the model
-		setUpdatedAtTimestamp(value, now) // Uses helper defined later
-		// Ensure updated_at is included in the map for the SQL query
-		changedFields["updated_at"] = now
-
-		// Build the UPDATE SQL
-		setClauses := []string{}
-		updateArgs := []interface{}{}
-
-		// --- Iterate over the CHANGED DB columns ---
-		changedCols := make([]string, 0, len(changedFields))
-		for colName := range changedFields {
-			changedCols = append(changedCols, colName)
-		}
-		sort.Strings(changedCols) // Sort for deterministic order
-
-		for _, colName := range changedCols {
-			if colName == t.info.pkName {
-				log.Printf("WARN: Primary key column '%s' found in changedFields map during update. Skipping.", colName)
-				continue
-			}
-			setClauses = append(setClauses, fmt.Sprintf("%s = ?", colName))
-			updateArgs = append(updateArgs, changedFields[colName])
-		}
-		// --- End iteration over changed columns ---
-
-		if len(setClauses) == 0 {
-			log.Printf("ERROR: No SET clauses generated for update on %s %d despite changedFields being non-empty: %v", t.info.TableName, id, changedFields) // Renamed: tableName -> TableName
-			return errors.New("internal error: no fields to update after processing changed fields")
-		}
-
-		query = fmt.Sprintf("UPDATE %s SET %s WHERE %s = ?",
-			t.info.TableName, // Renamed: tableName -> TableName
-			strings.Join(setClauses, ", "),
-			t.info.pkName, // pkName is still unexported, assume ok for now
-		)
-		args = append(updateArgs, id) // Add the ID for the WHERE clause
-
-		// --- Lock for Update and Cache Invalidation ---
-		lockKey := fmt.Sprintf("lock:%s:%d", t.info.TableName, id)               // Renamed: tableName -> TableName
-		err = withLock(ctx, t.cache, lockKey, func(lctx context.Context) error { // Uses helper defined later
-			log.Printf("DB UPDATE: %s [%v]", query, args)
-			result, err = t.db.Exec(lctx, query, args...)
-			if err != nil {
-				return fmt.Errorf("database update failed: %w", err)
-			}
-
-			rowsAffected, _ := result.RowsAffected()
-			if rowsAffected == 0 {
-				log.Printf("WARN: Update affected 0 rows for %s %d. Record might not exist?", t.info.TableName, id) // Renamed: tableName -> TableName
-			}
-
-			// Invalidate Object Cache within the lock, after successful DB update
-			cacheKey := generateCacheKey(t.info.TableName, id) // Renamed: tableName -> TableName
-			cacheDelStart := time.Now()
-			errCacheDel := t.cache.DeleteModel(lctx, cacheKey)
-			cacheDelDuration := time.Since(cacheDelStart)
-			if errCacheDel != nil {
-				log.Printf("WARN: Failed to delete model from cache during update lock for key %s: %v (%s)", cacheKey, errCacheDel, cacheDelDuration)
-			}
-
-			return nil // Lock action successful
-		})
-		// --- End Lock ---
-
-		if err != nil {
-			// Error occurred during lock acquisition or the action inside the lock
-			return fmt.Errorf("save update failed (lock or db/cache exec): %w", err)
-		}
-	}
-
-	baseModelPtr.SetNewRecordFlag(false)
-
-	// --- Update Query Caches (Incremental) ---
-	if isNew {
-		t.updateAffectedQueryCaches(ctx, value, nil, isNew) // Call as method, pass nil for original
-	} else {
-		t.updateAffectedQueryCaches(ctx, value, original, isNew) // Call as method
-	}
-
-	// --- Trigger AfterSave hook (for both create and update) ---
-	if errHook := triggerEvent(ctx, EventTypeAfterSave, value, changedFields); errHook != nil { // Uses helper defined later
-		log.Printf("WARN: AfterSave hook failed: %v", errHook)
-	}
-
-	return nil
-}
-
-// deleteInternal removes a record from the database.
-// value must be a pointer to a struct embedding BaseModel with a valid ID.
-func (t *Thing[T]) deleteInternal(ctx context.Context, value interface{}) error {
-	if t.db == nil || t.cache == nil {
-		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
-	}
-
-	baseModelPtr := getBaseModelPtr(value) // Uses helper defined later
-	if baseModelPtr == nil {
-		return errors.New("deleteInternal: value must embed BaseModel")
-	}
-	id := baseModelPtr.ID
-	if id == 0 {
-		return errors.New("deleteInternal: cannot delete record with zero ID")
-	}
-
-	// --- Trigger BeforeDelete hook ---
-	if err := triggerEvent(ctx, EventTypeBeforeDelete, value, nil); err != nil { // Uses helper defined later
-		return fmt.Errorf("BeforeDelete hook failed: %w", err)
-	}
-
-	// Use the cached model info
-	info := t.info
-	tableName := info.TableName // Renamed: tableName -> TableName
-	pkName := info.pkName       // pkName is still unexported, assume ok for now
-
-	// Lock the record during deletion
-	lockKey := fmt.Sprintf("lock:%s:%d", tableName, id)
-	err := withLock(ctx, t.cache, lockKey, func(lctx context.Context) error { // Uses helper defined later
-		// Build and execute the DELETE query
-		query := fmt.Sprintf("DELETE FROM %s WHERE %s = ?", tableName, pkName)
-		log.Printf("DB DELETE: %s [%d]", query, id)
-		result, execErr := t.db.Exec(lctx, query, id)
-		if execErr != nil {
-			return fmt.Errorf("database delete failed: %w", execErr)
-		}
-		rowsAffected, _ := result.RowsAffected()
-		if rowsAffected == 0 {
-			log.Printf("WARN: Delete affected 0 rows for %s %d. Record might not exist?", tableName, id)
-			return ErrNotFound
-		}
-
-		// --- Object Cache Invalidate within Lock (Using ClearCacheByID) ---
-		// Removed direct call: cacheKey := generateCacheKey(tableName, id)
-		// Removed direct call: errCacheDel := t.cache.DeleteModel(lctx, cacheKey)
-		// Removed logging for direct call
-
-		// Call the centralized cache clearing method
-		if clearErr := t.ClearCacheByID(lctx, id); clearErr != nil {
-			// Log the error from ClearCacheByID, but don't fail the delete operation
-			// ClearCacheByID already logs warnings, so just a note here might suffice.
-			log.Printf("Notice: ClearCacheByID returned an error during delete for %s %d: %v", tableName, id, clearErr)
-			// Decide if this should return an error, for now, it doesn't.
-		}
-		// --- End Object Cache Invalidate ---
-
-		return nil // Lock action successful
-	})
-
-	if err != nil {
-		// Don't trigger AfterDelete hook if the lock or DB/Cache operation failed
-		if errors.Is(err, ErrNotFound) {
-			log.Printf("Attempted to delete non-existent record %s %d", tableName, id)
-			return ErrNotFound // Propagate not found error
-		}
-		return fmt.Errorf("delete operation failed (lock or db/cache exec): %w", err)
-	}
-
-	// --- Update Query Caches (Incremental) ---
-	// Type assertion needed because value is interface{}
-	if model, ok := value.(*T); ok {
-		t.handleDeleteInQueryCaches(ctx, model) // Call as method
-	} else {
-		log.Printf("WARN: Could not assert type %T for incremental delete cache update in deleteInternal", value)
-	}
-
-	// --- Trigger AfterDelete hook (only if lock and DB/Cache action succeeded) ---
-	if errHook := triggerEvent(ctx, EventTypeAfterDelete, value, nil); errHook != nil { // Uses helper defined later
-		log.Printf("WARN: AfterDelete hook failed: %v", errHook)
-	}
-
-	return nil // Success
-}
-
-// --- Event System --- (Moved Down)
-
-type EventType string // Already defined in Constants section
-
-// EventListener defines the signature for functions that can listen to events.
-type EventListener func(ctx context.Context, eventType EventType, model interface{}, eventData interface{}) error
-
-// listenerRegistry holds the registered listeners for each event type.
-var (
-	listenerRegistry = make(map[EventType][]EventListener)
-	listenerMutex    sync.RWMutex // To protect concurrent access to the registry
-)
-
-// RegisterListener adds a listener function for a specific event type.
-func RegisterListener(eventType EventType, listener EventListener) {
-	listenerMutex.Lock()
-	defer listenerMutex.Unlock()
-	listenerRegistry[eventType] = append(listenerRegistry[eventType], listener)
-}
-
-// triggerEvent executes all registered listeners for a given event type.
-// Model is passed as interface{}.
-func triggerEvent(ctx context.Context, eventType EventType, model interface{}, eventData interface{}) error {
-	listenerMutex.RLock()
-	listeners, ok := listenerRegistry[eventType]
-	listenerMutex.RUnlock()
-
-	if !ok || len(listeners) == 0 {
-		return nil
-	}
-
-	// Get model ID for logging
-	var modelID int64 = -1
-	if bm := getBaseModelPtr(model); bm != nil { // Uses helper defined later
-		modelID = bm.GetID()
-	}
-
-	// Execute listeners sequentially.
-	for _, listener := range listeners {
-		err := listener(ctx, eventType, model, eventData)
-		if err != nil {
-			log.Printf("Error executing listener for event %s on model %T(%d): %v", eventType, model, modelID, err)
-			return fmt.Errorf("event listener for %s failed: %w", eventType, err)
-		}
-	}
-	return nil
-}
+// --- Event System --- // MOVED to hooks.go
 
 // --- Model Metadata Cache --- (Moved Down)
 
@@ -788,16 +186,15 @@ type ComparableFieldInfo struct {
 	IgnoreInDiff bool                       // Whether to ignore this field during diffing (e.g., tags like db:"-")
 }
 
-// ModelInfo holds cached reflection results for a specific Model type.
-// Renamed: modelInfo -> ModelInfo
+// ModelInfo holds pre-computed metadata about a model type T.
 type ModelInfo struct {
 	TableName        string                // Renamed: tableName -> TableName
-	pkName           string                // Database name of the primary key field (kept unexported for now)
+	PkName           string                // Database name of the primary key field (Exported)
 	Columns          []string              // Renamed: columns -> Columns
-	fields           []string              // Corresponding Go struct field names (order matches columns, kept unexported)
-	fieldToColumnMap map[string]string     // Map Go field name to its corresponding DB column name (kept unexported)
-	columnToFieldMap map[string]string     // Map DB column name to its corresponding Go field name (kept unexported)
-	compareFields    []ComparableFieldInfo // Fields to compare during diff operations (new)
+	Fields           []string              // Corresponding Go struct field names (Exported)
+	FieldToColumnMap map[string]string     // Map Go field name to its corresponding DB column name (Exported)
+	ColumnToFieldMap map[string]string     // Map DB column name to its corresponding Go field name (Exported)
+	CompareFields    []ComparableFieldInfo // Fields to compare during diff operations (new)
 }
 
 // modelCache stores ModelInfo structs, keyed by reflect.Type.
@@ -820,15 +217,15 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 	}
 
 	info := ModelInfo{ // Using renamed struct
-		fieldToColumnMap: make(map[string]string),
-		columnToFieldMap: make(map[string]string),
-		compareFields:    make([]ComparableFieldInfo, 0),
+		FieldToColumnMap: make(map[string]string),
+		ColumnToFieldMap: make(map[string]string),
+		CompareFields:    make([]ComparableFieldInfo, 0),
 	}
 	pkDbName := ""
 
 	numFields := modelType.NumField()
 	info.Columns = make([]string, 0, numFields) // Using renamed field
-	info.fields = make([]string, 0, numFields)
+	info.Fields = make([]string, 0, numFields)
 
 	var processFields func(structType reflect.Type, parentIndex []int, isEmbedded bool)
 	processFields = func(structType reflect.Type, parentIndex []int, isEmbedded bool) {
@@ -860,9 +257,9 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 						fieldIndex := append(append([]int{}, parentIndex...), i, j)
 
 						info.Columns = append(info.Columns, colName) // Using renamed field
-						info.fields = append(info.fields, baseField.Name)
-						info.fieldToColumnMap[baseField.Name] = colName
-						info.columnToFieldMap[colName] = baseField.Name
+						info.Fields = append(info.Fields, baseField.Name)
+						info.FieldToColumnMap[baseField.Name] = colName
+						info.ColumnToFieldMap[colName] = baseField.Name
 
 						// Skip adding PK to comparable fields
 						if colName == "id" {
@@ -889,7 +286,7 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 						// Add specialized zero-value checker based on field type
 						cfInfo.IsZero = getZeroChecker(baseField.Type)
 
-						info.compareFields = append(info.compareFields, cfInfo)
+						info.CompareFields = append(info.CompareFields, cfInfo)
 					}
 				} else {
 					// Process other embedded structs recursively
@@ -914,9 +311,9 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 			fieldIndex := append(append([]int{}, parentIndex...), i)
 
 			info.Columns = append(info.Columns, colName) // Using renamed field
-			info.fields = append(info.fields, field.Name)
-			info.fieldToColumnMap[field.Name] = colName
-			info.columnToFieldMap[colName] = field.Name
+			info.Fields = append(info.Fields, field.Name)
+			info.FieldToColumnMap[field.Name] = colName
+			info.ColumnToFieldMap[colName] = field.Name
 
 			if colName == "id" && pkDbName == "" {
 				pkDbName = colName
@@ -942,7 +339,7 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 			// Add specialized zero-value checker based on field type
 			cfInfo.IsZero = getZeroChecker(field.Type)
 
-			info.compareFields = append(info.compareFields, cfInfo)
+			info.CompareFields = append(info.CompareFields, cfInfo)
 		}
 	}
 
@@ -951,8 +348,8 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 	if pkDbName == "" {
 		return nil, fmt.Errorf("primary key column (assumed 'id') not found via 'db:\"id\"' tag in struct %s or its embedded BaseModel", modelType.Name())
 	}
-	info.pkName = pkDbName                           // pkName kept unexported for now
-	info.TableName = getTableNameFromType(modelType) // Added TableName population here
+	info.PkName = pkDbName
+	info.TableName = getTableNameFromType(modelType)
 	if info.TableName == "" {
 		log.Printf("Warning: Could not determine table name for type %s in GetCachedModelInfo.", modelType.Name())
 	}
@@ -1022,13 +419,13 @@ func findChangedFields[T any](original, updated *T) (map[string]interface{}, err
 	info, _ := GetCachedModelInfo(t)
 
 	// If we have cached model info with comparison metadata, use the optimized simple path
-	if info != nil && len(info.compareFields) > 0 {
+	if info != nil && len(info.CompareFields) > 0 {
 		startTime := time.Now()
 		result, err := findChangedFieldsSimple(original, updated, info)
 		if err == nil {
 			if os.Getenv("DEBUG_DIFF") != "" {
 				log.Printf("DEBUG: [%s] Simple comparison took %v for %d fields",
-					typename, time.Since(startTime), len(info.compareFields))
+					typename, time.Since(startTime), len(info.CompareFields))
 			}
 			return result, nil
 		}
@@ -1084,9 +481,9 @@ func findChangedFieldsReflection[T any](original, updated *T, info *ModelInfo) (
 				continue
 			}
 
-			dbColName, exists := info.fieldToColumnMap[fieldName]
-			if !exists || dbColName == "-" || dbColName == info.pkName {
-				log.Printf("DEBUG: [%s%s] Skipping field (no db tag, ignored, or PK). Exists: %v, DBCol: %s, PK: %s", typeName, currentPath, exists, dbColName, info.pkName)
+			dbColName, exists := info.FieldToColumnMap[fieldName]
+			if !exists || dbColName == "-" || dbColName == info.PkName {
+				log.Printf("DEBUG: [%s%s] Skipping field (no db tag, ignored, or PK). Exists: %v, DBCol: %s, PK: %s", typeName, currentPath, exists, dbColName, info.PkName)
 				continue
 			}
 
@@ -1119,7 +516,7 @@ func findChangedFieldsReflection[T any](original, updated *T, info *ModelInfo) (
 	// --- Handle UpdatedAt specifically ---
 	var updatedAtDBColName string
 	updatedAtGoFieldName := "UpdatedAt"
-	if col, ok := info.fieldToColumnMap[updatedAtGoFieldName]; ok {
+	if col, ok := info.FieldToColumnMap[updatedAtGoFieldName]; ok {
 		updatedAtDBColName = col
 	}
 
@@ -1150,14 +547,14 @@ func buildSelectSQL(info *ModelInfo) string {
 }
 
 // buildSelectIDsSQL constructs a SELECT statement to fetch only primary key IDs.
-func buildSelectIDsSQL(info *ModelInfo, params QueryParams) (string, []interface{}) {
+func buildSelectIDsSQL(info *ModelInfo, params cache.QueryParams) (string, []interface{}) {
 	var query strings.Builder
 	args := []interface{}{}
-	if info.TableName == "" || info.pkName == "" {
+	if info.TableName == "" || info.PkName == "" {
 		log.Printf("Error: buildSelectIDsSQL called with incomplete modelInfo: %+v", info)
 		return "", nil
 	}
-	query.WriteString(fmt.Sprintf("SELECT \"%s\" FROM %s", info.pkName, info.TableName))
+	query.WriteString(fmt.Sprintf("SELECT \"%s\" FROM %s", info.PkName, info.TableName))
 	if params.Where != "" {
 		query.WriteString(" WHERE ")
 		query.WriteString(params.Where)
@@ -1251,64 +648,30 @@ func setUpdatedAtTimestamp(value interface{}, t time.Time) {
 	}
 }
 
-// --- Cache Helpers --- (Moved Down)
+// --- Cache Helpers --- // MOVED to cache.go
 
-// generateCacheKey creates a standard cache key string for a single model.
-func generateCacheKey(tableName string, id int64) string {
-	// Format: {tableName}:{id}
-	return fmt.Sprintf("%s:%d", tableName, id)
-}
+// // generateCacheKey creates a standard cache key string for a single model.
+// func generateCacheKey(tableName string, id int64) string {
+// 	// Format: {tableName}:{id}
+// 	return fmt.Sprintf("%s:%d", tableName, id)
+// }
 
-// withLock acquires a lock, executes the action, and releases the lock.
-func withLock(ctx context.Context, cache CacheClient, lockKey string, action func(ctx context.Context) error) error {
-	if cache == nil {
-		log.Printf("Warning: Proceeding without lock for key '%s', cache client is nil", lockKey)
-		return action(ctx)
-	}
-	var acquired bool
-	var err error
-	for i := 0; i < LockMaxRetries; i++ {
-		acquired, err = cache.AcquireLock(ctx, lockKey, LockDuration)
-		if err != nil {
-			return fmt.Errorf("failed to attempt lock acquisition for key '%s': %w", lockKey, err)
-		}
-		if acquired {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			log.Printf("Context cancelled while waiting for lock: %s", lockKey)
-			return ctx.Err()
-		case <-time.After(LockRetryDelay):
-			// Retry
-		}
-	}
-	if !acquired {
-		return fmt.Errorf("failed to acquire lock for key '%s' after %d retries: %w", lockKey, LockMaxRetries, ErrLockNotAcquired)
-	}
-	defer func() {
-		releaseErr := cache.ReleaseLock(ctx, lockKey)
-		if releaseErr != nil {
-			log.Printf("Warning: Failed to release lock '%s': %v", lockKey, releaseErr)
-		} else {
-			log.Printf("Lock released for key '%s'", lockKey)
-		}
-	}()
-	log.Printf("Lock acquired for key '%s'", lockKey)
-	return action(ctx)
-}
+// // withLock acquires a lock, executes the action, and releases the lock.
+// func withLock(ctx context.Context, cache CacheClient, lockKey string, action func(ctx context.Context) error) error {
+// ... (rest of withLock code omitted)
+// }
 
-// --- Querying Structs --- (Moved Down)
+// --- Querying Structs --- // MOVED to query.go
 
-// QueryParams defines parameters for database queries.
-type QueryParams struct {
-	Where string        // Raw WHERE clause (e.g., "status = ? AND name LIKE ?")
-	Args  []interface{} // Arguments for the WHERE clause placeholders
-	Order string        // Raw ORDER BY clause (e.g., "created_at DESC")
-	// Start    int           // Offset (for pagination) - REMOVED
-	// Limit    int           // Limit (for pagination) - REMOVED
-	Preloads []string // List of relationship names to eager-load (e.g., ["Author", "Comments"])
-}
+// // QueryParams defines parameters for database queries.
+// type QueryParams struct {
+// 	Where string        // Raw WHERE clause (e.g., "status = ? AND name LIKE ?")
+// 	Args  []interface{} // Arguments for the WHERE clause placeholders
+// 	Order string        // Raw ORDER BY clause (e.g., "created_at DESC")
+// 	// Start    int           // Offset (for pagination) - REMOVED
+// 	// Limit    int           // Limit (for pagination) - REMOVED
+// 	Preloads []string // List of relationship names to eager-load (e.g., ["Author", "Comments"])
+// }
 
 // --- NEW Relationship Preloading Functions --- (Added at the end)
 
@@ -1393,7 +756,7 @@ func (t *Thing[T]) preloadRelations(ctx context.Context, results []*T, preloadNa
 
 	// Ensure LocalKey is set (defaults to primary key of T)
 	if opts.LocalKey == "" {
-		opts.LocalKey = t.info.pkName
+		opts.LocalKey = t.info.PkName
 		if opts.LocalKey == "" {
 			return fmt.Errorf("cannot determine local key (primary key) for model type %s", modelType.Name())
 		}
@@ -1426,7 +789,7 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 	log.Printf("Preloading BelongsTo: Field %s (*%s), FK in %s: %s", field.Name, relatedModelType.Name(), t.info.TableName, opts.ForeignKey)
 
 	// --- Get Foreign Key Info from Owning Model T ---
-	owningModelType := t.info.columnToFieldMap // map[dbCol]goField
+	owningModelType := t.info.ColumnToFieldMap // Use exported name
 	fkFieldName, fkFieldFound := owningModelType[opts.ForeignKey]
 	if !fkFieldFound {
 		if _, directFieldFound := reflect.TypeOf(resultsVal.Index(0).Interface()).Elem().FieldByName(opts.ForeignKey); directFieldFound {
@@ -1537,7 +900,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 
 	// --- Get Local Key Info from Owning Model T ---
 	localKeyColName := opts.LocalKey // e.g., "id"
-	localKeyGoFieldName, ok := t.info.columnToFieldMap[localKeyColName]
+	localKeyGoFieldName, ok := t.info.ColumnToFieldMap[localKeyColName]
 	if !ok {
 		return fmt.Errorf("local key column '%s' not found in model %s info", localKeyColName, resultsVal.Type().Elem().Elem().Name())
 	}
@@ -1583,7 +946,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 	relatedFkColName := opts.ForeignKey // FK column name in the related table R
 
 	// --- Get Related Model FK Go field name ---
-	relatedFkGoFieldName, fkFieldFound := relatedInfo.columnToFieldMap[relatedFkColName]
+	relatedFkGoFieldName, fkFieldFound := relatedInfo.ColumnToFieldMap[relatedFkColName]
 	if !fkFieldFound {
 		// Fallback check if FK name matches Go field name directly
 		if _, directFieldFound := relatedModelType.FieldByName(opts.ForeignKey); directFieldFound {
@@ -1597,7 +960,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 
 	// Prepare query params for fetching related model IDs
 	placeholders := strings.Repeat("?,", len(uniqueLkList))[:len(uniqueLkList)*2-1]
-	relatedIDParams := QueryParams{
+	relatedIDParams := cache.QueryParams{
 		Where: fmt.Sprintf("\"%s\" IN (%s)", relatedFkColName, placeholders), // Ensure FK column is quoted
 		Args:  uniqueLkList,
 		// Potentially add Order from tag later?
@@ -1652,7 +1015,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 	if !cacheHit {
 		// Build query to select only the primary key of the related model
 		idQuery := fmt.Sprintf("SELECT \"%s\" FROM %s WHERE %s",
-			relatedInfo.pkName,    // PK column of the related table R
+			relatedInfo.PkName,    // Use exported name
 			relatedInfo.TableName, // Related table R
 			relatedIDParams.Where, // WHERE clause (e.g., "\"user_id\" IN (?,?,?)")
 		)
@@ -1798,8 +1161,6 @@ func (t *Thing[T]) loadInternal(ctx context.Context, model *T, relations ...stri
 	return nil
 }
 
-const ByIDBatchSize = 100 // Or make configurable
-
 // ByIDs retrieves multiple records by their primary keys and optionally preloads relations.
 func (t *Thing[T]) ByIDs(ids []int64, preloads ...string) (map[int64]*T, error) {
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
@@ -1887,17 +1248,15 @@ func (t *Thing[T]) SoftDelete(model *T) error {
 }
 
 // Query prepares a query based on QueryParams and returns a *CachedResult[T] for lazy execution.
-// The actual database query happens when Count() or Fetch() is called on the result.
-// It returns the CachedResult instance and a nil error, assuming basic validation passed.
-// Error handling for query execution is done within CachedResult methods.
-func (t *Thing[T]) Query(params QueryParams) (*CachedResult[T], error) {
-	// TODO: Add validation for params if necessary?
-	return &CachedResult[T]{
-		thing:  t,
-		params: params,
-		// cachedIDs, cachedCount, hasLoadedIDs, hasLoadedCount, hasLoadedAll, all initialized to zero values
-	}, nil
-}
+// MOVED to query.go
+// func (t *Thing[T]) Query(params QueryParams) (*CachedResult[T], error) {
+// 	// TODO: Add validation for params if necessary?
+// 	return &CachedResult[T]{
+// 		thing:  t,
+// 		params: params,
+// 		// cachedIDs, cachedCount, hasLoadedIDs, hasLoadedCount, hasLoadedAll, all initialized to zero values
+// 	}, nil
+// }
 
 // Load explicitly loads relationships for a given model instance using the Thing's context.
 // model must be a pointer to a struct of type T.
@@ -1921,7 +1280,7 @@ func findChangedFieldsSimple[T any](original, updated *T, info *ModelInfo) (map[
 	// Get the UpdatedAt field name for special handling later
 	var updatedAtDBColName string
 	updatedAtGoFieldName := "UpdatedAt"
-	if col, ok := info.fieldToColumnMap[updatedAtGoFieldName]; ok {
+	if col, ok := info.FieldToColumnMap[updatedAtGoFieldName]; ok {
 		updatedAtDBColName = col
 	}
 
@@ -1929,7 +1288,7 @@ func findChangedFieldsSimple[T any](original, updated *T, info *ModelInfo) (map[
 	debugEnabled := os.Getenv("DEBUG_DIFF") != ""
 
 	// Use compareFields from cached metadata for efficient field comparison
-	for _, field := range info.compareFields {
+	for _, field := range info.CompareFields {
 		// Use the pre-computed field index for fast access
 		originalFieldVal := originalVal.FieldByIndex(field.Index)
 		updatedFieldVal := updatedVal.FieldByIndex(field.Index)
@@ -1996,579 +1355,110 @@ func findChangedFieldsSimple[T any](original, updated *T, info *ModelInfo) (map[
 	return changed, nil
 }
 
-// ClearCacheByID removes the cache entry for a specific model instance by its ID.
-func (t *Thing[T]) ClearCacheByID(ctx context.Context, id int64) error {
-	cacheKey := generateCacheKey(t.info.TableName, id) // Use the helper function
-	log.Printf("CACHE DEL MODEL: Key: %s", cacheKey)
-	err := t.cache.DeleteModel(ctx, cacheKey)
-	if err != nil {
-		// Log the error but don't necessarily fail the operation if cache delete fails
-		log.Printf("Warning: Failed to delete model cache for key %s: %v", cacheKey, err)
-		// Optionally return the error if cache clearing is critical
-		// return fmt.Errorf("failed to clear cache for key %s: %w", cacheKey, err)
-	}
-	return nil // Or return err if you want to propagate cache errors
-}
-
-// --- Incremental Cache Update Methods ---
-
-// updateAffectedQueryCaches is called after a Save operation
-// to incrementally update relevant list and count caches.
-// It's now a method of Thing[T].
-func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, originalModel *T, isCreate bool) {
-	if t.cache == nil {
-		return // No cache configured
-	}
-	baseModelPtr := getBaseModelPtr(model)
-	if baseModelPtr == nil || baseModelPtr.ID == 0 {
-		log.Printf("WARN: updateAffectedQueryCaches skipped for model without BaseModel or ID")
-		return
-	}
-
-	id := baseModelPtr.ID
-	tableName := t.info.TableName
-
-	// 1. Get potentially affected query keys from the index
-	queryCacheKeys := globalCacheIndex.GetPotentiallyAffectedQueries(tableName)
-	if len(queryCacheKeys) == 0 {
-		log.Printf("DEBUG: No query caches registered for table '%s', skipping incremental update for ID %d", tableName, id)
-		return
-	}
-
-	log.Printf("DEBUG: Found %d potential query caches to update for table '%s' after change to ID %d", len(queryCacheKeys), tableName, id)
-
-	// --- Phase 1: Gather Update Tasks ---
-	type cacheUpdateTask struct {
-		cacheKey    string
-		queryParams QueryParams
-		isListKey   bool
-		isCountKey  bool
-		needsAdd    bool
-		needsRemove bool
-	}
-	tasks := make([]cacheUpdateTask, 0, len(queryCacheKeys))
-
-	for _, cacheKey := range queryCacheKeys {
-		isListKey := strings.HasPrefix(cacheKey, "list:")
-		isCountKey := strings.HasPrefix(cacheKey, "count:")
-		if !isListKey && !isCountKey {
-			log.Printf("WARN: Skipping unknown cache key format in index: %s", cacheKey)
-			continue
-		}
-
-		params, found := globalCacheIndex.GetQueryParamsForKey(cacheKey)
-		if !found {
-			log.Printf("WARN: QueryParams not found for registered cache key '%s'. Cannot perform incremental update.", cacheKey)
-			continue
-		}
-
-		// Check if the model matches the query conditions
-		matchesCurrent, matchesOriginal, err := t.checkModelMatchAgainstQuery(model, originalModel, params, isCreate)
-		if err != nil {
-			// Log the error and delete the specific cache key that failed the check
-			log.Printf("ERROR CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
-			// Attempt to delete the specific key for this iteration
-			if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, ErrNotFound) {
-				log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
-			}
-			continue // Skip further processing for this query cache
-		}
-
-		// Determine action
-		needsAdd, needsRemove := determineCacheAction(isCreate, matchesOriginal, matchesCurrent, baseModelPtr.KeepItem())
-
-		if needsAdd || needsRemove {
-			log.Printf("DEBUG Gather Task (%s): Action determined: Add=%v, Remove=%v", cacheKey, needsAdd, needsRemove)
-			tasks = append(tasks, cacheUpdateTask{
-				cacheKey:    cacheKey,
-				queryParams: params, // Store params for potential future use
-				isListKey:   isListKey,
-				isCountKey:  isCountKey,
-				needsAdd:    needsAdd,
-				needsRemove: needsRemove,
-			})
-		} else {
-			log.Printf("DEBUG Gather Task (%s): No cache change needed.", cacheKey)
-		}
-	}
-
-	if len(tasks) == 0 {
-		log.Printf("DEBUG: No actual cache updates required for ID %d after checks.", id)
-		return
-	}
-
-	log.Printf("DEBUG: Processing %d cache update tasks for ID %d.", len(tasks), id)
-
-	// --- Phase 2: Simulated Batch Read ---
-	initialListValues := make(map[string][]int64)
-	initialCountValues := make(map[string]int64)
-	readErrors := make(map[string]error) // Store errors encountered during read
-
-	for _, task := range tasks {
-		if task.isListKey {
-			// Avoid reading again if already processed (map check handles this)
-			if _, exists := initialListValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
-				cachedIDs, err := t.cache.GetQueryIDs(ctx, task.cacheKey)
-				if err != nil && !errors.Is(err, ErrNotFound) {
-					log.Printf("ERROR: Failed to read initial list cache for key %s: %v", task.cacheKey, err)
-					readErrors[task.cacheKey] = err        // Record error
-					initialListValues[task.cacheKey] = nil // Mark as errored/unreadable
-				} else {
-					if errors.Is(err, ErrNotFound) {
-						log.Printf("DEBUG Read (%s): List cache key not found, treating as empty.", task.cacheKey)
-						initialListValues[task.cacheKey] = []int64{} // Treat not found as empty list
-					} else if cachedIDs == nil {
-						log.Printf("WARN: GetQueryIDs returned nil error but nil slice for key %s. Treating as empty.", task.cacheKey)
-						initialListValues[task.cacheKey] = []int64{}
-					} else {
-						log.Printf("DEBUG Read (%s): Read initial list with %d IDs.", task.cacheKey, len(cachedIDs))
-						initialListValues[task.cacheKey] = cachedIDs
-					}
-				}
-			}
-		} else if task.isCountKey {
-			if _, exists := initialCountValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
-				count, err := getCachedCount(ctx, t.cache, task.cacheKey) // Uses internal helper which handles NotFound
-				if err != nil {
-					// getCachedCount already logs specific errors and returns 0 for ErrNotFound
-					log.Printf("ERROR: Failed to read initial count cache for key %s: %v", task.cacheKey, err)
-					readErrors[task.cacheKey] = err        // Record error
-					initialCountValues[task.cacheKey] = -1 // Indicate error state if needed, though getCachedCount returns 0 on error
-				} else {
-					log.Printf("DEBUG Read (%s): Read initial count: %d.", task.cacheKey, count)
-					initialCountValues[task.cacheKey] = count
-				}
-			}
-		}
-	}
-
-	// --- Phase 3: Compute Updates & Identify Changes ---
-	type finalWriteTask struct {
-		cacheKey  string
-		newList   []int64 // nil if not a list update
-		newCount  int64   // -1 if not a count update
-		isListKey bool
-	}
-	writesNeeded := make(map[string]finalWriteTask) // Use map to handle potential duplicate keys from tasks list
-
-	for _, task := range tasks {
-		// Skip if there was a read error for this key
-		if readErrors[task.cacheKey] != nil {
-			log.Printf("WARN: Skipping update computation for key %s due to previous read error.", task.cacheKey)
-			continue
-		}
-
-		if task.isListKey {
-			initialIDs := initialListValues[task.cacheKey]
-			if initialIDs == nil {
-				// This case might happen if the key was processed multiple times and failed read earlier
-				log.Printf("WARN: Skipping list update for %s, initial value missing (potentially due to earlier read error).", task.cacheKey)
-				continue
-			}
-
-			var updatedIDs []int64
-			changed := false
-			if task.needsAdd {
-				if !containsID(initialIDs, id) {
-					// updatedIDs = append(initialIDs, id) // Simple append, order might not matter or needs sorting later if needed
-					updatedIDs = addIDToListIfNotExists(initialIDs, id) // Use helper
-					changed = true
-					log.Printf("DEBUG Compute (%s): Adding ID %d. List size %d -> %d", task.cacheKey, id, len(initialIDs), len(updatedIDs))
-				} else {
-					updatedIDs = initialIDs // Already exists
-					log.Printf("DEBUG Compute (%s): Skipping list add as ID %d already exists.", task.cacheKey, id)
-				}
-			} else { // needsRemove
-				if len(initialIDs) > 0 && containsID(initialIDs, id) {
-					updatedIDs = removeIDFromList(initialIDs, id)
-					changed = true
-					log.Printf("DEBUG Compute (%s): Removing ID %d. List size %d -> %d", task.cacheKey, id, len(initialIDs), len(updatedIDs))
-				} else {
-					updatedIDs = initialIDs // Not present or list empty
-					log.Printf("DEBUG Compute (%s): Skipping list removal as ID %d not found or cache empty.", task.cacheKey, id)
-				}
-			}
-
-			if changed {
-				// Sort if order matters (e.g., based on query Params.Order) - COMPLEX, skip for now
-				// Ensure consistent order if needed by sorting `updatedIDs` here.
-				// sort.Slice(updatedIDs, func(i, j int) bool { return updatedIDs[i] < updatedIDs[j] }) // Example: sort ascending
-
-				writesNeeded[task.cacheKey] = finalWriteTask{
-					cacheKey:  task.cacheKey,
-					newList:   updatedIDs,
-					newCount:  -1, // Mark as not a count update
-					isListKey: true,
-				}
-				log.Printf("DEBUG Compute (%s): Identified list write needed. New size: %d", task.cacheKey, len(updatedIDs))
-			}
-
-		} else if task.isCountKey {
-			initialCount := initialCountValues[task.cacheKey]
-			if initialCount == -1 { // Check for error state from read phase
-				log.Printf("WARN: Skipping count update for %s, initial value indicates read error.", task.cacheKey)
-				continue
-			}
-
-			newCount := initialCount
-			changed := false
-			if task.needsAdd {
-				newCount++
-				changed = true
-				log.Printf("DEBUG Compute (%s): Incrementing count %d -> %d", task.cacheKey, initialCount, newCount)
-			} else { // needsRemove
-				if newCount > 0 {
-					newCount--
-					changed = true
-					log.Printf("DEBUG Compute (%s): Decrementing count %d -> %d", task.cacheKey, initialCount, newCount)
-				} else {
-					log.Printf("DEBUG Compute (%s): Skipping count decrement as it's already zero.", task.cacheKey)
-				}
-			}
-
-			if changed {
-				writesNeeded[task.cacheKey] = finalWriteTask{
-					cacheKey:  task.cacheKey,
-					newList:   nil, // Mark as not a list update
-					newCount:  newCount,
-					isListKey: false,
-				}
-				log.Printf("DEBUG Compute (%s): Identified count write needed. New value: %d", task.cacheKey, newCount)
-			}
-		}
-	}
-
-	// --- Phase 4: Conditional Batch Write (with Locking) ---
-	if len(writesNeeded) == 0 {
-		log.Printf("DEBUG: No actual cache writes required for ID %d after computation.", id)
-		return
-	}
-
-	log.Printf("DEBUG: Attempting to write %d cache updates for ID %d.", len(writesNeeded), id)
-	locker := globalCacheKeyLocker // Assumes global locker exists
-
-	for key, writeTask := range writesNeeded {
-		// Lock the specific cache key before modifying
-		log.Printf("DEBUG Write (%s): Acquiring lock...", key)
-		locker.Lock(key) // Assume Lock doesn't return an error to check here
-		log.Printf("DEBUG Write (%s): Acquired lock.", key)
-
-		var writeErr error
-		if writeTask.isListKey {
-			writeErr = setCachedListIDs(ctx, t.cache, key, writeTask.newList, globalCacheTTL)
-			if writeErr == nil {
-				log.Printf("DEBUG Write (%s): Successfully updated cached ID list (size %d).", key, len(writeTask.newList))
-			}
-		} else { // isCountKey
-			writeErr = setCachedCount(ctx, t.cache, key, writeTask.newCount, globalCacheTTL)
-			if writeErr == nil {
-				log.Printf("DEBUG Write (%s): Successfully updated cached count (%d).", key, writeTask.newCount)
-			}
-		}
-
-		// Unlock the key regardless of write error
-		log.Printf("DEBUG Write (%s): Releasing lock...", key)
-		locker.Unlock(key) // Assume Unlock doesn't return an error to check here
-		log.Printf("DEBUG Write (%s): Released lock.", key)
-
-		if writeErr != nil {
-			log.Printf("ERROR: Failed cache write for key %s: %v", key, writeErr)
-			// Attempt to delete the potentially corrupted key to force refresh on next query
-			deleteErr := t.cache.Delete(ctx, key) // Use generic Delete
-			if deleteErr != nil {
-				log.Printf("ERROR: Failed to delete potentially corrupted cache key %s after write error: %v", key, deleteErr)
-			} else {
-				log.Printf("INFO: Deleted potentially corrupted cache key %s after write error.", key)
-			}
-		}
-	}
-	log.Printf("DEBUG: Completed cache update processing for ID %d.", id)
-}
-
-// handleDeleteInQueryCaches is called after a Delete operation
-// to incrementally update relevant list and count caches by removing the deleted item.
-// It's now a method of Thing[T].
-func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
-	if t.cache == nil {
-		return // No cache configured
-	}
-	baseModelPtr := getBaseModelPtr(model)
-	if baseModelPtr == nil || baseModelPtr.ID == 0 {
-		log.Printf("WARN: handleDeleteInQueryCaches skipped for model without BaseModel or ID")
-		return
-	}
-
-	id := baseModelPtr.ID
-	tableName := t.info.TableName
-
-	// 1. Get potentially affected query keys from the index
-	queryCacheKeys := globalCacheIndex.GetPotentiallyAffectedQueries(tableName)
-	if len(queryCacheKeys) == 0 {
-		log.Printf("DEBUG: No query caches registered for table '%s', skipping incremental delete update for ID %d", tableName, id)
-		return
-	}
-
-	log.Printf("DEBUG: Found %d potential query caches to update for table '%s' after delete of ID %d", len(queryCacheKeys), tableName, id)
-
-	// --- Phase 1: Gather Remove Tasks ---
-	type cacheRemoveTask struct {
-		cacheKey    string
-		isListKey   bool
-		isCountKey  bool
-		wasMatching bool // Did the item match the query before deletion?
-	}
-	tasks := make([]cacheRemoveTask, 0, len(queryCacheKeys))
-
-	for _, cacheKey := range queryCacheKeys {
-		isListKey := strings.HasPrefix(cacheKey, "list:")
-		isCountKey := strings.HasPrefix(cacheKey, "count:")
-		if !isListKey && !isCountKey {
-			log.Printf("WARN Delete Cache Update: Skipping unknown cache key format: %s", cacheKey)
-			continue
-		}
-
-		params, found := globalCacheIndex.GetQueryParamsForKey(cacheKey)
-		if !found {
-			log.Printf("WARN Delete Cache Update: QueryParams not found for key '%s'. Skipping.", cacheKey)
-			continue
-		}
-
-		// Check if the model *would have matched* the query before deletion
-		// We pass the model itself, assuming CheckQueryMatch handles nil originalModel correctly
-		matches, err := t.CheckQueryMatch(model, params)
-		if err != nil {
-			log.Printf("WARN Delete Cache Update: Error checking query match for deleted model (key: %s): %v. Skipping.", cacheKey, err)
-			continue
-		}
-
-		if matches {
-			log.Printf("DEBUG Delete Gather Task (%s): Deleted item matched query. Needs Remove.", cacheKey)
-			tasks = append(tasks, cacheRemoveTask{
-				cacheKey:    cacheKey,
-				isListKey:   isListKey,
-				isCountKey:  isCountKey,
-				wasMatching: true,
-			})
-		} else {
-			log.Printf("DEBUG Delete Gather Task (%s): Deleted item did not match query. No cache change needed.", cacheKey)
-		}
-	}
-
-	if len(tasks) == 0 {
-		log.Printf("DEBUG Delete Cache Update: No actual cache removals required for ID %d.", id)
-		return
-	}
-
-	log.Printf("DEBUG Delete Cache Update: Processing %d cache removal tasks for ID %d.", len(tasks), id)
-
-	// --- Phase 2: Simulated Batch Read ---
-	initialListValues := make(map[string][]int64)
-	initialCountValues := make(map[string]int64)
-	readErrors := make(map[string]error)
-
-	for _, task := range tasks {
-		// Only read if it was matching (otherwise no update needed)
-		if !task.wasMatching {
-			continue
-		}
-
-		if task.isListKey {
-			if _, exists := initialListValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
-				cachedIDs, err := t.cache.GetQueryIDs(ctx, task.cacheKey)
-				if err != nil && !errors.Is(err, ErrNotFound) {
-					log.Printf("ERROR Delete Cache Update: Failed read initial list for key %s: %v", task.cacheKey, err)
-					readErrors[task.cacheKey] = err
-					initialListValues[task.cacheKey] = nil
-				} else {
-					if errors.Is(err, ErrNotFound) {
-						initialListValues[task.cacheKey] = []int64{}
-					} else if cachedIDs == nil {
-						initialListValues[task.cacheKey] = []int64{}
-					} else {
-						initialListValues[task.cacheKey] = cachedIDs
-					}
-					log.Printf("DEBUG Delete Read (%s): Read initial list (size %d).", task.cacheKey, len(initialListValues[task.cacheKey]))
-				}
-			}
-		} else if task.isCountKey {
-			if _, exists := initialCountValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
-				count, err := getCachedCount(ctx, t.cache, task.cacheKey)
-				if err != nil {
-					log.Printf("ERROR Delete Cache Update: Failed read initial count for key %s: %v", task.cacheKey, err)
-					readErrors[task.cacheKey] = err
-					initialCountValues[task.cacheKey] = -1
-				} else {
-					initialCountValues[task.cacheKey] = count
-					log.Printf("DEBUG Delete Read (%s): Read initial count (%d).", task.cacheKey, count)
-				}
-			}
-		}
-	}
-
-	// --- Phase 3: Compute Updates & Identify Changes ---
-	type finalWriteTask struct {
-		cacheKey  string
-		newList   []int64 // nil if not a list update
-		newCount  int64   // -1 if not a count update
-		isListKey bool
-	}
-	writesNeeded := make(map[string]finalWriteTask)
-
-	for _, task := range tasks {
-		if !task.wasMatching || readErrors[task.cacheKey] != nil {
-			continue // Skip if wasn't matching or read failed
-		}
-
-		if task.isListKey {
-			initialIDs := initialListValues[task.cacheKey]
-			if initialIDs == nil {
-				continue
-			} // Skip if read failed earlier
-
-			if len(initialIDs) > 0 && containsID(initialIDs, id) {
-				updatedIDs := removeIDFromList(initialIDs, id)
-				log.Printf("DEBUG Delete Compute (%s): Removing ID %d. List size %d -> %d", task.cacheKey, id, len(initialIDs), len(updatedIDs))
-				// Sort if needed
-				writesNeeded[task.cacheKey] = finalWriteTask{
-					cacheKey:  task.cacheKey,
-					newList:   updatedIDs,
-					newCount:  -1,
-					isListKey: true,
-				}
-			} else {
-				log.Printf("DEBUG Delete Compute (%s): Skipping list removal as ID %d not found or cache empty.", task.cacheKey, id)
-			}
-		} else if task.isCountKey {
-			initialCount := initialCountValues[task.cacheKey]
-			if initialCount == -1 {
-				continue
-			} // Skip if read failed earlier
-
-			if initialCount > 0 {
-				newCount := initialCount - 1
-				log.Printf("DEBUG Delete Compute (%s): Decrementing count %d -> %d", task.cacheKey, initialCount, newCount)
-				writesNeeded[task.cacheKey] = finalWriteTask{
-					cacheKey:  task.cacheKey,
-					newList:   nil,
-					newCount:  newCount,
-					isListKey: false,
-				}
-			} else {
-				log.Printf("DEBUG Delete Compute (%s): Skipping count decrement as it's already zero.", task.cacheKey)
-			}
-		}
-	}
-
-	// --- Phase 4: Conditional Batch Write (with Locking) ---
-	if len(writesNeeded) == 0 {
-		log.Printf("DEBUG Delete Cache Update: No actual cache writes required for ID %d.", id)
-		return
-	}
-
-	log.Printf("DEBUG Delete Cache Update: Attempting to write %d cache updates for ID %d.", len(writesNeeded), id)
-	locker := globalCacheKeyLocker
-
-	for key, writeTask := range writesNeeded {
-		log.Printf("DEBUG Delete Write (%s): Acquiring lock...", key)
-		locker.Lock(key) // Assume Lock doesn't return an error
-		log.Printf("DEBUG Delete Write (%s): Acquired lock.", key)
-
-		var writeErr error
-		if writeTask.isListKey {
-			writeErr = setCachedListIDs(ctx, t.cache, key, writeTask.newList, globalCacheTTL)
-			if writeErr == nil {
-				log.Printf("DEBUG Delete Write (%s): Successfully updated list (size %d).", key, len(writeTask.newList))
-			}
-		} else {
-			writeErr = setCachedCount(ctx, t.cache, key, writeTask.newCount, globalCacheTTL)
-			if writeErr == nil {
-				log.Printf("DEBUG Delete Write (%s): Successfully updated count (%d).", key, writeTask.newCount)
-			}
-		}
-
-		log.Printf("DEBUG Delete Write (%s): Releasing lock...", key)
-		locker.Unlock(key) // Assume Unlock doesn't return an error
-		log.Printf("DEBUG Delete Write (%s): Released lock.", key)
-
-		if writeErr != nil {
-			log.Printf("ERROR Delete Cache Update: Failed write for key %s: %v", key, writeErr)
-			deleteErr := t.cache.Delete(ctx, key)
-			if deleteErr != nil {
-				log.Printf("ERROR Delete Cache Update: Failed delete potentially corrupted key %s: %v", key, deleteErr)
-			} else {
-				log.Printf("INFO Delete Cache Update: Deleted potentially corrupted key %s.", key)
-			}
-		}
-	}
-	log.Printf("DEBUG Delete Cache Update: Completed processing for ID %d.", id)
-}
-
-// --- Helper functions for list/count cache ---
-
-// containsID checks if an ID exists in a slice of int64.
-func containsID(ids []int64, id int64) bool {
-	for _, currentID := range ids {
-		if currentID == id {
-			return true
-		}
-	}
-	return false
-}
-
-// Helper function to check if a model matches query parameters.
-// Returns: matchesCurrent, matchesOriginal, error
-func (t *Thing[T]) checkModelMatchAgainstQuery(model *T, originalModel *T, params QueryParams, isCreate bool) (bool, bool, error) {
-	var matchesCurrent, matchesOriginal bool
-	var matchErr error
-
-	// Check current model state
-	matchesCurrent, matchErr = t.CheckQueryMatch(model, params)
-	if matchErr != nil {
-		return false, false, fmt.Errorf("error checking query match for current model: %w", matchErr)
-	}
-
-	// Check original model state (only relevant for updates)
-	if !isCreate && originalModel != nil {
-		matchesOriginal, matchErr = t.CheckQueryMatch(originalModel, params)
-		if matchErr != nil {
-			return false, false, fmt.Errorf("error checking query match for original model: %w", matchErr)
-		}
-	}
-	return matchesCurrent, matchesOriginal, nil
-}
-
-// Helper function to determine cache action based on match status and deletion status.
-// Returns: needsAdd, needsRemove
-func determineCacheAction(isCreate, matchesOriginal, matchesCurrent bool, isKept bool) (bool, bool) {
-	needsAdd := false
-	needsRemove := false
-
-	if !isKept {
-		// If item is soft-deleted, it always needs removal (if it was previously matching)
-		// and never needs adding.
-		log.Printf("DEBUG Determine Action: Model is soft-deleted (KeepItem=false). Ensuring removal.")
-		needsRemove = true // Ensure removal attempt
-		needsAdd = false
-	} else if isCreate {
-		if matchesCurrent {
-			needsAdd = true
-			log.Printf("DEBUG Determine Action: Create matches query. Needs Add.")
-		}
-	} else { // Update
-		if matchesCurrent && !matchesOriginal {
-			needsAdd = true
-			log.Printf("DEBUG Determine Action: Update now matches query (didn't before). Needs Add.")
-		} else if !matchesCurrent && matchesOriginal {
-			needsRemove = true
-			log.Printf("DEBUG Determine Action: Update no longer matches query (did before). Needs Remove.")
-		}
-		// If match status didn't change (both true or both false), neither add nor remove is needed.
-	}
-
-	// If it needs adding, it cannot simultaneously need removing based on match status change.
-	if needsAdd {
-		needsRemove = false
-	}
-
-	return needsAdd, needsRemove
-}
+// --- Incremental Cache Update Methods --- // MOVED to cache.go
+
+// // updateAffectedQueryCaches is called after a Save operation
+// // to incrementally update relevant list and count caches.
+// // It's now a method of Thing[T].
+// func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, originalModel *T, isCreate bool) {
+// ... (rest of updateAffectedQueryCaches code omitted)
+// }
+
+// // handleDeleteInQueryCaches is called after a Delete operation
+// // to incrementally update relevant list and count caches by removing the deleted item.
+// // It's now a method of Thing[T].
+// func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
+// ... (rest of handleDeleteInQueryCaches code omitted)
+// }
+
+// --- Helper functions for list/count cache --- // MOSTLY MOVED to cache.go
+
+// // containsID checks if an ID exists in a slice of int64.
+// // ... (rest of containsID)
+// func containsID(ids []int64, id int64) bool {
+// 	for _, currentID := range ids {
+// 		if currentID == id {
+// 			return true
+// 		}
+// 	}
+// 	return false
+// }
+
+// // checkModelMatchAgainstQuery checks if a model matches query params.
+// // ... (rest of checkModelMatchAgainstQuery)
+// func (t *Thing[T]) checkModelMatchAgainstQuery(model *T, originalModel *T, params QueryParams, isCreate bool) (bool, bool, error) {
+// 	var matchesCurrent, matchesOriginal bool
+// 	var matchErr error
+//
+// 	// Check current model state
+// 	matchesCurrent, matchErr = t.CheckQueryMatch(model, params) // CheckQueryMatch is defined in query_match.go
+// 	if matchErr != nil {
+// 		return false, false, fmt.Errorf("error checking query match for current model: %w", matchErr)
+// 	}
+//
+// 	// Check original model state (only relevant for updates)
+// 	if !isCreate && originalModel != nil {
+// 		matchesOriginal, matchErr = t.CheckQueryMatch(originalModel, params) // CheckQueryMatch is defined in query_match.go
+// 		if matchErr != nil {
+// 			return false, false, fmt.Errorf("error checking query match for original model: %w", matchErr)
+// 		}
+// 	}
+// 	return matchesCurrent, matchesOriginal, nil
+// }
+
+// // determineCacheAction determines cache add/remove actions.
+// // ... (rest of determineCacheAction)
+// func determineCacheAction(isCreate, matchesOriginal, matchesCurrent bool, isKept bool) (bool, bool) {
+// 	needsAdd := false
+// 	needsRemove := false
+//
+// 	if !isKept {
+// 		// If item is soft-deleted, it always needs removal (if it was previously matching)
+// 		// and never needs adding.
+// 		log.Printf("DEBUG Determine Action: Model is soft-deleted (KeepItem=false). Ensuring removal.")
+// 		needsRemove = true // Ensure removal attempt
+// 		needsAdd = false
+// 	} else if isCreate {
+// 		if matchesCurrent {
+// 			needsAdd = true
+// 			log.Printf("DEBUG Determine Action: Create matches query. Needs Add.")
+// 		}
+// 	} else { // Update
+// 		if matchesCurrent && !matchesOriginal {
+// 			needsAdd = true
+// 			log.Printf("DEBUG Determine Action: Update now matches query (didn't before). Needs Add.")
+// 		} else if !matchesCurrent && matchesOriginal {
+// 			needsRemove = true
+// 			log.Printf("DEBUG Determine Action: Update no longer matches query (did before). Needs Remove.")
+// 		}
+// 		// If match status didn't change (both true or both false), neither add nor remove is needed.
+// 	}
+//
+// 	// If it needs adding, it cannot simultaneously need removing based on match status change.
+// 	if needsAdd {
+// 		needsRemove = false
+// 	}
+//
+// 	return needsAdd, needsRemove
+// }
+
+// --- Cache Helpers --- // MOVED to cache.go
+
+// // updateAffectedQueryCaches is called after a Save operation
+// // to incrementally update relevant list and count caches.
+// // It's now a method of Thing[T].
+// func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, originalModel *T, isCreate bool) {
+// ... (rest of updateAffectedQueryCaches code omitted)
+// }
+
+// // handleDeleteInQueryCaches is called after a Delete operation
+// // to incrementally update relevant list and count caches by removing the deleted item.
+// // It's now a method of Thing[T].
+// func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
+// ... (rest of handleDeleteInQueryCaches code omitted)
+// }
+
+// --- ClearCacheByID MOVED to cache.go ---
+// func (t *Thing[T]) ClearCacheByID(ctx context.Context, id int64) error {
+// ... (rest of ClearCacheByID code omitted)
+// }
