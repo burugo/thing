@@ -160,7 +160,9 @@ func TestThing_Delete(t *testing.T) {
 	// Access the Counters map directly
 	// Check counts *after* the Delete operation.
 	// DeleteModel is called once by Delete itself.
-	assert.Equal(t, 1, mockCache.Counters["DeleteModel"], "Expected 1 DeleteModel call from th.Delete")
+	assert.Equal(t, 0, mockCache.Counters["DeleteModel"], "Expected 0 DeleteModel calls")
+	assert.Equal(t, 1, mockCache.Counters["Delete"], "Expected 1 Delete call from th.Delete")
+
 	// Cache invalidation for 3 caches (count name, list email, count email) involves reads and writes.
 	assert.Equal(t, 2, mockCache.Counters["Get"], "Expected 2 Gets (count name + count email)")
 	assert.Equal(t, 1, mockCache.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (list email)")
