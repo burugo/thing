@@ -332,6 +332,18 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   **[ ] Test Soft Delete:**
             *   Add tests to verify the correctness and reliability of soft delete functionality.
     *   **Success Criteria:** Soft delete is implemented and tested.
+24. **[ ] Task: Refactor `thing.go` and Project Structure**
+    *   **Goal:** Split the large `thing.go` file into smaller, more logical files and reorganize related internal files/drivers into appropriate directories (mainly under `internal`).
+    *   **Sub-tasks:**
+        *   **[ ] Analyze `thing.go`:** Identify functional blocks (core struct/init, CRUD internals, hooks, errors, BaseModel, etc.).
+        *   **[ ] Split `thing.go`:** Create new files (e.g., `core.go`, `crud_internal.go`, `hooks.go`, `errors.go`, `model.go`) within the `thing` package and move corresponding code.
+        *   **[ ] Move Redis Driver:** Relocate `cache/redis/client.go` to `internal/drivers/cache/redis/client.go`.
+        *   **[ ] Move Cache Internals:** Relocate root `cache_helpers.go`, `cache_index.go`, `cache_locker.go` to `internal/cache/`.
+        *   **[ ] Move Query Matcher:** Relocate `query_match.go` to `internal/cache/query_match.go`.
+        *   **[ ] Update Imports:** Adjust any necessary import paths due to file moves.
+        *   **[ ] Run Tests:** Execute `go test -v ./...` to ensure all tests pass after refactoring.
+        *   **[ ] Code Review:** (Optional) Review the new structure for clarity and correctness.
+    *   **Success Criteria:** `thing.go` is split logically. Cache driver and internal helpers are moved under `internal`. All code compiles, and all tests pass.
 
 ## Future Enhancements (Planned)
 
@@ -355,6 +367,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   [ ] Task 21: Implement JSON Serialization Features
 *   [ ] Task 22: Implement `WithTransaction` Pattern
 *   [ ] Task 23: Implement Soft Delete
+*   [ ] Task 24: Refactor `thing.go` and Project Structure
 *   [ ] Define core interfaces (`DBAdapter`, `CacheClient`, `Model`, etc.) (Part of Task 1)
 *   [ ] Implement SQLite DB Adapter (Part of Task 2)
 *   [ ] Implement *actual* DB logic for CRUD (Task 3)
