@@ -2,6 +2,9 @@ package thing
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -755,4 +758,28 @@ func (m *CacheKeyLockManagerInternal) Unlock(key string) {
 	} else {
 		log.Printf("WARN: Attempted to Unlock a key ('%s') that was not locked or doesn't exist.", key)
 	}
+}
+
+// --- Internal Cache Key Generation ---
+
+// GenerateQueryHash generates a unique hash for a given query.
+func GenerateQueryHash(params cache.QueryParams) string {
+	// Normalize and marshal params to JSON
+	paramsJson, err := json.Marshal(params)
+	if err != nil {
+		log.Printf("ERROR: Failed to marshal query params for hash: %v", err)
+		return fmt.Sprintf("error_hash_%d", time.Now().UnixNano()) // Fallback
+	}
+
+	// Generate SHA-256 hash
+	hasher := sha256.New()
+	hasher.Write(paramsJson)
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// --- Test Helpers (Exported) ---
+
+// TestHelper_GenerateQueryHash exposes query hash generation for testing purposes.
+func TestHelper_GenerateQueryHash(params cache.QueryParams) string {
+	return GenerateQueryHash(params)
 }
