@@ -151,3 +151,18 @@ func (t *Thing[T]) ToJSON(model *T, opts ...JSONOption) ([]byte, error) {
 
 	return json.Marshal(outputMap)
 }
+
+// WithFields is an alias for WithFieldsDSL, allowing users to specify flexible field control using a simple string DSL.
+// Example: user.ToJSON(WithFields("name,book{title,-publish_at}"))
+func WithFields(dsl string) JSONOption {
+	return WithFieldsDSL(dsl)
+}
+
+// WithFieldsDSL parses a DSL string and returns a JSONOption for flexible field control.
+// Example: user.ToJSON(WithFieldsDSL("name,book{title,-publish_at}"))
+func WithFieldsDSL(dsl string) JSONOption {
+	return func(opts *jsonOptions) {
+		// TODO: Parse DSL string and populate opts.include, opts.exclude, opts.nested, etc.
+		// This is a stub for now.
+	}
+}

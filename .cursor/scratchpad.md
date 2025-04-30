@@ -342,6 +342,37 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
   - [x] Refactor pointer instantiation to utils.NewPtr[T] (Executor)
   - [x] Debug and fix remaining test failures: WithDeleted, SoftDelete_CacheInteraction, Transaction tests (Planner/Executor)
   - [x] Fix transaction test double-pointer bug (Executor)
+- [ ] Flexible JSON field control via WithFields/WithFieldsDSL (Planner/Executor)
+  - [ ] Define internal rule tree structure for field include/exclude/nested (Planner)
+  - [ ] Implement DSL parser: string -> rule tree (Planner/Executor)
+  - [ ] Integrate rule tree with jsonOptions and ToJSON (Executor)
+  - [ ] Support nested/relationship field recursion (Executor)
+  - [ ] Add tests for DSL parsing and ToJSON output (Executor)
+  - [ ] Document usage and add examples (Planner/Executor)
+
+## Planner: Next Feature Planning
+
+### 高级 JSON 灵活字段控制（WithFields/WithFieldsDSL）任务拆解
+
+1. **定义规则树结构**
+    - 设计一个能表达字段包含/排除、嵌套关系的结构（如 FieldRuleTree 或扩展 jsonOptions）。
+    - 成功标准：结构能表达所有 DSL 语法场景，便于递归查找。
+2. **实现 DSL 解析器**
+    - 编写递归 descent parser，将 DSL 字符串解析为规则树。
+    - 支持逗号分隔、-前缀、{}嵌套、多层递归。
+    - 成功标准：给定 DSL 字符串能正确生成规则树，单元测试覆盖典型用例。
+3. **集成到 ToJSON 流程**
+    - 让 WithFieldsDSL/WithFields 解析结果注入到 jsonOptions，ToJSON 能查规则树决定字段输出。
+    - 成功标准：ToJSON 支持灵活字段控制，能递归处理嵌套关系。
+4. **支持关系字段递归序列化**
+    - 对 hasMany/belongsTo 字段，能递归应用子规则。
+    - 成功标准：嵌套关系字段能按 DSL 规则输出。
+5. **测试与文档**
+    - 添加覆盖各种 DSL 场景的测试。
+    - 在文档和示例中推荐 WithFields 作为主入口。
+    - 成功标准：测试全绿，文档清晰。
+
+如需优先实现某一步或有特殊需求，请补充！
 
 ## Executor's Feedback or Assistance Requests
 
