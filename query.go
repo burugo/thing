@@ -251,17 +251,15 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 
 		// Filter models based on KeepItem()
 		for _, id := range batchIDs {
-			// If we have enough valid IDs, stop
 			if len(validIDs) >= cacheListCountLimit {
 				break
 			}
-
 			model, found := models[id]
 			if !found {
-				continue // Model not found, skip
+				continue
 			}
-
-			if model.KeepItem() {
+			// Only filter out soft-deleted items if !IncludeDeleted
+			if cr.params.IncludeDeleted || model.KeepItem() {
 				validIDs = append(validIDs, id)
 			}
 		}
@@ -461,26 +459,21 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 		processedFromBatch := 0
 		for _, id := range idsToCheck {
 			processedFromBatch++
-
 			model, found := models[id]
 			if !found {
-				// ID exists but model not returned (e.g., deleted between queries)
 				if fetchSource == "Cache" {
 					anyIssueFound = true
 				}
 				continue
 			}
-
-			if model.KeepItem() {
+			// Only filter out soft-deleted items if !IncludeDeleted
+			if cr.params.IncludeDeleted || model.KeepItem() {
 				finalResults = append(finalResults, model)
 				remainingNeeded--
 				if remainingNeeded == 0 {
-					break // Got all we need
+					break
 				}
 			} else if fetchSource == "Cache" {
-				// Item is soft-deleted (KeepItem is false),
-				// we are NOT including deleted items,
-				// AND it came from cache -> inconsistency
 				anyIssueFound = true
 			}
 		}

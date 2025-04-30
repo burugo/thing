@@ -338,20 +338,32 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 - [x] Reduce excessive log output in mock_cache_test.go (Executor)
 - [x] Fix pointer type issues in relationships and soft delete tests (Planner/Executor)
   - [x] Audit and Fix Reflection/DB Adapter Pointer Usage (Executor)
-  - [ ] Fix SoftDelete/Save Logic Pointer Handling (Planner/Executor)
+  - [x] Fix SoftDelete/Save Logic Pointer Handling (Planner/Executor)
+  - [x] Refactor pointer instantiation to utils.NewPtr[T] (Executor)
+  - [x] Debug and fix remaining test failures: WithDeleted, SoftDelete_CacheInteraction, Transaction tests (Planner/Executor)
+  - [x] Fix transaction test double-pointer bug (Executor)
 
 ## Executor's Feedback or Assistance Requests
 
-- The pointer type fix in `preloadHasMany` was implemented (always passing `reflect.PtrTo(relatedModelType)` to `fetchModelsByIDsInternal`).
-- All relationship preloading tests now pass without pointer/double-pointer errors.
-- However, soft delete and transaction tests still fail. The error is now:
-    - `DB Get Error (Pointer Setup): ... destination must point to a struct, got **thing_test.User`
-    - This suggests that somewhere in the save/soft delete logic, a double pointer (`**User`) is being passed to the DBAdapter's `Get` method, which expects a single pointer (`*User`).
-- Next step: Planner should analyze the save/soft delete logic (especially how the "original" model is fetched for diffing) and break down the fix for Task 2.
+- 所有事务相关测试（TestTransaction_Commit、TestTransaction_Rollback、TestTransaction_Select）已通过，double-pointer 问题彻底解决。
+- 现在所有测试均通过，代码库的指针类型处理已高度一致且健壮。
+- 通过将 new 泛型指针的逻辑抽象为 utils.NewPtr[T]，主流程代码更简洁，后续维护和扩展更容易。
+- 事务和 DBAdapter 的 Get/Select/Exec 相关接口调用方式已标准化，避免了常见的 Go 泛型指针陷阱。
 
 ## Lessons
-- When fixing pointer type issues, always check both the caller and callee for type invariants.
-- Relationship preloading is now robust, but CRUD/Save logic needs a similar audit for pointer correctness.
+
+- Go 泛型下，涉及"new 一个 T 类型指针"时，必须用反射+类型断言，建议统一封装为工具函数，避免重复和易错代码。
+- DB/Tx 的 Get/Select 目标参数必须是"指向 struct 的指针"，绝不能传递 **T。
+- 测试用例中如需获取查询结果，务必先 new，再传指针，保持和主流程一致。
+
+## 反思与建议
+
+- 代码现在更易维护，指针类型相关的 bug 风险大幅降低。
+- 建议后续如有新模型或新泛型 CRUD 场景，均复用 utils.NewPtr[T]，并在测试中保持一致的指针分配方式。
+
+---
+
+如需继续新功能或优化，请 Planner 继续拆解任务。
 
 <details>
 <summary>Background and Motivation (archived)</summary>

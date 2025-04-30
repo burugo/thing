@@ -33,7 +33,8 @@ func TestTransaction_Commit(t *testing.T) {
 
 	// 3. Perform operations within transaction using the Tx object
 	// 3a. Get the user using Tx.Get
-	err = tx.Get(ctx, &originalUser, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", userToCreate.ID)
+	originalUser = new(User)
+	err = tx.Get(ctx, originalUser, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", userToCreate.ID)
 	require.NoError(t, err, "Failed to get user within transaction")
 	assert.Equal(t, userToCreate.Name, originalUser.Name)
 
@@ -46,8 +47,8 @@ func TestTransaction_Commit(t *testing.T) {
 	assert.Equal(t, int64(1), rowsAffected, "Expected 1 row to be affected by update")
 
 	// 3c. Select the user again using Tx.Get to verify intermediate state
-	var updatedUserTx *User
-	err = tx.Get(ctx, &updatedUserTx, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", originalUser.ID)
+	updatedUserTx := new(User)
+	err = tx.Get(ctx, updatedUserTx, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", originalUser.ID)
 	require.NoError(t, err, "Failed to get updated user within transaction")
 	assert.Equal(t, newName, updatedUserTx.Name)
 
@@ -67,8 +68,8 @@ func TestTransaction_Commit(t *testing.T) {
 	assert.Equal(t, newName, finalUserPtr.Name, "User name should be updated after commit (checked via ByID)")
 
 	// 5b. Verify using raw DBAdapter.Get to bypass cache
-	var finalUserDb *User
-	dbErr := dbAdapter.Get(ctx, &finalUserDb, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", originalUser.ID)
+	finalUserDb := new(User)
+	dbErr := dbAdapter.Get(ctx, finalUserDb, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", originalUser.ID)
 	require.NoError(t, dbErr, "Failed raw DB get after commit")
 	assert.Equal(t, newName, finalUserDb.Name, "User name should be updated in DB after commit")
 }
@@ -99,8 +100,8 @@ func TestTransaction_Rollback(t *testing.T) {
 	require.NoError(t, err, "Failed to update user within transaction")
 
 	// 3b. Select within transaction using Tx.Get to verify intermediate state
-	var updatedUserTx *User
-	err = tx.Get(ctx, &updatedUserTx, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", initialID)
+	updatedUserTx := new(User)
+	err = tx.Get(ctx, updatedUserTx, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", initialID)
 	require.NoError(t, err, "Failed to get user within transaction")
 	assert.Equal(t, updateName, updatedUserTx.Name, "Name should be updated within transaction")
 

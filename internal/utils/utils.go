@@ -1,6 +1,9 @@
 package utils
 
-import "sort"
+import (
+	"reflect"
+	"sort"
+)
 
 // NormalizeValue recursively normalizes a value for consistent JSON marshaling.
 // This is necessary to ensure a consistent cache key regardless of how the
@@ -34,4 +37,13 @@ func NormalizeValue(value interface{}) interface{} {
 	default:
 		return v
 	}
+}
+
+// NewPtr returns a non-nil, zero-initialized value of type T (where T is a pointer type).
+func NewPtr[T any]() T {
+	modelType := reflect.TypeOf((*T)(nil)).Elem()
+	if modelType.Kind() == reflect.Ptr {
+		return reflect.New(modelType.Elem()).Interface().(T)
+	}
+	return reflect.New(modelType).Interface().(T)
 }

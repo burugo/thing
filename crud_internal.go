@@ -10,7 +10,9 @@ import (
 	"strings"
 	sqlbuilder "thing/internal/sql"
 	"time"
+
 	// Import internal cache package
+	"thing/internal/utils"
 )
 
 // --- Constants used internally ---
@@ -299,6 +301,8 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		// --- UPDATE Path ---
 		// Fetch the original record to compare against (bypass cache)
 		// We need the original state to correctly update query caches incrementally.
+		original = utils.NewPtr[T]()
+		// Now original is a non-nil pointer of type T
 		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", sqlbuilder.BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName), id) // Use exported PkName
 		if err != nil {
 			// If not found, use zero value for original
