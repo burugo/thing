@@ -248,7 +248,15 @@ func TestCheckQueryMatch(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "IN Mismatch Integer",
+			name: "IN Match String",
+			params: cache.QueryParams{
+				Where: "name IN (?)",
+				Args:  []interface{}{[]string{"Another Name", "Test Name"}},
+			},
+			expected: true,
+		},
+		{
+			name: "IN Mismatch",
 			params: cache.QueryParams{
 				Where: "status IN (?)",
 				Args:  []interface{}{[]int{5, 6, 7}},
@@ -256,42 +264,184 @@ func TestCheckQueryMatch(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "IN Match String",
-			params: cache.QueryParams{
-				Where: "name IN (?)",
-				Args:  []interface{}{[]string{"Other Name", "Test Name", "Another"}},
-			},
-			expected: true,
-		},
-		{
-			name: "IN Mismatch String",
-			params: cache.QueryParams{
-				Where: "name IN (?)",
-				Args:  []interface{}{[]string{"Other", "Another"}},
-			},
-			expected: false,
-		},
-		{
-			name: "IN With Empty Slice",
+			name: "IN Empty Slice Mismatch",
 			params: cache.QueryParams{
 				Where: "status IN (?)",
 				Args:  []interface{}{[]int{}},
 			},
-			expected: false, // SQL IN () is false
+			expected: false,
 		},
 		{
-			name: "IN With Incorrect Arg Type (Error)",
+			name: "IN Invalid Arg Type (Error)",
 			params: cache.QueryParams{
 				Where: "status IN (?)",
-				Args:  []interface{}{123}, // Not a slice
+				Args:  []interface{}{123},
 			},
 			expected:    false,
 			expectError: true,
 		},
 		{
-			name: "Unsupported Operator (!=)",
+			name: "IN Incompatible Slice Type (Error)",
+			params: cache.QueryParams{
+				Where: "status IN (?)",
+				Args:  []interface{}{[]string{"a", "b"}},
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "Unsupported Operator (Error)",
+			params: cache.QueryParams{
+				Where: "status BETWEEN ? AND ?",
+				Args:  []interface{}{0, 5},
+			},
+			expected:    false,
+			expectError: true, // Expect error due to unsupported operator/format
+		},
+		{
+			name: "Pointer Field Equality Match",
+			params: cache.QueryParams{
+				Where: "code = ?",
+				Args:  []interface{}{"ABC"},
+			},
+			expected: true,
+		},
+		{
+			name: "Pointer Field Equality Mismatch",
+			params: cache.QueryParams{
+				Where: "code = ?",
+				Args:  []interface{}{"DEF"},
+			},
+			expected: false,
+		},
+		{
+			name: "Pointer Field Equality Match (Nil Arg)",
+			params: cache.QueryParams{
+				Where: "code = ?",
+				Args:  []interface{}{nil},
+			},
+			expected: false, // model.Code is not nil
+		},
+		// --- Add tests for !=, <>, NOT LIKE, NOT IN ---
+		{
+			name: "Not Equal (!=) Match",
 			params: cache.QueryParams{
 				Where: "status != ?",
+				Args:  []interface{}{2},
+			},
+			expected: true,
+		},
+		{
+			name: "Not Equal (!=) Mismatch",
+			params: cache.QueryParams{
+				Where: "status != ?",
+				Args:  []interface{}{1},
+			},
+			expected: false,
+		},
+		{
+			name: "Not Equal (<>) Match String",
+			params: cache.QueryParams{
+				Where: "name <> ?",
+				Args:  []interface{}{"Wrong Name"},
+			},
+			expected: true,
+		},
+		{
+			name: "Not Equal (<>) Mismatch String",
+			params: cache.QueryParams{
+				Where: "name <> ?",
+				Args:  []interface{}{"Test Name"},
+			},
+			expected: false,
+		},
+		{
+			name: "NOT LIKE Match",
+			params: cache.QueryParams{
+				Where: "name NOT LIKE ?",
+				Args:  []interface{}{"Non%"},
+			},
+			expected: true,
+		},
+		{
+			name: "NOT LIKE Mismatch (End Wildcard)",
+			params: cache.QueryParams{
+				Where: "name NOT LIKE ?",
+				Args:  []interface{}{"Test %"},
+			},
+			expected: false,
+		},
+		{
+			name: "NOT LIKE Mismatch (Exact)",
+			params: cache.QueryParams{
+				Where: "name NOT LIKE ?",
+				Args:  []interface{}{"Test Name"},
+			},
+			expected: false,
+		},
+		{
+			name: "NOT LIKE With Non-String Field (Error)",
+			params: cache.QueryParams{
+				Where: "status NOT LIKE ?",
+				Args:  []interface{}{"1%"},
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "NOT IN Match Integer",
+			params: cache.QueryParams{
+				Where: "status NOT IN (?)",
+				Args:  []interface{}{[]int{5, 6, 7}},
+			},
+			expected: true,
+		},
+		{
+			name: "NOT IN Match String",
+			params: cache.QueryParams{
+				Where: "name NOT IN (?)",
+				Args:  []interface{}{[]string{"Another Name", "Wrong Name"}},
+			},
+			expected: true,
+		},
+		{
+			name: "NOT IN Mismatch",
+			params: cache.QueryParams{
+				Where: "status NOT IN (?)",
+				Args:  []interface{}{[]int{1, 2, 3}},
+			},
+			expected: false,
+		},
+		{
+			name: "NOT IN Empty Slice Match", // Value is not in empty slice
+			params: cache.QueryParams{
+				Where: "status NOT IN (?)",
+				Args:  []interface{}{[]int{}},
+			},
+			expected: true,
+		},
+		{
+			name: "NOT IN Invalid Arg Type (Error)",
+			params: cache.QueryParams{
+				Where: "status NOT IN (?)",
+				Args:  []interface{}{123},
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "NOT IN Incompatible Slice Type (Error)",
+			params: cache.QueryParams{
+				Where: "status NOT IN (?)",
+				Args:  []interface{}{[]string{"a", "b"}},
+			},
+			expected:    false,
+			expectError: true,
+		},
+		{
+			name: "Unsupported Operator (!~)",
+			params: cache.QueryParams{
+				Where: "status !~ ?",
 				Args:  []interface{}{5},
 			},
 			expected:    false,

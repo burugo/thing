@@ -336,8 +336,8 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 24. **[x] Task 24: Refactor `thing` Package Structure (Root Directory)**
     *   **Goal:** Reorganize the `thing` package by splitting the large `thing.go` file into smaller, more focused files based on functionality, placing all `package thing` files directly in the project **root directory**. Related internal components will be moved into an `internal/` directory at the root.
     *   **Sub-tasks:**
-        *   **[ ] Define Target Structure (Root):** Files for `package thing` will be in the root: `thing.go` (core struct/init), `model.go`, `crud.go`, `query.go`, `cache.go`, `hooks.go`, `errors.go`, etc. Internal code will be in `internal/`.
-        *   **[ ] Move Code to Root Files:** Systematically move code blocks from the original `thing.go` to the newly defined files **in the root directory**.
+        *   **[x] Define Target Structure (Root):** Files for `package thing` will be in the root: `thing.go` (core struct/init), `model.go`, `crud.go`, `query.go`, `cache.go`, `hooks.go`, `errors.go`, etc. Internal code will be in `internal/`.
+        *   **[x] Move Code to Root Files:** Systematically move code blocks from the original `thing.go` to the newly defined files **in the root directory**.
             *   Move `Thing` struct definition, `Init`, and related top-level functions/variables to `thing.go`.
             *   Move `BaseModel` definition and related methods to `model.go`.
             *   Move core CRUD functions (`byIDInternal`, `saveInternal`, `deleteInternal`, etc.) to `crud.go` (or similar).
@@ -346,12 +346,12 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
             *   Move hook definitions and execution logic to `hooks.go`.
             *   Move custom error types to `errors.go`.
         *   **[x] Relocate Redis Driver:** Move `cache/redis/client.go` to `internal/drivers/cache/redis/client.go`. (Already Done)
-        *   **[ ] Relocate Cache Helpers:** Move `cache_helpers.go`, `cache_index.go`, `cache_locker.go` from root to `internal/cache/`.
-        *   **[ ] Relocate Query Matcher:** Move `query_match.go` to `internal/cache/query_match.go`.
-        *   **[ ] Relocate DB Adapters:** Create `internal/drivers/db/` and move adapter implementations (e.g., `internal/drivers/db/sqlite/adapter.go`).
-        *   **[ ] Update Imports:** Fix all import paths affected by the file moves and restructuring (imports for internal packages will change).
-        *   **[ ] Run Tests:** Execute `go test -v ./...` to ensure all functionality remains intact and all tests pass.
-        *   **[ ] Code Review:** (Optional) Review the new structure for clarity, correctness, and adherence to Go conventions.
+        *   **[x] Relocate Cache Helpers:** Move `cache_helpers.go`, `cache_index.go`, `cache_locker.go` from root to `internal/cache/`.
+        *   **[x] Relocate Query Matcher:** Move `query_match.go` to `internal/cache/query_match.go`.
+        *   **[x] Relocate DB Adapters:** Create `internal/drivers/db/` and move adapter implementations (e.g., `internal/drivers/db/sqlite/adapter.go`).
+        *   **[x] Update Imports:** Fix all import paths affected by the file moves and restructuring (imports for internal packages will change).
+        *   **[x] Run Tests:** Execute `go test -v ./...` to ensure all functionality remains intact and all tests pass.
+        *   **[x] Code Review:** (Optional) Review the new structure for clarity, correctness, and adherence to Go conventions.
     *   **Success Criteria:** The `thing` package code is split across multiple files in the **root directory**. Internal components (cache helpers, drivers) are moved under `internal`. All code compiles, and all tests pass. The structure is more maintainable and easier to navigate.
 25. **[x] Task 25: Fix Post-Refactor Test Failures (Task 24)**
     *   **Goal:** Resolve the test failures introduced by the Task 24 refactoring.
@@ -365,6 +365,26 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   [x] Fix `TestThing_Delete_Cache` failure.
         *   [x] Fix `TestThing_Query_IncrementalCacheUpdate` failure.
     *   **Success Criteria:** All test failures resolved. Tests pass. **[DONE]**
+26. **[x] Task 26: Further Refactor `thing.go` (Split into Focused Files)**
+    *   **Goal:** Split `thing.go` into multiple files based on functionality, reducing complexity and improving maintainability.
+    *   **Sub-tasks:**
+        *   **[x] Define Target Structure (Root):** Files for `package thing` will be in the root: `thing.go` (core struct/init), `model.go`, `crud.go`, `query.go`, `cache.go`, `hooks.go`, `errors.go`, etc. Internal code will be in `internal/`.
+        *   **[x] Move Code to Root Files:** Systematically move code blocks from the original `thing.go` to the newly defined files **in the root directory**.
+            *   Move `Thing` struct definition, `Init`, and related top-level functions/variables to `thing.go`.
+            *   Move `BaseModel` definition and related methods to `model.go`.
+            *   Move core CRUD functions (`byIDInternal`, `saveInternal`, `deleteInternal`, etc.) to `crud.go` (or similar).
+            *   Move `Query` method and `CachedResult` struct/methods (from `cached_result.go`) to `query.go`. Delete `cached_result.go`.
+            *   Move cache interaction helpers (`generateCacheKey`, `withLock`, `updateAffectedQueryCaches`, `ClearCacheByID`, etc.) from `thing.go` to the **root `cache.go` (part of `package thing`)**.
+            *   Move hook definitions and execution logic to `hooks.go`.
+            *   Move custom error types to `errors.go`.
+        *   **[x] Relocate Redis Driver:** Move `cache/redis/client.go` to `internal/drivers/cache/redis/client.go`. (Already Done)
+        *   **[x] Relocate Cache Helpers:** Move `cache_helpers.go`, `cache_index.go`, `cache_locker.go` from root to `internal/cache/`.
+        *   **[x] Relocate Query Matcher:** Move `query_match.go` to `internal/cache/query_match.go`.
+        *   **[x] Relocate DB Adapters:** Create `internal/drivers/db/` and move adapter implementations (e.g., `internal/drivers/db/sqlite/adapter.go`).
+        *   **[x] Update Imports:** Fix all import paths affected by the file moves and restructuring (imports for internal packages will change).
+        *   **[x] Run Tests:** Execute `go test -v ./...` to ensure all functionality remains intact and all tests pass.
+        *   **[x] Code Review:** (Optional) Review the new structure for clarity, correctness, and adherence to Go conventions.
+    *   **Success Criteria:** The `thing` package code is split across multiple files in the **root directory**. Internal components (cache helpers, drivers) are moved under `internal`. All code compiles, and all tests pass. The structure is more maintainable and easier to navigate.
 
 ## Future Enhancements (Planned)
 
@@ -423,46 +443,4 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   Removed redundant list computation logic from these functions.
         *   Updated relevant test assertions (`TestThing_Delete`, `TestThing_Query_IncrementalCacheUpdate`).
 *   **Current Focus:** Task 26 completed.
-*   **Next Steps:** Proceed with next planned task: Add support for `!=`, `<>`, `NOT LIKE`, `NOT IN` operators in `CheckQueryMatch`.
-
-## Executor's Feedback or Assistance Requests
-
-*   (Previous) Flaky tests encountered after implementing list cache invalidation. The issue stemmed from incorrect assertions in `TestThing_IncrementalCacheUpdate` which expected list caches to be updated rather than invalidated after `Save`/`Delete`. Correcting these assertions resolved the failures.
-*   Successfully implemented the core Soft Delete logic (method, hooks, read filtering, WithDeleted option, cache invalidation strategy). Still needs dedicated tests (part of Task 23).
-*   Refactoring in Task 26 successfully completed. `thing.go` is much smaller, and related logic is grouped into separate files. Import cycles were identified and resolved. All tests pass after the refactor.
-*   The `internal/helpers` package was removed as its functions were moved back into `package thing` (mostly `model.go`) to resolve import cycles.
-*   Ready to proceed with the next task: Adding more operators to `CheckQueryMatch`.
-
-## Lessons
-
-*   When mocking cache behavior (`mockCacheClient`), ensure mock return values (`ErrNotFound`, `ErrCacheNoneResult`) precisely match the expected error types used by the core logic to avoid subtle bugs.
-*   Cache key prefixes must be consistent between where they are set/used (e.g., `CachedResult`) and where they might be invalidated (e.g., `updateAffectedQueryCaches`).
-*   Refactoring test logic sometimes requires careful adjustment of assertions based on underlying implementation changes (e.g., `Fetch` logic change affecting expected `ByIDs` calls).
-*   Deleting cache entries when `CheckQueryMatch` fails due to errors (like unsupported operators) is a safer default strategy than simply skipping the update, as it prevents potential data inconsistency.
-*   For simple helper functions within internal packages (like `GetCachedCount`, `SetCachedCount`), consider inlining their logic directly into the calling package (`thing`) if it significantly reduces dependencies and complexity without sacrificing readability.
-*   Simplifying cache invalidation strategies (e.g., invalidate-on-change vs. complex incremental updates) can reduce code complexity but may require careful adjustment of test assertions, especially those relying on mock call counts.
-*   Flaky test suites often indicate state leakage between tests or subtle timing issues, requiring dedicated debugging (e.g., running tests sequentially, verbose logging, checking setup/teardown).
-*   Refactoring Go code into internal packages requires careful attention to dependencies to avoid import cycles. Sometimes, moving utility functions back into the main package or passing data instead of types is necessary.
-*   Incorrect parsing of struct tags (like `db` tags containing modifiers like `,pk`) can lead to subtle runtime errors in SQL generation or reflection-based logic.
-*   Ensure metadata extraction logic (like `GetCachedModelInfo`) correctly identifies and ignores fields that shouldn't map directly to database columns (e.g., fields representing relationships).
-
-<details>
-<summary>Planner Analysis: List Cache Updates on Create</summary>
-
-**Problem:** When a new object is created, the current cache update logic (`updateAffectedQueryCaches`) appends the new ID to the end of relevant cached ID lists (`SetQueryIDs`). This ignores the `ORDER BY` clause of the original query, causing the cached list's order to be temporarily inconsistent with the database reality for that new item.
-
-**Challenges:**
-*   **Maintaining Order:** Inserting the ID at the correct position based on `ORDER BY` is complex.
-*   **Partial Cache Limit (`cacheListCountLimit`):** Determining the correct position relative to the cache limit (first N IDs) is hard without fetching more data.
-*   **Complexity/Performance:** In-memory sorting based on dynamic `ORDER BY` clauses is complex and potentially slow. Frequent re-sorting/writing impacts cache performance.
-
-**Options Considered:**
-1.  **Append & Accept (Current):** Simplest, best `Save` performance, accepts temporary order inaccuracy.
-2.  **Rely on TTL:** Simple, uses existing mechanism, order corrects eventually.
-3.  **Invalidate on Create:** Guarantees correct order on next read but hurts read performance post-create.
-4.  **Re-fetch & Re-cache (Background):** Complex, adds overhead, eventual consistency.
-5.  **In-Memory Sort:** Very complex, high performance cost, doesn't solve partial cache well.
-
-**Recommendation (Revised):** Adopt the **Invalidate-on-Change** approach (Option 3) for **list caches**. When `updateAffectedQueryCaches` or `handleDeleteInQueryCaches` determines a list cache needs modification (add/remove ID), **invalidate (delete) the cache entry** instead of attempting an incremental update. This guarantees read consistency after writes, albeit at the cost of potentially lower read performance immediately after mutations for affected queries. This approach is simpler and safer than attempting complex in-memory ordered updates. **Count caches** can still be updated incrementally.
-
-**Action:** Modify `updateAffectedQueryCaches` and `handleDeleteInQueryCaches` in `
+*   **Next Steps:** Proceed with next planned task: Add support for `
