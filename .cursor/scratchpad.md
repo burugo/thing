@@ -365,19 +365,6 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
         *   [x] Fix `TestThing_Delete_Cache` failure.
         *   [x] Fix `TestThing_Query_IncrementalCacheUpdate` failure.
     *   **Success Criteria:** All test failures resolved. Tests pass. **[DONE]**
-26. **[ ] Task 26: Further Refactor `thing.go` (Split into Focused Files)**
-    *   **Goal:** Further improve code organization by moving remaining logic blocks from `thing.go` into more specific files.
-    *   **Sub-tasks:**
-        *   [ ] Move global config variables (`globalDB`, `globalCache`, `globalCacheTTL`, `isConfigured`, `configMutex`) to `config.go`.
-        *   [ ] Move `NoneResult` constant and lock constants (`LockDuration`, etc.) to `cache.go`.
-        *   [ ] Move model metadata logic (`ModelInfo`, `ComparableFieldInfo`, `GetCachedModelInfo`, `ModelCache`, `getTableNameFromType`, `getZeroChecker`) to `metadata.go`.
-        *   [ ] Move relationship loading logic (`RelationshipOpts`, `parseRelationTag`, `preloadRelations`, `preloadBelongsTo`, `preloadHasMany`, `loadInternal`, `Load` method) to `relationships.go`.
-        *   [ ] Move change detection logic (`findChangedFields`, `findChangedFieldsReflection`, `findChangedFieldsSimple`) to `diff.go`.
-        *   [ ] Move SQL builders (`buildSelectSQL`, `buildSelectIDsSQL`) to `internal/sql/sqlbuilder.go`.
-        *   [ ] Move reflection/value helpers (`getBaseModelPtr`, `setNewRecordFlagIfBaseModel`, `setCreatedAtTimestamp`, `setUpdatedAtTimestamp`) to `internal/helpers/helpers.go`.
-        *   [ ] Ensure `thing.go` mainly contains the `Thing` struct, `Configure`, `Use`, `New`, and `WithContext`.
-        *   [ ] Update all imports and run tests.
-    *   **Success Criteria:** `thing.go` is significantly smaller. Logic is grouped into new, focused files. All tests pass.
 
 ## Future Enhancements (Planned)
 
@@ -400,7 +387,7 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   [ ] Support `IS NULL`, `IS NOT NULL` operators in `CheckQueryMatch`.
 *   [ ] Task 21: Implement JSON Serialization Features
 *   [ ] Task 22: Implement `WithTransaction` Pattern
-*   [ ] Task 23: Implement Soft Delete
+*   [ ] Task 23: Implement Soft Delete (Needs Tests)
 *   [x] Task 24: Refactor `thing` Package Structure (Root Directory)
 *   [x] Task 25: Fix Post-Refactor Test Failures (Task 24)
 *   [x] Task 26: Further Refactor `thing.go` (Split into Focused Files)
@@ -429,20 +416,22 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   **Recent Work:**
     *   Successfully refactored the project structure (Task 24).
     *   Fixed all test failures introduced by the Task 24 refactoring (Task 25).
+    *   Completed Task 26: Further refactored `thing.go` by moving logic (config, metadata, relationships, diffing, SQL builders, helpers) into separate files (`config.go`, `metadata.go`, `relationships.go`, `diff.go`, `internal/sql/sqlbuilder.go`, `model.go`), resolving import cycles and ensuring tests pass.
     *   Inlined simple cache helper functions (`GetCachedCount`, `SetCachedCount`) from `internal/cache/helpers.go` into `cache.go` to reduce internal dependencies.
     *   **Implemented "Invalidate-on-Change" strategy for list caches:**
         *   Modified `updateAffectedQueryCaches` and `handleDeleteInQueryCaches` to delete list cache keys instead of updating IDs.
         *   Removed redundant list computation logic from these functions.
         *   Updated relevant test assertions (`TestThing_Delete`, `TestThing_Query_IncrementalCacheUpdate`).
-*   **Current Focus:** Ready to add specific tests for the new Soft Delete functionality (Task 23 final sub-task).
-*   **Next Steps:** Implement tests for `SoftDelete` and `WithDeleted()`.
+*   **Current Focus:** Task 26 completed.
+*   **Next Steps:** Proceed with next planned task: Add support for `!=`, `<>`, `NOT LIKE`, `NOT IN` operators in `CheckQueryMatch`.
 
 ## Executor's Feedback or Assistance Requests
 
-*   (Previous) Flaky tests encountered after implementing list cache invalidation. The issue stemmed from incorrect assertions in `TestThing_IncrementalQueryCacheUpdate` which expected list caches to be updated rather than invalidated after `Save`/`Delete`. Correcting these assertions resolved the failures.
-*   Successfully implemented the core Soft Delete logic (method, hooks, read filtering, WithDeleted option, cache invalidation strategy).
-*   All existing tests are now passing.
-*   Ready to add specific tests for the Soft Delete functionality.
+*   (Previous) Flaky tests encountered after implementing list cache invalidation. The issue stemmed from incorrect assertions in `TestThing_IncrementalCacheUpdate` which expected list caches to be updated rather than invalidated after `Save`/`Delete`. Correcting these assertions resolved the failures.
+*   Successfully implemented the core Soft Delete logic (method, hooks, read filtering, WithDeleted option, cache invalidation strategy). Still needs dedicated tests (part of Task 23).
+*   Refactoring in Task 26 successfully completed. `thing.go` is much smaller, and related logic is grouped into separate files. Import cycles were identified and resolved. All tests pass after the refactor.
+*   The `internal/helpers` package was removed as its functions were moved back into `package thing` (mostly `model.go`) to resolve import cycles.
+*   Ready to proceed with the next task: Adding more operators to `CheckQueryMatch`.
 
 ## Lessons
 
@@ -453,6 +442,9 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 *   For simple helper functions within internal packages (like `GetCachedCount`, `SetCachedCount`), consider inlining their logic directly into the calling package (`thing`) if it significantly reduces dependencies and complexity without sacrificing readability.
 *   Simplifying cache invalidation strategies (e.g., invalidate-on-change vs. complex incremental updates) can reduce code complexity but may require careful adjustment of test assertions, especially those relying on mock call counts.
 *   Flaky test suites often indicate state leakage between tests or subtle timing issues, requiring dedicated debugging (e.g., running tests sequentially, verbose logging, checking setup/teardown).
+*   Refactoring Go code into internal packages requires careful attention to dependencies to avoid import cycles. Sometimes, moving utility functions back into the main package or passing data instead of types is necessary.
+*   Incorrect parsing of struct tags (like `db` tags containing modifiers like `,pk`) can lead to subtle runtime errors in SQL generation or reflection-based logic.
+*   Ensure metadata extraction logic (like `GetCachedModelInfo`) correctly identifies and ignores fields that shouldn't map directly to database columns (e.g., fields representing relationships).
 
 <details>
 <summary>Planner Analysis: List Cache Updates on Create</summary>

@@ -8,6 +8,7 @@ import (
 	"log"
 	"reflect"
 	"strings"
+	sqlbuilder "thing/internal/sql"
 	"time"
 	// Import internal cache package
 )
@@ -94,7 +95,7 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 
 		// Build and execute query
 		query := fmt.Sprintf("%s WHERE \"%s\" IN (%s)",
-			buildSelectSQL(modelInfo), // Use passed modelInfo
+			sqlbuilder.BuildSelectSQL(modelInfo.TableName, modelInfo.Columns), // Use passed modelInfo
 			modelInfo.PkName,
 			placeholders)
 
@@ -308,7 +309,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value *T) error {
 		original = new(T) // Create a new instance of T to hold original data
 		// Fetch the original record to compare against (bypass cache)
 		// We need the original state to correctly update query caches incrementally.
-		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", buildSelectSQL(t.info), t.info.PkName), baseModelPtr.ID) // Use exported PkName
+		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", sqlbuilder.BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName), baseModelPtr.ID) // Use exported PkName
 		if err != nil {
 			return fmt.Errorf("failed to fetch original record for update (ID: %d): %w", baseModelPtr.ID, err)
 		}

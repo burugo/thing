@@ -1,6 +1,8 @@
 package thing
 
 import (
+	"fmt"
+	"reflect"
 	"time"
 )
 
@@ -9,7 +11,7 @@ import (
 // BaseModel provides common fields and functionality for database models.
 // It should be embedded into specific model structs.
 type BaseModel struct {
-	ID        int64     `json:"id" db:"id"`                 // Primary key
+	ID        int64     `json:"id" db:"id,pk"`              // Primary key (Added pk tag)
 	CreatedAt time.Time `json:"created_at" db:"created_at"` // Timestamp for creation
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"` // Timestamp for last update
 	Deleted   bool      `json:"deleted" db:"deleted"`       // Soft delete flag
@@ -53,4 +55,72 @@ func (b *BaseModel) KeepItem() bool {
 // SetNewRecordFlag sets the internal isNewRecord flag.
 func (b *BaseModel) SetNewRecordFlag(isNew bool) {
 	b.isNewRecord = isNew
+}
+
+// --- Helper Functions --- (Moved GetBaseModelPtr back here)
+
+// GetBaseModelPtr returns a pointer to the embedded BaseModel if it exists and is addressable.
+func getBaseModelPtr(value interface{}) *BaseModel {
+	val := reflect.ValueOf(value)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	if val.Kind() == reflect.Struct {
+		bmField := val.FieldByName("BaseModel")
+		if bmField.IsValid() && bmField.Type() == reflect.TypeOf(BaseModel{}) && bmField.CanAddr() {
+			return bmField.Addr().Interface().(*BaseModel)
+		}
+	}
+	return nil
+}
+
+// generateCacheKey creates a standard cache key string for a single model.
+func generateCacheKey(tableName string, id int64) string {
+	// Format: {tableName}:{id}
+	return fmt.Sprintf("%s:%d", tableName, id)
+}
+
+// setNewRecordFlagIfBaseModel sets the flag if the value embeds BaseModel.
+func setNewRecordFlagIfBaseModel(value interface{}, isNew bool) {
+	if bmPtr := getBaseModelPtr(value); bmPtr != nil {
+		bmPtr.SetNewRecordFlag(isNew)
+	}
+}
+
+// setCreatedAtTimestamp sets the CreatedAt field if it exists.
+func setCreatedAtTimestamp(value interface{}, t time.Time) {
+	if bmPtr := getBaseModelPtr(value); bmPtr != nil {
+		bmPtr.CreatedAt = t
+		return
+	}
+	// Fallback for structs not embedding BaseModel but having CreatedAt
+	val := reflect.ValueOf(value)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	if val.Kind() == reflect.Struct {
+		field := val.FieldByName("CreatedAt")
+		if field.IsValid() && field.CanSet() && field.Type() == reflect.TypeOf(time.Time{}) {
+			field.Set(reflect.ValueOf(t))
+		}
+	}
+}
+
+// setUpdatedAtTimestamp sets the UpdatedAt field if it exists.
+func setUpdatedAtTimestamp(value interface{}, t time.Time) {
+	if bmPtr := getBaseModelPtr(value); bmPtr != nil {
+		bmPtr.UpdatedAt = t
+		return
+	}
+	// Fallback for structs not embedding BaseModel but having UpdatedAt
+	val := reflect.ValueOf(value)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+	if val.Kind() == reflect.Struct {
+		field := val.FieldByName("UpdatedAt")
+		if field.IsValid() && field.CanSet() && field.Type() == reflect.TypeOf(time.Time{}) {
+			field.Set(reflect.ValueOf(t))
+		}
+	}
 }

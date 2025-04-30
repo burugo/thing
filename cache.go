@@ -11,6 +11,17 @@ import (
 	"time"
 
 	"thing/internal/cache" // Import internal cache package
+	// "thing/internal/helpers" // Removed import
+)
+
+// --- Cache Constants ---
+const (
+	// Represents a non-existent entry in the cache, similar to PHP's NoneResult
+	NoneResult = "NoneResult"
+	// Lock duration
+	LockDuration   = 5 * time.Second
+	LockRetryDelay = 50 * time.Millisecond
+	LockMaxRetries = 5
 )
 
 // Global instance of the lock manager for cache keys.
@@ -18,12 +29,6 @@ import (
 var GlobalCacheKeyLocker = NewCacheKeyLockManagerInternal()
 
 // --- Cache Helpers ---
-
-// generateCacheKey creates a standard cache key string for a single model.
-func generateCacheKey(tableName string, id int64) string {
-	// Format: {tableName}:{id}
-	return fmt.Sprintf("%s:%d", tableName, id)
-}
 
 // withLock acquires a lock, executes the action, and releases the lock.
 func withLock(ctx context.Context, cache CacheClient, lockKey string, action func(ctx context.Context) error) error {
@@ -88,7 +93,7 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model *T, orig
 	if t.cache == nil {
 		return // No cache configured
 	}
-	baseModelPtr := getBaseModelPtr(model)
+	baseModelPtr := getBaseModelPtr(model) // Use local getBaseModelPtr
 	if baseModelPtr == nil || baseModelPtr.ID == 0 {
 		log.Printf("WARN: updateAffectedQueryCaches skipped for model without BaseModel or ID")
 		return
@@ -385,7 +390,7 @@ func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model *T) {
 	if t.cache == nil {
 		return // No cache configured
 	}
-	baseModelPtr := getBaseModelPtr(model)
+	baseModelPtr := getBaseModelPtr(model) // Use local getBaseModelPtr
 	if baseModelPtr == nil || baseModelPtr.ID == 0 {
 		log.Printf("WARN: handleDeleteInQueryCaches skipped for model without BaseModel or ID")
 		return

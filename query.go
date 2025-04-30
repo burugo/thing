@@ -9,6 +9,7 @@ import (
 	"log"
 	"strconv"
 	"thing/internal/cache"
+	"thing/internal/sql"
 	"thing/internal/utils"
 )
 
@@ -221,13 +222,13 @@ func (cr *CachedResult[T]) _fetch() error {
 // _fetch_ids_from_db fetches IDs from the database with pagination support.
 // It accepts offset and limit parameters to enable proper pagination.
 func (cr *CachedResult[T]) _fetch_ids_from_db(offset, limit int) ([]int64, error) {
-	if cr.thing == nil || cr.thing.db == nil {
+	if cr.thing == nil || cr.thing.db == nil || cr.thing.info == nil {
 		return nil, errors.New("_fetch_ids_from_db: CachedResult not properly initialized")
 	}
 
 	// Build the SQL query with pagination
 	// Pass includeDeleted flag via params to the builder
-	query, args := buildSelectIDsSQL(cr.thing.info, cr.params)
+	query, args := sql.BuildSelectIDsSQL(cr.thing.info.TableName, cr.thing.info.PkName, cr.params)
 	queryWithPagination := fmt.Sprintf("%s LIMIT %d OFFSET %d", query, limit, offset)
 
 	// Execute the query

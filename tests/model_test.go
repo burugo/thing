@@ -11,7 +11,7 @@ type User struct {
 	thing.BaseModel         // Use embedding again
 	Name            string  `db:"name"`
 	Email           string  `db:"email"`
-	Books           []*Book `thing:"rel=has_many;fk=user_id;model=Book" db:"-"`
+	Books           []*Book `thing:"hasMany;fk:user_id;model:Book" db:"-"`
 }
 
 // Change TableName to pointer receiver to satisfy Model[T] interface directly
@@ -24,7 +24,7 @@ type Book struct {
 	thing.BaseModel
 	Title  string `db:"title"`
 	UserID int64  `db:"user_id"`
-	User   *User  `thing:"rel=belongs_to;fk=user_id"` // BelongsTo relationship
+	User   *User  `thing:"belongsTo;fk:user_id"`
 }
 
 // Change TableName to pointer receiver
