@@ -50,7 +50,7 @@ func TestBaseModel_ToJSONWithOptions(t *testing.T) {
 	// Setup Thing instance (using test DB and cache)
 	db, cache, cleanup := setupTestDB(t)
 	defer cleanup()
-	thingInstance, err := thing.New[TestJSONModel](db, cache)
+	thingInstance, err := thing.New[*TestJSONModel](db, cache)
 	require.NoError(t, err)
 
 	now := time.Now()
