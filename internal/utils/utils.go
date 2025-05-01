@@ -47,3 +47,30 @@ func NewPtr[T any]() T {
 	}
 	return reflect.New(modelType).Interface().(T)
 }
+
+// IsZero checks if a reflect.Value is the zero value for its type.
+// This handles various kinds including structs, slices, maps, pointers, and primitives.
+func IsZero(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Invalid:
+		return true
+	case reflect.Array, reflect.String:
+		return v.Len() == 0
+	case reflect.Slice, reflect.Map, reflect.Chan, reflect.Func, reflect.Interface:
+		return v.IsNil()
+	case reflect.Ptr:
+		return v.IsNil() || IsZero(v.Elem()) // Recursively check pointed-to value
+	case reflect.Struct:
+		// Check if all fields are zero
+		for i := 0; i < v.NumField(); i++ {
+			if !IsZero(v.Field(i)) {
+				return false
+			}
+		}
+		return true
+	default:
+		// Compare with the zero value of the type
+		zero := reflect.Zero(v.Type())
+		return reflect.DeepEqual(v.Interface(), zero.Interface())
+	}
+}

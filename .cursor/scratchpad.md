@@ -14,6 +14,8 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 - **Flexible JSON Serialization Rule:** The user has defined a rule for JSON serialization: `user.ToJSON(["name","age",{"book":["-publish_at"]},"teacher"])`. Fields prefixed with `-` are excluded. Objects like `{book:["-publish_at"]}` specify nested serialization (e.g., include `book` list but exclude `publish_at` in each book). Relationship fields (e.g., `book` for hasMany, `teacher` for belongsTo) are supported.
 
+Previously, the DSL parser and merge logic supported merging nested field rules (e.g., `books{title},books{author}` would merge to include both `title` and `author`). This led to complex, hard-to-predict behavior and edge cases. The new requirement is to **disable nested DSL merging**: when the same nested field is specified multiple times, only the first occurrence is kept, and all subsequent ones are ignored. This simplifies both implementation and user expectations.
+
 ## Key Challenges and Analysis
 
 (Revised) Building this focused ORM presents several challenges:
@@ -335,57 +337,19 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 ## Project Status Board
 
-- [x] Reduce excessive log output in mock_cache_test.go (Executor)
-- [x] Fix pointer type issues in relationships and soft delete tests (Planner/Executor)
-  - [x] Audit and Fix Reflection/DB Adapter Pointer Usage (Executor)
-  - [x] Fix SoftDelete/Save Logic Pointer Handling (Planner/Executor)
-  - [x] Refactor pointer instantiation to utils.NewPtr[T] (Executor)
-  - [x] Debug and fix remaining test failures: WithDeleted, SoftDelete_CacheInteraction, Transaction tests (Planner/Executor)
-  - [x] Fix transaction test double-pointer bug (Executor)
-- [ ] Flexible JSON field control via WithFields/WithFieldsDSL (Planner/Executor)
-  - [ ] Define internal rule tree structure for field include/exclude/nested (Planner)
-  - [ ] Implement DSL parser: string -> rule tree (Planner/Executor)
-  - [ ] Integrate rule tree with jsonOptions and ToJSON (Executor)
-  - [ ] Support nested/relationship field recursion (Executor)
-  - [ ] Add tests for DSL parsing and ToJSON output (Executor)
-  - [ ] Document usage and add examples (Planner/Executor)
-
-## Planner: Next Feature Planning
-
-### 高级 JSON 灵活字段控制（WithFields/WithFieldsDSL）任务拆解
-
-1. **定义规则树结构**
-    - 设计一个能表达字段包含/排除、嵌套关系的结构（如 FieldRuleTree 或扩展 jsonOptions）。
-    - 成功标准：结构能表达所有 DSL 语法场景，便于递归查找。
-2. **实现 DSL 解析器**
-    - 编写递归 descent parser，将 DSL 字符串解析为规则树。
-    - 支持逗号分隔、-前缀、{}嵌套、多层递归。
-    - 成功标准：给定 DSL 字符串能正确生成规则树，单元测试覆盖典型用例。
-3. **集成到 ToJSON 流程**
-    - 让 WithFieldsDSL/WithFields 解析结果注入到 jsonOptions，ToJSON 能查规则树决定字段输出。
-    - 成功标准：ToJSON 支持灵活字段控制，能递归处理嵌套关系。
-4. **支持关系字段递归序列化**
-    - 对 hasMany/belongsTo 字段，能递归应用子规则。
-    - 成功标准：嵌套关系字段能按 DSL 规则输出。
-5. **测试与文档**
-    - 添加覆盖各种 DSL 场景的测试。
-    - 在文档和示例中推荐 WithFields 作为主入口。
-    - 成功标准：测试全绿，文档清晰。
-
-如需优先实现某一步或有特殊需求，请补充！
+- [x] Disable nested DSL merge (only keep first occurrence)
+- [x] Update/relax related test(s)
+- [x] Commit changes
+- [x] Planner review and confirmation
+- [x] Ordered JSON Serialization with DSL Order (OrderedMap implemented and integrated; ToJSON output order matches DSL; tests verified)
 
 ## Executor's Feedback or Assistance Requests
 
-- 所有事务相关测试（TestTransaction_Commit、TestTransaction_Rollback、TestTransaction_Select）已通过，double-pointer 问题彻底解决。
-- 现在所有测试均通过，代码库的指针类型处理已高度一致且健壮。
-- 通过将 new 泛型指针的逻辑抽象为 utils.NewPtr[T]，主流程代码更简洁，后续维护和扩展更容易。
-- 事务和 DBAdapter 的 Get/Select/Exec 相关接口调用方式已标准化，避免了常见的 Go 泛型指针陷阱。
+- Executor completed the refactor and test update as specified. All tests pass and the new behavior is confirmed. No further action needed for this task.
 
 ## Lessons
 
-- Go 泛型下，涉及"new 一个 T 类型指针"时，必须用反射+类型断言，建议统一封装为工具函数，避免重复和易错代码。
-- DB/Tx 的 Get/Select 目标参数必须是"指向 struct 的指针"，绝不能传递 **T。
-- 测试用例中如需获取查询结果，务必先 new，再传指针，保持和主流程一致。
+- When DSL merging leads to ambiguous or hard-to-predict results, consider simplifying the rule to "first occurrence wins" for clarity and maintainability.
 
 ## 反思与建议
 
@@ -394,9 +358,31 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 ---
 
-如需继续新功能或优化，请 Planner 继续拆解任务。
+如需继续新功能或优化，请 Planner 继续拆解任务.
 
 <details>
-<summary>Background and Motivation (archived)</summary>
-- User requested to reduce test log noise from mock cache implementation.
+<summary>Archived/Outdated Tasks</summary>
+<!-- (none for this cycle) -->
 </details>
+
+22. **[x] Ordered JSON Serialization with DSL Order (New Feature)**
+    *   **Task Type:** New Feature
+    *   **Goal:** Ensure ToJSON outputs fields in the order specified by the DSL, supporting nested/relationship fields, and is fully compatible with encoding/json.
+    *   **Sub-tasks:**
+        *   **[x] Design OrderedMap structure:**
+            *   Implement a struct that maintains key order and supports nested OrderedMap and slices.
+            *   Success Criteria: OrderedMap supports Set/Get/Keys and nested structures.
+        *   **[x] Implement MarshalJSON for OrderedMap:**
+            *   Custom MarshalJSON to guarantee order and support recursion.
+            *   Success Criteria: OrderedMap can be marshaled by encoding/json with correct order and nesting.
+        *   **[x] Integrate OrderedMap into ToJSON:**
+            *   Refactor ToJSON and related serialization logic to build output using OrderedMap, preserving DSL order at all levels.
+            *   Success Criteria: ToJSON output matches DSL order for all fields, including nested/relationship fields.
+        *   **[x] Update DSL parser to track order:**
+            *   Modify DSL parsing to record field order at each level for use in serialization.
+            *   Success Criteria: Field order in DSL is preserved in the output structure.
+        *   **[x] Add/Update tests:**
+            *   Add tests to verify JSON output order matches DSL, including for nested and relationship fields.
+            *   Success Criteria: All tests pass, and output order is as expected.
+    *   **Success Criteria:** ToJSON output is fully ordered as per DSL, supports nesting, and is compatible with encoding/json.
+    *   **Planner Review:** OrderedMap is implemented and integrated. ToJSON output order matches DSL order at all levels, as verified by tests. This feature is complete.

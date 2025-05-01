@@ -1,5 +1,5 @@
 ---
-description: This is a project tree structure, always place files in their designated locations.
+description: project-tree
 globs: 
 alwaysApply: false
 ---

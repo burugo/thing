@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+## Test-Driven Development (TDD)
+For the final verification, always run this test command to ensure everything passes:
+go test -v ./tests|grep FAIL
