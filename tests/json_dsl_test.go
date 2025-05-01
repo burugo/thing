@@ -1,6 +1,7 @@
 package thing_test
 
 import (
+	"strings"
 	"testing"
 
 	thing "thing"
@@ -347,6 +348,71 @@ func TestToJSON_WithFieldsDSL(t *testing.T) {
 		expect := `{"id":42,"name":"Bob","books":[{"id":1,"title":"Book1"},{"id":2,"title":"Book2"}]}`
 		if jsonStr != expect {
 			t.Errorf("ToJSON output mismatch for no struct tag DSL\nGot:  %s\nWant: %s", jsonStr, expect)
+		}
+	})
+}
+
+// --- Method-based virtuals test types ---
+type MethodUser struct {
+	ID        int
+	FirstName string
+	LastName  string
+}
+
+// Implement thing.Model interface
+func (u *MethodUser) GetID() int64   { return int64(u.ID) }
+func (u *MethodUser) KeepItem() bool { return true }
+
+// Method-based virtual
+func (u *MethodUser) FullName() string {
+	return u.FirstName + " " + u.LastName
+}
+
+func TestToJSON_MethodBasedVirtuals(t *testing.T) {
+	user := &MethodUser{ID: 1, FirstName: "Alice", LastName: "Smith"}
+	userThing := thing.Thing[*MethodUser]{}
+
+	t.Run("Include field and virtual method", func(t *testing.T) {
+		jsonBytes, err := userThing.ToJSON(user, thing.Include("first_name", "full_name"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		jsonStr := string(jsonBytes)
+		if !(strings.Contains(jsonStr, "first_name") && strings.Contains(jsonStr, "full_name") && strings.Contains(jsonStr, "Alice Smith")) {
+			t.Errorf("expected both field and method output, got: %s", jsonStr)
+		}
+	})
+
+	t.Run("WithFields DSL: field and virtual method", func(t *testing.T) {
+		jsonBytes, err := userThing.ToJSON(user, thing.WithFields("first_name,full_name"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		jsonStr := string(jsonBytes)
+		if !(strings.Contains(jsonStr, "first_name") && strings.Contains(jsonStr, "full_name") && strings.Contains(jsonStr, "Alice Smith")) {
+			t.Errorf("expected both field and method output, got: %s", jsonStr)
+		}
+	})
+
+	t.Run("Only virtual method", func(t *testing.T) {
+		jsonBytes, err := userThing.ToJSON(user, thing.Include("full_name"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		jsonStr := string(jsonBytes)
+		if !(strings.Contains(jsonStr, "full_name") && strings.Contains(jsonStr, "Alice Smith")) || strings.Contains(jsonStr, "first_name") {
+			t.Errorf("expected only method output, got: %s", jsonStr)
+		}
+	})
+
+	t.Run("Omit virtual method", func(t *testing.T) {
+		jsonBytes, err := userThing.ToJSON(user, thing.Include("first_name"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		jsonStr := string(jsonBytes)
+		if strings.Contains(jsonStr, "full_name") || strings.Contains(jsonStr, "Alice Smith") {
+			t.Errorf("expected no method output, got: %s", jsonStr)
 		}
 	})
 }

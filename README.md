@@ -39,5 +39,61 @@ json.Marshal(user)
 userThing.ToJSON(WithFieldsDSL("name,profile{avatar},-id"))
 simpleUserThing.ToJSON(WithFieldsDSL("name,-id"))
 
+## Method-based Virtual Properties (Advanced JSON Serialization)
+
+You can define computed (virtual) fields on your model by adding exported, zero-argument, single-return-value methods. These methods will only be included in the JSON output if you explicitly reference their corresponding field name in the DSL string passed to `ToJSON`.
+
+- **Method Naming:** Use Go's exported method naming (e.g., `FullName`). The field name in the DSL should be the snake_case version (e.g., `full_name`).
+- **How it works:**
+    - If the DSL includes a field name that matches a method (converted to snake_case), the method will be called and its return value included in the output.
+    - If the DSL does not mention the virtual field, it will not be output.
+
+**Example:**
+
+```go
+// Model definition
+ type User struct {
+     FirstName string
+     LastName  string
+ }
+
+ // Virtual property method
+ func (u *User) FullName() string {
+     return u.FirstName + " " + u.LastName
+ }
+
+ user := &User{FirstName: "Alice", LastName: "Smith"}
+ jsonBytes, _ := thing.ToJSON(user, thing.WithFields("first_name,full_name"))
+ fmt.Println(string(jsonBytes))
+ // Output: {"first_name":"Alice","full_name":"Alice Smith"}
+```
+
+- If you omit `full_name` from the DSL, the `FullName()` method will not be called or included in the output.
+
+This approach gives you full control over which computed fields are exposed, and ensures only explicitly requested virtuals are included in the JSON output.
+
+## Simple Field Inclusion: `Include(fields ...string)`
+
+For most use cases, you can use the `Include` function to specify exactly which fields to output, in order, using plain Go string arguments:
+
+```go
+thing.ToJSON(user, thing.Include("id", "name", "full_name"))
+```
+
+- This is equivalent to `WithFields("id,name,full_name")` but is more Go-idiomatic and avoids DSL syntax for simple cases.
+- You can use this to output method-based virtuals as well:
+
+```go
+thing.ToJSON(user, thing.Include("first_name", "full_name"))
+```
+
+- If you need nested, exclude, or advanced DSL features, use `WithFields`:
+
+```go
+thing.ToJSON(user, thing.WithFields("name,profile{avatar},-id"))
+```
+
+- Both `Include` and `WithFields` are fully compatible with struct tags and method-based virtuals as described above.
+
 
 

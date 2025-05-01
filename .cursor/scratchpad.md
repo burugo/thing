@@ -16,6 +16,8 @@ This project builds upon the initial goal of replicating a specific PHP `BaseMod
 
 Previously, the DSL parser and merge logic supported merging nested field rules (e.g., `books{title},books{author}` would merge to include both `title` and `author`). This led to complex, hard-to-predict behavior and edge cases. The new requirement is to **disable nested DSL merging**: when the same nested field is specified multiple times, only the first occurrence is kept, and all subsequent ones are ignored. This simplifies both implementation and user expectations.
 
+The goal was to support method-based virtual properties in Thing ORM's JSON serialization: if a struct has exported, zero-argument, single-return-value methods, these can be output as virtual fields—but only if explicitly referenced in the DSL string or via Include/WithFields. This allows for flexible, computed fields in JSON output, without polluting the output with all methods by default.
+
 ## Key Challenges and Analysis
 
 (Revised) Building this focused ORM presents several challenges:
@@ -37,6 +39,9 @@ Previously, the DSL parser and merge logic supported merging nested field rules 
 - **Advanced JSON Field Control:** Implementing a flexible, expressive API for field inclusion/exclusion, supporting both flat and nested/relationship fields, and handling both inclusion and exclusion in a single call. Must support syntax like `["name","age",{"book":["-publish_at"]},"teacher"]`.
 - **Relationship Serialization:** Handling hasMany (e.g., `book`) and belongsTo (e.g., `teacher`) relationships, including/excluding fields as specified, and supporting nested rules for preloaded relationships.
 - **Query Hash Generation Strategy (Pending Decision):** The logic for generating cache keys for queries (e.g., list and count caches) is currently implemented within `query.go` (`generateCountCacheKey`, `generateListCacheKey`). This logic needs to be accessible or replicated by tests (`tests/query_test.go`) to simulate and verify caching behavior. **Issue:** Duplicated logic creates maintenance burden. **Potential Solution:** Extract the core hash generation (JSON serialize params + SHA256) into a single, exported function within the `internal/cache` package and have both `query.go` and test helpers call it. **Status:** Decision on the best approach (exported helper vs. other methods) is deferred.
+- **Method-based virtual property support:** Needed to ensure struct fields take precedence over methods if both exist for a given name.
+- **Snake_case to CamelCase mapping:** Required robust mapping from DSL/Include field names (snake_case) to Go method names (CamelCase).
+- **TDD:** TDD: Tests must cover all combinations (field only, method only, both, omitted, etc.).
 
 ## Design Philosophy and API Goals
 
@@ -342,6 +347,9 @@ Previously, the DSL parser and merge logic supported merging nested field rules 
 - [x] Commit changes
 - [x] Planner review and confirmation
 - [x] Ordered JSON Serialization with DSL Order (OrderedMap implemented and integrated; ToJSON output order matches DSL; tests verified)
+- [x] Method-based virtual property support (explicit output via DSL/Include)
+- [x] TDD tests for method-based virtuals
+- [x] All tests passing
 
 ## Executor's Feedback or Assistance Requests
 
@@ -350,6 +358,8 @@ Previously, the DSL parser and merge logic supported merging nested field rules 
 ## Lessons
 
 - When DSL merging leads to ambiguous or hard-to-predict results, consider simplifying the rule to "first occurrence wins" for clarity and maintainability.
+- When supporting both struct fields and methods as virtuals, always ensure field takes precedence.
+- Always test snake_case to CamelCase mapping for both fields and methods.
 
 ## 反思与建议
 

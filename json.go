@@ -19,6 +19,17 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
+// snakeToCamel converts snake_case to CamelCase (e.g., full_name -> FullName)
+func snakeToCamel(s string) string {
+	parts := strings.Split(s, "_")
+	for i, part := range parts {
+		if len(part) > 0 {
+			parts[i] = strings.ToUpper(part[:1]) + part[1:]
+		}
+	}
+	return strings.Join(parts, "")
+}
+
 // --- JSON Serialization Options ---
 
 // FieldRule represents a single included field and its potential nested options.
@@ -57,7 +68,7 @@ func newJsonOptions() *JsonOptions {
 // JSONOption defines the function signature for JSON serialization options.
 type JSONOption func(*JsonOptions)
 
-// Include specifies fields to include in the JSON output.
+// Include specifies fields to include in the JSON output (simple, flat field list; no DSL features).
 func Include(fields ...string) JSONOption {
 	return func(opts *JsonOptions) {
 		for _, field := range fields {
@@ -211,7 +222,7 @@ func (t *Thing[T]) serializeValue(val reflect.Value, options *JsonOptions) inter
 				continue
 			}
 
-			// Find the corresponding struct field by name (case-insensitive)
+			// Find the corresponding struct field by name (case-insensitive and snake_case to CamelCase)
 			var field reflect.StructField
 			var fieldVal reflect.Value
 			found := false
@@ -239,59 +250,100 @@ func (t *Thing[T]) serializeValue(val reflect.Value, options *JsonOptions) inter
 					}
 				}
 			}
-
+			// If not found, try snake_case to CamelCase mapping
 			if !found {
-				continue
-			}
-
-			jsonTag := field.Tag.Get("json")
-			jsonFieldName := fieldName
-			omitEmpty := false
-			if jsonTag != "" {
-				tagParts := strings.Split(jsonTag, ",")
-				if tagParts[0] == "-" {
-					continue // Should have been caught by exclusion list or fallback generation, but double check
-				}
-				if tagParts[0] != "" {
-					jsonFieldName = tagParts[0]
-				}
-				for _, part := range tagParts[1:] {
-					if part == "omitempty" {
-						omitEmpty = true
+				camelName := snakeToCamel(fieldName)
+				for i := 0; i < typ.NumField(); i++ {
+					structField := typ.Field(i)
+					if structField.Name == camelName {
+						field = structField
+						fieldVal = val.Field(i)
+						found = true
 						break
+					}
+					// Check embedded BaseModel
+					if structField.Type == reflect.TypeOf(BaseModel{}) && structField.Anonymous {
+						baseModelTyp := structField.Type
+						baseModelVal := val.Field(i)
+						for j := 0; j < baseModelTyp.NumField(); j++ {
+							bmField := baseModelTyp.Field(j)
+							if bmField.Name == camelName {
+								field = bmField
+								fieldVal = baseModelVal.Field(j)
+								found = true
+								break
+							}
+						}
+						if found {
+							break
+						}
 					}
 				}
 			}
 
-			// Handle omitempty
-			if omitEmpty && utils.IsZero(fieldVal) {
-				continue
-			}
-
-			// Recursively serialize nested fields using the nested options from the rule
-			nestedOptions := rule.Nested // Pass nested options if they exist in the rule
-			if nestedOptions == nil {
-				nestedOptions = newJsonOptions() // Use default empty options if no specific nested rules
-			}
-
-			// Check if the field is exportable. Unexported fields cannot be accessed via Interface().
-			if !field.IsExported() {
-				continue // Skip unexported fields
-			}
-
-			switch fieldVal.Kind() {
-			case reflect.Struct, reflect.Ptr:
-				ordered.Set(jsonFieldName, t.serializeValue(fieldVal, nestedOptions))
-			case reflect.Slice, reflect.Array:
-				// For slices/arrays, pass the correct nestedOptions to each element
-				nestedArray := make([]interface{}, fieldVal.Len())
-				for k := 0; k < fieldVal.Len(); k++ {
-					elemVal := fieldVal.Index(k)
-					nestedArray[k] = t.serializeValue(elemVal, nestedOptions)
+			if found {
+				jsonTag := field.Tag.Get("json")
+				jsonFieldName := fieldName
+				omitEmpty := false
+				if jsonTag != "" {
+					tagParts := strings.Split(jsonTag, ",")
+					if tagParts[0] == "-" {
+						continue // Should have been caught by exclusion list or fallback generation, but double check
+					}
+					if tagParts[0] != "" {
+						jsonFieldName = tagParts[0]
+					}
+					for _, part := range tagParts[1:] {
+						if part == "omitempty" {
+							omitEmpty = true
+							break
+						}
+					}
 				}
-				ordered.Set(jsonFieldName, nestedArray)
-			default:
-				ordered.Set(jsonFieldName, fieldVal.Interface())
+
+				// Handle omitempty
+				if omitEmpty && utils.IsZero(fieldVal) {
+					continue
+				}
+
+				// Recursively serialize nested fields using the nested options from the rule
+				nestedOptions := rule.Nested // Pass nested options if they exist in the rule
+				if nestedOptions == nil {
+					nestedOptions = newJsonOptions() // Use default empty options if no specific nested rules
+				}
+
+				// Check if the field is exportable. Unexported fields cannot be accessed via Interface().
+				if !field.IsExported() {
+					continue // Skip unexported fields
+				}
+
+				switch fieldVal.Kind() {
+				case reflect.Struct, reflect.Ptr:
+					ordered.Set(jsonFieldName, t.serializeValue(fieldVal, nestedOptions))
+				case reflect.Slice, reflect.Array:
+					// For slices/arrays, pass the correct nestedOptions to each element
+					nestedArray := make([]interface{}, fieldVal.Len())
+					for k := 0; k < fieldVal.Len(); k++ {
+						elemVal := fieldVal.Index(k)
+						nestedArray[k] = t.serializeValue(elemVal, nestedOptions)
+					}
+					ordered.Set(jsonFieldName, nestedArray)
+				default:
+					ordered.Set(jsonFieldName, fieldVal.Interface())
+				}
+				continue // Done with this field
+			}
+
+			// --- Method-based virtual property support ---
+			// If not found as a struct field, try to find an exported, zero-arg, single-return method matching the field name (snake_case to CamelCase)
+			methodName := snakeToCamel(fieldName)
+			method := val.Addr().MethodByName(methodName)
+			if method.IsValid() && method.Type().NumIn() == 0 && method.Type().NumOut() == 1 {
+				// Only call exported, zero-arg, single-return methods
+				result := method.Call(nil)
+				if len(result) == 1 {
+					ordered.Set(fieldName, result[0].Interface())
+				}
 			}
 		}
 		return ordered
@@ -540,30 +592,13 @@ func mergeJsonOptions(dst, src *JsonOptions) {
 	}
 }
 
-// Helper for debug: get field names from []*FieldRule
-func fieldRuleNames(rules []*FieldRule) []string {
-	names := make([]string, 0, len(rules))
-	for _, r := range rules {
-		names = append(names, r.Name)
-	}
-	return names
-}
-
-// Helper for debug: get nested OrderedInclude names
-func nestedNames(opts *JsonOptions) []string {
-	if opts == nil {
-		return nil
-	}
-	return fieldRuleNames(opts.OrderedInclude)
-}
-
-// WithFields is an alias for WithFieldsDSL, allowing users to specify flexible field control using a simple string DSL.
+// WithFields specifies fields to include/exclude using a DSL string (supports nested, exclude, etc.).
 func WithFields(dsl string) JSONOption {
-	return WithFieldsDSL(dsl)
+	return withFieldsDSL(dsl)
 }
 
-// WithFieldsDSL parses a DSL string and returns a JSONOption for flexible field control.
-func WithFieldsDSL(dsl string) JSONOption {
+// withFieldsDSL is the internal implementation for parsing the DSL string.
+func withFieldsDSL(dsl string) JSONOption {
 	return func(opts *JsonOptions) {
 		parsedOpts, err := ParseFieldsDSL(dsl)
 		if err != nil {
