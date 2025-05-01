@@ -9,74 +9,83 @@ import (
 	"thing/internal/utils"
 )
 
-// --- JSON Serialization Options ---
-
-// jsonOptions holds the configuration for JSON serialization.
-// Uses maps for efficient lookups.
-type jsonOptions struct {
-	include map[string]bool         // Fields explicitly included (if non-empty, acts as whitelist)
-	exclude map[string]bool         // Fields explicitly excluded
-	nested  map[string]*jsonOptions // Options for nested/relationship fields (Key: field name)
-	// TODO: Add support for static struct tag rules
+// Helper function to check if a string slice contains a string (case-insensitive)
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if strings.EqualFold(s, item) { // Use EqualFold for case-insensitive check
+			return true
+		}
+	}
+	return false
 }
 
-// newJsonOptions creates a default options struct.
-func newJsonOptions() *jsonOptions {
-	return &jsonOptions{
-		include: make(map[string]bool),
-		exclude: make(map[string]bool),
-		nested:  make(map[string]*jsonOptions),
+// --- JSON Serialization Options ---
+
+// FieldRule represents a single included field and its potential nested options.
+type FieldRule struct {
+	Name   string
+	Nested *JsonOptions // Nested options for this specific field
+}
+
+// JsonOptions holds the options for JSON serialization.
+// It is intentionally not exported as it's an internal detail.
+// Use functional options (e.g., WithFields, Include, Exclude) to configure JSON output.
+// type jsonOptions struct {
+// 	// The FieldRuleTree represents the parsed DSL and explicit includes/excludes.
+// 	// This structure allows for recursive definition of rules for nested fields.
+// 	RuleTree *FieldRuleTree
+// 	// Include list from WithInclude (takes precedence over RuleTree includes)
+// 	IncludeFields []string
+// 	// Exclude list from WithExclude (takes precedence over RuleTree excludes)
+// 	ExcludeFields []string
+// }
+
+// JsonOptions holds the options for JSON serialization.
+type JsonOptions struct {
+	OrderedInclude []*FieldRule // Ordered list of fields to include (with possible nested rules)
+	OrderedExclude []string     // Ordered list of fields to exclude
+}
+
+// newJsonOptions creates a default empty options struct.
+func newJsonOptions() *JsonOptions {
+	return &JsonOptions{
+		OrderedInclude: make([]*FieldRule, 0),
+		OrderedExclude: make([]string, 0),
 	}
 }
 
 // JSONOption defines the function signature for JSON serialization options.
-type JSONOption func(*jsonOptions)
+type JSONOption func(*JsonOptions)
 
 // Include specifies fields to include in the JSON output.
-// If any field is explicitly included, only those fields (plus ID by default unless excluded) will be present.
 func Include(fields ...string) JSONOption {
-	return func(opts *jsonOptions) {
+	return func(opts *JsonOptions) {
 		for _, field := range fields {
-			opts.include[field] = true
+			// Avoid duplicates
+			found := false
+			for _, existingRule := range opts.OrderedInclude {
+				if existingRule.Name == field {
+					found = true
+					break
+				}
+			}
+			if !found {
+				opts.OrderedInclude = append(opts.OrderedInclude, &FieldRule{Name: field, Nested: nil})
+			}
 		}
 	}
 }
 
 // Exclude specifies fields to exclude from the JSON output.
 func Exclude(fields ...string) JSONOption {
-	return func(opts *jsonOptions) {
+	return func(opts *JsonOptions) {
 		for _, field := range fields {
-			opts.exclude[field] = true
+			// Avoid duplicates
+			if !contains(opts.OrderedExclude, field) {
+				opts.OrderedExclude = append(opts.OrderedExclude, field)
+			}
 		}
 	}
-}
-
-// TODO: Implement IncludeNested and ExcludeNested for relationship serialization control
-
-// shouldIncludeField determines if a field should be included based on options.
-// Helper function for the ToJSON and serializeField methods.
-func shouldIncludeField(goName, jsonName string, useWhitelist bool, options *jsonOptions) bool {
-	include := false
-	if useWhitelist {
-		// Whitelist mode: only include if explicitly mentioned
-		if options.include[goName] || options.include[jsonName] {
-			include = true
-		}
-		// Always include ID by default in whitelist mode, unless explicitly excluded
-		// This logic might need adjustment depending on how embedded BaseModel fields are handled
-		if (goName == "ID" || jsonName == "id") && !options.exclude[goName] && !options.exclude[jsonName] {
-			include = true
-		}
-	} else {
-		// Blacklist mode: include by default
-		include = true
-	}
-
-	// Check blacklist exclusions
-	if options.exclude[goName] || options.exclude[jsonName] {
-		include = false
-	}
-	return include
 }
 
 // --- JSON Serialization Methods ---
@@ -93,13 +102,13 @@ func (t *Thing[T]) ToJSON(model T, opts ...JSONOption) ([]byte, error) {
 	}
 
 	val := reflect.ValueOf(model).Elem() // model is *T, Elem() gives T
-	// Pass the initial options to the recursive helper
+	// Pass the initial options to the recursive helper, indicating it's the top level
 	jsonOutput := t.serializeValue(val, options)
 	return json.Marshal(jsonOutput)
 }
 
-// serializeValue recursively serializes a reflect.Value based on provided jsonOptions.
-func (t *Thing[T]) serializeValue(val reflect.Value, options *jsonOptions) interface{} {
+// serializeValue recursively serializes a reflect.Value based on provided jsonOptions and top-level status.
+func (t *Thing[T]) serializeValue(val reflect.Value, options *JsonOptions) interface{} {
 	kind := val.Kind()
 
 	if kind == reflect.Ptr {
@@ -110,30 +119,138 @@ func (t *Thing[T]) serializeValue(val reflect.Value, options *jsonOptions) inter
 		kind = val.Kind()
 	}
 
-	// Handle primitive types and non-structs directly
+	// Handle primitive types and non-struct/slice/array directly
 	if kind != reflect.Struct && kind != reflect.Slice && kind != reflect.Array {
 		return val.Interface()
 	}
 
 	if kind == reflect.Struct {
-		outputMap := make(map[string]interface{})
+		// Special case: time.Time should be marshaled as string
+		if val.Type().PkgPath() == "time" && val.Type().Name() == "Time" {
+			return val.Interface()
+		}
+		ordered := utils.NewOrderedMap()
 		typ := val.Type()
-		useWhitelist := len(options.include) > 0
 
-		for i := 0; i < typ.NumField(); i++ {
-			fieldTyp := typ.Field(i)
-			fieldVal := val.Field(i)
-			fieldName := fieldTyp.Name // Go field name
+		// Determine fields to iterate: DSL order if options.orderedInclude exists, else all struct fields.
+		var fieldsToProcess []*FieldRule // Change type to []*FieldRule
+		if options != nil && len(options.OrderedInclude) > 0 {
+			fieldsToProcess = options.OrderedInclude
+			// Ensure id is prepended if not excluded and not already included
+			idExcluded := options != nil && contains(options.OrderedExclude, "id")
+			idIncluded := false
+			for _, rule := range fieldsToProcess {
+				if strings.EqualFold(rule.Name, "id") {
+					idIncluded = true
+					break
+				}
+			}
+			if !idExcluded && !idIncluded {
+				fieldsToProcess = append([]*FieldRule{{Name: "id", Nested: nil}}, fieldsToProcess...)
+			}
+		} else {
+			// Fallback: Iterate all struct fields if no includes specified
+			fieldsToProcess = make([]*FieldRule, 0, typ.NumField())
+			for i := 0; i < typ.NumField(); i++ {
+				fieldTyp := typ.Field(i)
+				// Check if excluded by struct tag "-"
+				jsonTag := fieldTyp.Tag.Get("json")
+				if strings.Split(jsonTag, ",")[0] == "-" {
+					continue
+				}
+				// Skip if explicitly excluded
+				if options != nil && contains(options.OrderedExclude, fieldTyp.Name) {
+					continue
+				}
+				// Handle anonymous embedded BaseModel fields
+				if fieldTyp.Type == reflect.TypeOf(BaseModel{}) && fieldTyp.Anonymous {
+					baseModelTyp := fieldTyp.Type
+					for j := 0; j < baseModelTyp.NumField(); j++ {
+						bmFieldTyp := baseModelTyp.Field(j)
+						bmJsonTag := bmFieldTyp.Tag.Get("json")
+						jsonFieldName := bmFieldTyp.Name
+						if bmJsonTag != "" {
+							tagParts := strings.Split(bmJsonTag, ",")
+							if tagParts[0] != "" && tagParts[0] != "-" {
+								jsonFieldName = tagParts[0]
+							}
+						}
+						if strings.Split(bmJsonTag, ",")[0] != "-" {
+							// Skip if explicitly excluded (by JSON field name)
+							if options != nil && contains(options.OrderedExclude, jsonFieldName) {
+								continue
+							}
+							fieldsToProcess = append(fieldsToProcess, &FieldRule{Name: bmFieldTyp.Name, Nested: nil})
+						}
+					}
+				} else {
+					fieldsToProcess = append(fieldsToProcess, &FieldRule{Name: fieldTyp.Name, Nested: nil})
+				}
+			}
+			// Default include ID if not excluded and no other includes specified (only in fallback mode)
+			if options != nil && !contains(options.OrderedExclude, "id") {
+				idFound := false
+				for _, rule := range fieldsToProcess {
+					if strings.EqualFold(rule.Name, "id") {
+						idFound = true
+						break
+					}
+				}
+				if !idFound {
+					fieldsToProcess = append([]*FieldRule{{Name: "id", Nested: nil}}, fieldsToProcess...)
+				}
+			}
+		}
 
-			// Handle JSON tag and field name
-			jsonTag := fieldTyp.Tag.Get("json")
-			jsonFieldName := fieldName // Default to Go field name
+		// Process fields in the determined order
+		for _, rule := range fieldsToProcess {
+			fieldName := rule.Name
+
+			// Check if explicitly excluded (case-insensitive)
+			if options != nil && contains(options.OrderedExclude, fieldName) {
+				continue
+			}
+
+			// Find the corresponding struct field by name (case-insensitive)
+			var field reflect.StructField
+			var fieldVal reflect.Value
+			found := false
+			for i := 0; i < typ.NumField(); i++ {
+				structField := typ.Field(i)
+				if strings.EqualFold(structField.Name, fieldName) {
+					field = structField
+					fieldVal = val.Field(i)
+					found = true
+					break
+				} else if structField.Type == reflect.TypeOf(BaseModel{}) && structField.Anonymous {
+					baseModelTyp := structField.Type
+					baseModelVal := val.Field(i)
+					for j := 0; j < baseModelTyp.NumField(); j++ {
+						bmField := baseModelTyp.Field(j)
+						if strings.EqualFold(bmField.Name, fieldName) {
+							field = bmField
+							fieldVal = baseModelVal.Field(j)
+							found = true
+							break
+						}
+					}
+					if found {
+						break
+					}
+				}
+			}
+
+			if !found {
+				continue
+			}
+
+			jsonTag := field.Tag.Get("json")
+			jsonFieldName := fieldName
 			omitEmpty := false
-
 			if jsonTag != "" {
 				tagParts := strings.Split(jsonTag, ",")
 				if tagParts[0] == "-" {
-					continue // Skip json:"-"
+					continue // Should have been caught by exclusion list or fallback generation, but double check
 				}
 				if tagParts[0] != "" {
 					jsonFieldName = tagParts[0]
@@ -146,81 +263,48 @@ func (t *Thing[T]) serializeValue(val reflect.Value, options *jsonOptions) inter
 				}
 			}
 
-			// Check if the field should be included based on options
-			// Special handling for BaseModel fields if it's an embedded struct
-			isBaseModel := fieldTyp.Type == reflect.TypeOf(BaseModel{}) && fieldTyp.Anonymous
-
-			if isBaseModel {
-				// For embedded BaseModel, iterate through its fields and apply rules
-				baseModelVal := fieldVal
-				baseModelTyp := baseModelVal.Type()
-				for j := 0; j < baseModelVal.NumField(); j++ {
-					bmFieldVal := baseModelVal.Field(j)
-					bmFieldTyp := baseModelTyp.Field(j)
-					bmFieldName := bmFieldTyp.Name // Go name of field within BaseModel
-					bmJSONTag := bmFieldTyp.Tag.Get("json")
-					bmJSONFieldName := bmFieldName // Default
-					bmOmitEmpty := false
-
-					if bmJSONTag != "" {
-						bmTagParts := strings.Split(bmJSONTag, ",")
-						if bmTagParts[0] == "-" {
-							continue // Skip json:"-" in BaseModel
-						}
-						if bmTagParts[0] != "" {
-							bmJSONFieldName = bmTagParts[0]
-						}
-						for _, part := range bmTagParts[1:] {
-							if part == "omitempty" {
-								bmOmitEmpty = true
-								break
-							}
-						}
-					}
-
-					// Apply include/exclude rules to BaseModel fields
-					if shouldIncludeField(bmFieldName, bmJSONFieldName, useWhitelist, options) {
-						// Handle omitempty for BaseModel fields
-						if bmOmitEmpty && utils.IsZero(bmFieldVal) {
-							continue
-						}
-						outputMap[bmJSONFieldName] = bmFieldVal.Interface()
-					}
-				}
-				continue // Done with embedded BaseModel, move to next field of outer struct
-			}
-
-			// Handle omitempty for non-BaseModel fields
+			// Handle omitempty
 			if omitEmpty && utils.IsZero(fieldVal) {
 				continue
 			}
 
-			// Apply include/exclude rules to main struct fields
-			if shouldIncludeField(fieldName, jsonFieldName, useWhitelist, options) {
-				// --- Handle nested options/relationships here ---
-				nestedOptions, ok := options.nested[fieldName]
-				if ok && nestedOptions != nil && (len(nestedOptions.include) > 0 || len(nestedOptions.exclude) > 0) {
-					// This field has nested options, recursively serialize it
-					outputMap[jsonFieldName] = t.serializeValue(fieldVal, nestedOptions)
-				} else {
-					// No nested options, include the field normally
-					outputMap[jsonFieldName] = fieldVal.Interface()
-				}
+			// Recursively serialize nested fields using the nested options from the rule
+			nestedOptions := rule.Nested // Pass nested options if they exist in the rule
+			if nestedOptions == nil {
+				nestedOptions = newJsonOptions() // Use default empty options if no specific nested rules
+			}
 
+			// Check if the field is exportable. Unexported fields cannot be accessed via Interface().
+			if !field.IsExported() {
+				continue // Skip unexported fields
+			}
+
+			switch fieldVal.Kind() {
+			case reflect.Struct, reflect.Ptr:
+				ordered.Set(jsonFieldName, t.serializeValue(fieldVal, nestedOptions))
+			case reflect.Slice, reflect.Array:
+				// For slices/arrays, pass the correct nestedOptions to each element
+				nestedArray := make([]interface{}, fieldVal.Len())
+				for k := 0; k < fieldVal.Len(); k++ {
+					elemVal := fieldVal.Index(k)
+					nestedArray[k] = t.serializeValue(elemVal, nestedOptions)
+				}
+				ordered.Set(jsonFieldName, nestedArray)
+			default:
+				ordered.Set(jsonFieldName, fieldVal.Interface())
 			}
 		}
-		return outputMap
+		return ordered
 
 	} else if kind == reflect.Slice || kind == reflect.Array {
 		// Serialize a slice or array of nested models
 		nestedArray := make([]interface{}, val.Len())
+		// Use the current options for all elements in the slice/array.
+		// If DSL needs per-element control, the structure would need further changes.
 		for k := 0; k < val.Len(); k++ {
 			elemVal := val.Index(k)
-			// For slice/array elements, use the *current* options, not nested options, unless the slice/array field itself has nested options defined for its elements.
-			// The logic here needs to be careful about applying the correct options to the elements.
-			// If nestedOptions exists for the slice/array field, those options should apply to the *elements*.
-			nestedItem := t.serializeValue(elemVal, options.nested[val.Type().Name()]) // Use nested options for elements
-			nestedArray[k] = nestedItem
+			// Pass the same options (which contain the nested rules for this field)
+			nestedArray[k] = t.serializeValue(elemVal, options)
 		}
 		return nestedArray
 	}
@@ -228,54 +312,28 @@ func (t *Thing[T]) serializeValue(val reflect.Value, options *jsonOptions) inter
 	return nil // Should not reach here for supported types
 }
 
-// applyRuleTreeToOptions populates jsonOptions from a FieldRuleTree (recursive)
-func applyRuleTreeToOptions(tree *FieldRuleTree, opts *jsonOptions) {
-	if tree == nil || opts == nil {
-		return
-	}
-	for k, v := range tree.Include {
-		opts.include[k] = true
-		if v != nil && (len(v.Include) > 0 || len(v.Exclude) > 0) {
-			if opts.nested[k] == nil {
-				opts.nested[k] = newJsonOptions()
-			}
-			applyRuleTreeToOptions(v, opts.nested[k])
-		}
-	}
-	for k := range tree.Exclude {
-		opts.exclude[k] = true
-	}
-}
+// --- FieldRuleTree (REMOVED) ---
+// // FieldRuleTree represents the include/exclude/nested rules for JSON field control.
+// type FieldRuleTree struct {
+// 	OrderedInclude []*FieldRule // Ordered list of fields to include (with possible nested rules)
+// 	OrderedExclude []string     // Ordered list of fields to exclude
+// }
 
-// FieldRuleTree represents the include/exclude/nested rules for JSON field control.
-type FieldRuleTree struct {
-	Include map[string]*FieldRuleTree // Fields to include (with possible nested rules)
-	Exclude map[string]bool           // Fields to exclude
-}
-
-// ParseFieldsDSL parses a DSL string and returns a FieldRuleTree representing the rules.
-// Example: "name,book{title,-publish_at},-deleted"
-func ParseFieldsDSL(dsl string) (*FieldRuleTree, error) {
+// ParseFieldsDSL parses a DSL string and returns populated jsonOptions representing the rules.
+func ParseFieldsDSL(dsl string) (*JsonOptions, error) {
 	// Enhanced parser: handle top-level and nested include/exclude fields
-	tree := &FieldRuleTree{
-		Include: make(map[string]*FieldRuleTree),
-		Exclude: make(map[string]bool),
-	}
-	if strings.TrimSpace(dsl) == "" {
-		return tree, nil
-	}
+	rootOpts := newJsonOptions()
 
-	var parse func(input string) (map[string]*FieldRuleTree, map[string]bool, error)
-	parse = func(input string) (map[string]*FieldRuleTree, map[string]bool, error) {
-		include := make(map[string]*FieldRuleTree)
-		exclude := make(map[string]bool)
+	var parse func(input string) (*JsonOptions, error)
+	parse = func(input string) (*JsonOptions, error) {
+		currentOpts := newJsonOptions()
 		var i int
 		for i < len(input) {
-			// Skip whitespace
+			// Skip whitespace and leading comma
 			for i < len(input) && (input[i] == ' ' || input[i] == ',') {
 				i++
 			}
-			if i >= len(input) {
+			if i >= len(input) { // Handle trailing comma
 				break
 			}
 			// Parse field name (may start with '-')
@@ -284,9 +342,11 @@ func ParseFieldsDSL(dsl string) (*FieldRuleTree, error) {
 				i++
 			}
 			field := strings.TrimSpace(input[start:i])
-			if field == "" {
+
+			if field == "" { // Should not happen with leading comma/whitespace skip, but for safety
 				continue
 			}
+
 			// Check for nested
 			if i < len(input) && input[i] == '{' {
 				// Find matching '}'
@@ -301,106 +361,216 @@ func ParseFieldsDSL(dsl string) (*FieldRuleTree, error) {
 					}
 					nestEnd++
 				}
+
 				if braceCount != 0 {
-					return nil, nil, errors.New("unmatched '{' in DSL")
+					return nil, errors.New("unmatched '{' in DSL")
 				}
+
 				nestedContent := input[nestStart : nestEnd-1]
-				nestedTree, nestedExclude, err := parse(nestedContent)
+				// Recursively parse nested content to get nested jsonOptions
+				nestedOpts, err := parse(nestedContent)
 				if err != nil {
-					return nil, nil, err
+					return nil, err
 				}
-				// Remove leading '-' for nested exclude
+
+				// Remove leading '-' for nested field name if present (though unusual)
 				name := field
 				if strings.HasPrefix(name, "-") {
 					name = strings.TrimPrefix(name, "-")
 				}
-				// Assign both Include and Exclude from nestedTree (which is the result of parsing inside braces)
-				if existing, ok := include[name]; ok && existing != nil {
-					// Merge includes
-					for k, v := range nestedTree {
-						if v2, ok2 := existing.Include[k]; ok2 && v2 != nil && v != nil {
-							// Recursively merge
-							mergeFieldRuleTree(v2, v)
-						} else {
-							existing.Include[k] = v
-						}
-					}
-					// Merge excludes
-					for ex, exVal := range nestedExclude {
-						existing.Exclude[ex] = exVal
-					}
-				} else {
-					include[name] = &FieldRuleTree{
-						Include: nestedTree,
-						Exclude: make(map[string]bool),
-					}
-					for ex, exVal := range nestedExclude {
-						include[name].Exclude[ex] = exVal
-					}
-				}
-				i = nestEnd
+
+				// Add to ordered include list with nested options
+				currentOpts.OrderedInclude = append(currentOpts.OrderedInclude, &FieldRule{
+					Name:   name,
+					Nested: nestedOpts, // Assign the parsed nested options
+				})
+
+				i = nestEnd // Move past '}'
+
 			} else if strings.HasPrefix(field, "-") {
 				name := strings.TrimPrefix(field, "-")
 				if name != "" {
-					exclude[name] = true
+					// Add to ordered exclude list, avoid duplicates
+					if !contains(currentOpts.OrderedExclude, name) {
+						currentOpts.OrderedExclude = append(currentOpts.OrderedExclude, name)
+					}
 				}
 			} else {
-				include[field] = &FieldRuleTree{
-					Include: make(map[string]*FieldRuleTree),
-					Exclude: make(map[string]bool),
+				// Add to ordered include list, avoid duplicates
+				found := false
+				for _, existingRule := range currentOpts.OrderedInclude {
+					if existingRule.Name == field {
+						found = true
+						break
+					}
+				}
+				if !found {
+					currentOpts.OrderedInclude = append(currentOpts.OrderedInclude, &FieldRule{
+						Name:   field,
+						Nested: nil, // No nested rules for simple fields
+					})
 				}
 			}
-			// Skip trailing ','
+
+			// Skip trailing comma after processing field or nested block
 			for i < len(input) && (input[i] == ' ' || input[i] == ',') {
 				i++
 			}
 		}
-		return include, exclude, nil
+		return currentOpts, nil
 	}
 
-	inc, exc, err := parse(dsl)
+	// Top-level parsing
+	parsedOpts, err := parse(dsl)
 	if err != nil {
 		return nil, err
 	}
-	tree.Include = inc
-	tree.Exclude = exc
-	return tree, nil
+	rootOpts = parsedOpts
+
+	// Recursively apply the id default rule to all JsonOptions (including nested)
+	var applyIdDefaultRule func(opts *JsonOptions)
+	applyIdDefaultRule = func(opts *JsonOptions) {
+		if opts == nil {
+			return
+		}
+		idExcluded := containsExclude(opts.OrderedExclude, "id")
+		idExplicitlyIncluded := false
+		for _, rule := range opts.OrderedInclude {
+			if strings.EqualFold(rule.Name, "id") {
+				idExplicitlyIncluded = true
+				break
+			}
+		}
+		if (len(opts.OrderedInclude) == 0 || !idExplicitlyIncluded) && !idExcluded {
+			// Prepend id to the include list if not excluded and not already included
+			opts.OrderedInclude = append([]*FieldRule{{Name: "id", Nested: nil}}, opts.OrderedInclude...)
+		}
+		// Recurse into nested options
+		for _, rule := range opts.OrderedInclude {
+			if rule.Nested != nil {
+				applyIdDefaultRule(rule.Nested)
+			}
+		}
+	}
+	applyIdDefaultRule(rootOpts)
+
+	return rootOpts, nil
 }
 
-// mergeFieldRuleTree merges src into dst recursively (for repeated fields in DSL)
-func mergeFieldRuleTree(dst, src *FieldRuleTree) {
+// containsExclude is a helper like contains but specifically for the exclude list check
+func containsExclude(slice []string, item string) bool {
+	return contains(slice, item)
+}
+
+// mergeJsonOptions merges src options into dst options recursively.
+// Note: This merge logic might need refinement based on desired behavior for overlapping rules.
+// Current: Appends includes if name doesn't exist, merges nested if name exists. Appends unique excludes.
+func mergeJsonOptions(dst, src *JsonOptions) {
 	if dst == nil || src == nil {
 		return
 	}
-	// Merge includes
-	for k, v := range src.Include {
-		if v2, ok2 := dst.Include[k]; ok2 && v2 != nil && v != nil {
-			mergeFieldRuleTree(v2, v)
+
+	// Merge Includes (no nested merge: keep first occurrence only)
+	dstIncludeMap := make(map[string]*FieldRule)
+	for _, rule := range dst.OrderedInclude {
+		dstIncludeMap[rule.Name] = rule
+	}
+
+	for _, srcRule := range src.OrderedInclude {
+		if _, ok := dstIncludeMap[srcRule.Name]; ok {
+			// Name exists, skip (do not merge nested, do not override)
+			continue
 		} else {
-			dst.Include[k] = v
+			// Name does not exist, append
+			dst.OrderedInclude = append(dst.OrderedInclude, srcRule)
+			dstIncludeMap[srcRule.Name] = srcRule
 		}
 	}
-	// Merge excludes
-	for ex, exVal := range src.Exclude {
-		dst.Exclude[ex] = exVal
+
+	// Remove duplicate id in OrderedInclude, keep only the first one (should always be at the front)
+	idSeen := false
+	newOrdered := make([]*FieldRule, 0, len(dst.OrderedInclude))
+	seen := make(map[string]bool)
+	for _, rule := range dst.OrderedInclude {
+		if strings.EqualFold(rule.Name, "id") {
+			if !idSeen {
+				newOrdered = append(newOrdered, rule)
+				idSeen = true
+				seen[strings.ToLower(rule.Name)] = true
+			}
+		} else {
+			if !seen[strings.ToLower(rule.Name)] {
+				newOrdered = append(newOrdered, rule)
+				seen[strings.ToLower(rule.Name)] = true
+			}
+		}
+	}
+	dst.OrderedInclude = newOrdered
+
+	// Recursively apply id default rule to all nested JsonOptions after merge
+	for _, rule := range dst.OrderedInclude {
+		if rule.Nested != nil {
+			idExcluded := containsExclude(rule.Nested.OrderedExclude, "id")
+			idExplicitlyIncluded := false
+			for _, r := range rule.Nested.OrderedInclude {
+				if strings.EqualFold(r.Name, "id") {
+					idExplicitlyIncluded = true
+					break
+				}
+			}
+			if (len(rule.Nested.OrderedInclude) == 0 || !idExplicitlyIncluded) && !idExcluded {
+				// Prepend id to the include list if not excluded and not already included
+				rule.Nested.OrderedInclude = append([]*FieldRule{{Name: "id", Nested: nil}}, rule.Nested.OrderedInclude...)
+			}
+			// 不再递归合并嵌套，仅保留第一个出现的嵌套规则
+		}
+	}
+
+	// Merge Excludes
+	dstExcludeMap := make(map[string]bool)
+	for _, excludedName := range dst.OrderedExclude {
+		dstExcludeMap[excludedName] = true
+	}
+
+	for _, srcExcludedName := range src.OrderedExclude {
+		if _, ok := dstExcludeMap[srcExcludedName]; !ok {
+			dst.OrderedExclude = append(dst.OrderedExclude, srcExcludedName)
+			dstExcludeMap[srcExcludedName] = true
+		}
 	}
 }
 
+// Helper for debug: get field names from []*FieldRule
+func fieldRuleNames(rules []*FieldRule) []string {
+	names := make([]string, 0, len(rules))
+	for _, r := range rules {
+		names = append(names, r.Name)
+	}
+	return names
+}
+
+// Helper for debug: get nested OrderedInclude names
+func nestedNames(opts *JsonOptions) []string {
+	if opts == nil {
+		return nil
+	}
+	return fieldRuleNames(opts.OrderedInclude)
+}
+
 // WithFields is an alias for WithFieldsDSL, allowing users to specify flexible field control using a simple string DSL.
-// Example: user.ToJSON(WithFields("name,book{title,-publish_at}"))
 func WithFields(dsl string) JSONOption {
 	return WithFieldsDSL(dsl)
 }
 
 // WithFieldsDSL parses a DSL string and returns a JSONOption for flexible field control.
-// Example: user.ToJSON(WithFieldsDSL("name,book{title,-publish_at}"))
 func WithFieldsDSL(dsl string) JSONOption {
-	return func(opts *jsonOptions) {
-		ruleTree, err := ParseFieldsDSL(dsl)
+	return func(opts *JsonOptions) {
+		parsedOpts, err := ParseFieldsDSL(dsl)
 		if err != nil {
 			// If DSL is invalid, do nothing (or could panic/log)
 			return
 		}
-		applyRuleTreeToOptions(ruleTree, opts)
+		// Merge parsed DSL options into existing options
+		mergeJsonOptions(opts, parsedOpts)
 	}
 }
