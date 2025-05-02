@@ -244,3 +244,32 @@ func isUniqueInModel(col string, modelInfo *ModelInfo) bool {
 	}
 	return false
 }
+
+// GenerateMigrationsTableSQL 返回 schema_migrations 版本表的建表 SQL，兼容多数据库
+func GenerateMigrationsTableSQL(dialect string) (string, error) {
+	switch dialect {
+	case "mysql":
+		return `CREATE TABLE IF NOT EXISTS schema_migrations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  version VARCHAR(255) NOT NULL UNIQUE,
+  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  description VARCHAR(255)
+);`, nil
+	case "postgres":
+		return `CREATE TABLE IF NOT EXISTS schema_migrations (
+  id SERIAL PRIMARY KEY,
+  version VARCHAR(255) NOT NULL UNIQUE,
+  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  description VARCHAR(255)
+);`, nil
+	case "sqlite":
+		return `CREATE TABLE IF NOT EXISTS schema_migrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version TEXT NOT NULL UNIQUE,
+  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  description TEXT
+);`, nil
+	default:
+		return "", fmt.Errorf("unsupported dialect: %s", dialect)
+	}
+}

@@ -2,6 +2,7 @@ package schema
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -132,4 +133,29 @@ func TestGenerateAlterTableSQL_Postgres(t *testing.T) {
 	if !foundUnique {
 		t.Error("expected unique index for 'email' (Postgres)")
 	}
+}
+
+func TestGenerateMigrationsTableSQL(t *testing.T) {
+	dialects := []string{"mysql", "postgres", "sqlite"}
+	expects := []string{"CREATE TABLE IF NOT EXISTS schema_migrations", "version", "applied_at"}
+	for _, d := range dialects {
+		sql, err := GenerateMigrationsTableSQL(d)
+		if err != nil {
+			t.Errorf("unexpected error for %s: %v", d, err)
+		}
+		for _, expect := range expects {
+			if !contains(sql, expect) {
+				t.Errorf("%s: expected SQL to contain %q, got: %s", d, expect, sql)
+			}
+		}
+	}
+	// 不支持的方言
+	_, err := GenerateMigrationsTableSQL("oracle")
+	if err == nil {
+		t.Error("expected error for unsupported dialect")
+	}
+}
+
+func contains(s, sub string) bool {
+	return strings.Contains(s, sub)
 }
