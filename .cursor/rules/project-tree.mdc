@@ -6,33 +6,23 @@ alwaysApply: false
 ## this is project-tree
 
 .
-├── .env
 ├── .gitignore
 ├── cache.go
 ├── common
 │   └── errors.go
 ├── config.go
-├── crud_internal.go
 ├── crud.go
 ├── diff.go
 ├── docs
-│   ├── BaseModel.class.php
-│   ├── ComUtils
-│   │   ├── CachedResult.class.php
-│   │   ├── Event.class.php
-│   │   └── Lock.class.php
-│   └── thing.py
 ├── examples
+│   ├── 01_basic_crud.go
 │   ├── 04_hooks
 │   │   ├── main.go
 │   │   └── models.go
-│   ├── 05_relationships.go
-│   ├── main.go
-│   └── wire.go
+│   └── 05_relationships.go
 ├── go.mod
 ├── go.sum
 ├── hooks.go
-├── interfaces.go
 ├── internal
 │   ├── cache
 │   │   ├── helpers.go
@@ -53,6 +43,8 @@ alwaysApply: false
 │   │       └── sqlite
 │   │           ├── introspect.go
 │   │           └── sqlite.go
+│   ├── interfaces
+│   │   └── interfaces.go
 │   ├── migration
 │   │   ├── migration.go
 │   │   └── migrator.go
@@ -78,13 +70,6 @@ alwaysApply: false
 │   ├── generate.go
 │   ├── migrator.go
 │   └── types.go
-├── test_output_dialect_refactor.log
-├── test_output_final.log
-├── test_output_final2.log
-├── test_output_generic_thing.log
-├── test_output.log
-├── test_output2.log
-├── test.log
 ├── tests
 │   ├── basic_operations_test.go
 │   ├── cache_index_test.go
@@ -111,7 +96,5 @@ alwaysApply: false
 │   ├── thing_test.go
 │   └── transaction_test.go
 └── thing.go
-
-22 directories, 84 files
 
 

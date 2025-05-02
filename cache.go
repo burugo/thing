@@ -572,7 +572,7 @@ func (m *localCache) Get(ctx context.Context, key string) (string, error) {
 			return s, nil
 		}
 	}
-	return "", nil
+	return "", common.ErrNotFound // Return ErrNotFound when key is missing
 }
 func (m *localCache) Set(ctx context.Context, key, value string, expiration time.Duration) error {
 	m.store.Store(key, value)
