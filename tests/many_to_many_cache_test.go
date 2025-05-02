@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"testing"
-	"thing"
-	"thing/internal/cache"
-	"thing/internal/drivers/db/sqlite"
-	"thing/internal/types"
+
+	"github.com/burugo/thing"
+	"github.com/burugo/thing/internal/cache"
+	"github.com/burugo/thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing/internal/types"
+
+	"github.com/burugo/thing/internal/interfaces"
 
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +32,7 @@ func getRoleIDs(roles []*Role) []int64 {
 }
 
 // preloadRoles: 支持缓存，key=user_roles:{userID}
-func preloadRoles(ctx context.Context, db thing.DBAdapter, cache thing.CacheClient, userID int64) ([]*Role, bool, error) {
+func preloadRoles(ctx context.Context, db interfaces.DBAdapter, cache interfaces.CacheClient, userID int64) ([]*Role, bool, error) {
 	cacheKey := fmt.Sprintf("user_roles:%d", userID)
 	// 1. 先查缓存
 	if mock, ok := cache.(*mockCacheClient); ok {

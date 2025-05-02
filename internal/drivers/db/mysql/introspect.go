@@ -4,7 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"thing/internal/schema"
+
+	"github.com/burugo/thing/internal/schema"
 )
 
 // MySQLIntrospector implements schema.Introspector for MySQL.

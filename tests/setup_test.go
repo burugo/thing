@@ -9,16 +9,17 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"thing"
-	"thing/internal/cache"
-	"thing/internal/drivers/db/mysql"
-	"thing/internal/drivers/db/postgres"
-	"thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing"
+	"github.com/burugo/thing/internal/cache"
+	"github.com/burugo/thing/internal/drivers/db/mysql"
+	"github.com/burugo/thing/internal/drivers/db/postgres"
+	"github.com/burugo/thing/internal/drivers/db/sqlite"
+	interfaces "github.com/burugo/thing/internal/interfaces"
 )
 
 // setupTestDB creates a new file-based SQLite database for testing.
 // It returns the DBAdapter, a mock CacheClient, and a cleanup function.
-func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
+func setupTestDB(tb testing.TB) (interfaces.DBAdapter, *mockCacheClient, func()) {
 	// Use a file-based DB for testing to rule out :memory: issues
 	dbFile := "test_thing.db"
 	_ = os.Remove(dbFile) // Remove any previous test db file
@@ -85,7 +86,7 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 }
 
 // setupMySQLTestDB creates a MySQL database for testing.
-func setupMySQLTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
+func setupMySQLTestDB(tb testing.TB) (interfaces.DBAdapter, interfaces.CacheClient, func()) {
 	dsn := os.Getenv("MYSQL_TEST_DSN")
 	if dsn == "" {
 		dsn = "root:password@tcp(127.0.0.1:3306)/test_db?parseTime=true"
@@ -136,7 +137,7 @@ func setupMySQLTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()
 }
 
 // setupPostgresTestDB creates a PostgreSQL database for testing.
-func setupPostgresTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
+func setupPostgresTestDB(tb testing.TB) (interfaces.DBAdapter, interfaces.CacheClient, func()) {
 	dsn := os.Getenv("POSTGRES_TEST_DSN")
 	if dsn == "" {
 		dsn = "postgres://postgres:password@localhost:5432/test_db?sslmode=disable"
@@ -188,10 +189,8 @@ func setupPostgresTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, fun
 
 // setupCacheTest creates test setup specifically for cache tests.
 // It returns the Thing instance, the mock cache, the DB adapter, and a cleanup function.
-func setupCacheTest[T thing.Model](tb testing.TB) (*thing.Thing[T], *mockCacheClient, thing.DBAdapter, func()) {
-	db, cacheClient, cleanupDB := setupTestDB(tb)
-	mockCache, ok := cacheClient.(*mockCacheClient)
-	require.True(tb, ok, "Cache client is not a mockCacheClient")
+func setupCacheTest[T thing.Model](tb testing.TB) (*thing.Thing[T], *mockCacheClient, interfaces.DBAdapter, func()) {
+	db, mockCache, cleanupDB := setupTestDB(tb)
 
 	// Reset mock cache state
 	mockCache.Reset()
@@ -221,8 +220,7 @@ func setupCacheTest[T thing.Model](tb testing.TB) (*thing.Thing[T], *mockCacheCl
 func SetupTestThing[T thing.Model](t *testing.T) (*thing.Thing[T], func()) {
 	dbAdapter, cacheClient, cleanupDB := setupTestDB(t)
 	// Ensure cacheClient is the mock type for configuration
-	mockCache, ok := cacheClient.(*mockCacheClient)
-	require.True(t, ok, "Cache client is not a mockCacheClient in SetupTestThing")
+	mockCache := cacheClient
 
 	// Configure Thing globally for the test
 	err := thing.Configure(dbAdapter, mockCache, 5*time.Minute)

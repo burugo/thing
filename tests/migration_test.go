@@ -4,7 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"thing/internal/migration" // 导入 internal 包
+
+	"github.com/burugo/thing/internal/migration" // 导入 internal 包
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

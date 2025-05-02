@@ -7,13 +7,14 @@ import (
 	"time"
 
 	sqlite "github.com/burugo/thing/internal/drivers/db/sqlite"
+	interfaces "github.com/burugo/thing/internal/interfaces"
 )
 
 // --- Global Configuration ---
 
 var (
-	globalDB     DBAdapter
-	globalCache  CacheClient
+	globalDB     interfaces.DBAdapter
+	globalCache  interfaces.CacheClient
 	isConfigured bool
 	configMutex  sync.RWMutex
 	// Global cache TTL, determined at startup
@@ -22,8 +23,8 @@ var (
 
 // Config holds configuration for the Thing ORM.
 type Config struct {
-	DB    DBAdapter   // User must initialize and provide
-	Cache CacheClient // User must initialize and provide
+	DB    interfaces.DBAdapter   // User must initialize and provide
+	Cache interfaces.CacheClient // User must initialize and provide
 	TTL   time.Duration
 }
 
@@ -41,8 +42,8 @@ func Configure(args ...interface{}) error {
 	defer configMutex.Unlock()
 
 	defaultTTL := 8 * time.Hour
-	var db DBAdapter
-	var cache CacheClient
+	var db interfaces.DBAdapter
+	var cache interfaces.CacheClient
 	var ttl time.Duration
 
 	switch len(args) {
@@ -57,7 +58,7 @@ func Configure(args ...interface{}) error {
 		log.Println("thing.Configure: Using in-memory SQLite and local cache.")
 	case 1:
 		// One argument: must be DBAdapter
-		db, _ = args[0].(DBAdapter)
+		db, _ = args[0].(interfaces.DBAdapter)
 		if db == nil {
 			return errors.New("Configure: first argument must be a DBAdapter or nil")
 		}
@@ -65,8 +66,8 @@ func Configure(args ...interface{}) error {
 		log.Println("thing.Configure: Using provided DBAdapter and local cache.")
 	case 2:
 		// Two arguments: DBAdapter, CacheClient
-		db, _ = args[0].(DBAdapter)
-		cache, _ = args[1].(CacheClient)
+		db, _ = args[0].(interfaces.DBAdapter)
+		cache, _ = args[1].(interfaces.CacheClient)
 		if db == nil {
 			return errors.New("Configure: first argument must be a DBAdapter or nil")
 		}
@@ -76,8 +77,8 @@ func Configure(args ...interface{}) error {
 		}
 	case 3:
 		// Three arguments: DBAdapter, CacheClient, TTL
-		db, _ = args[0].(DBAdapter)
-		cache, _ = args[1].(CacheClient)
+		db, _ = args[0].(interfaces.DBAdapter)
+		cache, _ = args[1].(interfaces.CacheClient)
 		ttl, _ = args[2].(time.Duration)
 		if db == nil {
 			return errors.New("Configure: first argument must be a DBAdapter or nil")

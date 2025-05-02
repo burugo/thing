@@ -3,8 +3,8 @@ package thing_test
 import (
 	"testing"
 
-	"thing/common"
-	"thing/internal/types"
+	"github.com/burugo/thing/common"
+	"github.com/burugo/thing/internal/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -7,13 +7,14 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
-	"thing"
-	"thing/common"
-	"thing/internal/types"
+
 	"time"
 
-	"thing/internal/schema"
+	"github.com/burugo/thing"
+	"github.com/burugo/thing/common"
+	"github.com/burugo/thing/internal/types"
 
+	"github.com/burugo/thing/internal/schema"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -218,8 +219,8 @@ func TestCachedResult_First(t *testing.T) {
 	require.NoError(t, err)
 
 	// Type assert to *mockCacheClient for mock-only methods
-	mockCache, ok := cacheClient.(*mockCacheClient)
-	require.True(t, ok, "cacheClient is not a *mockCacheClient")
+	mockCache := cacheClient
+	// require.True(t, ok, "cacheClient is not a *mockCacheClient")
 
 	// Seed data
 	u1 := User{Name: "FirstUser", Email: "first@example.com"}

@@ -6,7 +6,8 @@ import (
 	"log"
 	"reflect"
 	"strings"
-	"thing/internal/types"
+
+	"github.com/burugo/thing/internal/types"
 	// Import regexp for potential future use or complex LIKE
 	// "thing" // REMOVED import of root package
 )

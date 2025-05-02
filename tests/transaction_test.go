@@ -4,13 +4,13 @@ import (
 	"context"
 	"reflect"
 	"testing"
-	"thing/internal/types"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"thing/internal/schema"
+	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/types"
 )
 
 // TestTransaction_Commit verifies that operations within a committed transaction persist.

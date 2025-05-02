@@ -10,11 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"thing"
-	"thing/common"
-	"thing/internal/schema"
-	"thing/internal/sqlbuilder"
-	"thing/internal/types"
+	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/types"
+
+	"github.com/burugo/thing/common"
+	"github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/internal/sqlbuilder"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
@@ -42,13 +43,13 @@ type PostgreSQLTx struct {
 }
 
 // Compile-time checks to ensure interfaces are implemented.
-var _ thing.DBAdapter = (*PostgreSQLAdapter)(nil)
-var _ thing.Tx = (*PostgreSQLTx)(nil)
+var _ interfaces.DBAdapter = (*PostgreSQLAdapter)(nil)
+var _ interfaces.Tx = (*PostgreSQLTx)(nil)
 
 // --- Constructor ---
 
 // NewPostgreSQLAdapter creates a new PostgreSQL adapter instance.
-func NewPostgreSQLAdapter(dsn string) (thing.DBAdapter, error) {
+func NewPostgreSQLAdapter(dsn string) (interfaces.DBAdapter, error) {
 	// return nil, fmt.Errorf("NewPostgreSQLAdapter not yet implemented") // Remove placeholder
 
 	db, err := sql.Open("postgres", dsn)
@@ -323,7 +324,7 @@ func (a *PostgreSQLAdapter) GetCount(ctx context.Context, info *schema.ModelInfo
 }
 
 // BeginTx starts a transaction.
-func (a *PostgreSQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, error) {
+func (a *PostgreSQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (interfaces.Tx, error) {
 	// return nil, fmt.Errorf("PostgreSQLAdapter.BeginTx not implemented") // Remove placeholder
 
 	log.Println("DB Transaction Started (PostgreSQL)")

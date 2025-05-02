@@ -11,6 +11,85 @@
 
 > **Thing ORM** is ideal for projects that need fast, reliable, and maintainable data access without the overhead of a full-featured SQL builder. It empowers developers to build scalable applications with minimal boilerplate and maximum control over caching and serialization.
 
+## Basic CRUD Example
+
+Here is a minimal example demonstrating how to use Thing ORM for basic CRUD operations:
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/burugo/thing/internal/types"
+
+	"github.com/burugo/thing"
+)
+
+// User model definition
+// Only basic fields for demonstration
+// No relationships
+
+type User struct {
+	thing.BaseModel
+	Name string `db:"name"`
+	Age  int    `db:"age"`
+}
+
+func main() {
+
+	// Configure Thing ORM (in-memory DB and cache for demo)
+	thing.Configure()
+
+	// Auto-migrate User table
+	if err := thing.AutoMigrate(&User{}); err != nil {
+		log.Fatal(err)
+	}
+
+	// Get the User ORM object
+	users, err := thing.Use[*User]()
+
+	// Create
+	u := &User{Name: "Alice", Age: 30}
+	if err := users.Save(u); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Created:", u)
+
+	// ByID
+	found, err := users.ByID(u.ID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("ByID:", found)
+
+	// Update
+	found.Age = 31
+	if err := users.Save(found); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Updated:", found)
+
+	// Query all
+	result, err := users.Query(types.QueryParams{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	all, err := result.All()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("All users:", all)
+
+	// Delete
+	if err := users.Delete(u); err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Deleted user.")
+}
+```
+
 ## Flexible JSON Serialization (Key Feature)
 
 - **Supports Go struct tag**  
@@ -163,7 +242,7 @@ This mechanism allows you to monitor cache effectiveness, debug performance issu
 ### Auto Migration Example
 
 ```go
-import "thing"
+import "github.com/burugo/thing"
 
 // Configure the database adapter
 thing.Configure(dbAdapter, cacheClient)
@@ -184,7 +263,7 @@ You can initialize a Thing ORM instance with flexible cache options:
 
 ### 1. Use Default Local (In-Memory) Cache (No Redis Required)
 ```go
-userThing, err := thing.New[*User](db) // Uses built-in localCache automatically
+userThing, err := thing.New[*User](db,nil) // Uses built-in localCache automatically
 ```
 - Suitable for development, testing, or single-node deployments.
 - No external cache dependency.
@@ -195,13 +274,6 @@ userThing, err := thing.New[*User](db, redisCache)
 ```
 - Pass any implementation of `thing.CacheClient` (e.g., Redis, Memcached).
 - Recommended for production/distributed deployments.
-
-### 3. Multiple Caches (Future: Load Balancing/Failover)
-```go
-userThing, err := thing.New[*User](db, cache1, cache2)
-```
-- Currently, only the first cache is used.
-- Future versions may support load balancing or failover across multiple caches.
 
 > **Tip:** You can always pass `nil` as the cache argument to force fallback to localCache:
 > ```go

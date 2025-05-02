@@ -2,7 +2,8 @@ package thing_test
 
 import (
 	"testing"
-	"thing"
+
+	"github.com/burugo/thing"
 
 	"github.com/stretchr/testify/require"
 )

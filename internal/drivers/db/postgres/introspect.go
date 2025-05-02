@@ -5,7 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
-	"thing/internal/schema"
+
+	"github.com/burugo/thing/internal/schema"
 )
 
 // PostgreSQLIntrospector implements schema.Introspector for PostgreSQL.

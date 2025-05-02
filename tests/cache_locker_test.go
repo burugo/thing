@@ -9,7 +9,7 @@ import (
 
 	// Import the package we are testing
 
-	"thing/internal/cache"
+	"github.com/burugo/thing/internal/cache"
 )
 
 func TestCacheKeyLockManager_LockUnlock(t *testing.T) {

@@ -6,9 +6,9 @@ import (
 	"log"
 	"strconv"
 
-	"thing/common"
-	"thing/internal/cache"
-	"thing/internal/types"
+	"github.com/burugo/thing/common"
+	"github.com/burugo/thing/internal/cache"
+	"github.com/burugo/thing/internal/types"
 )
 
 const (

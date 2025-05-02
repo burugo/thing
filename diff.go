@@ -4,7 +4,8 @@ import (
 	"errors"
 	"log"
 	"reflect"
-	"thing/internal/schema"
+
+	"github.com/burugo/thing/internal/schema"
 )
 
 // findChangedFieldsSimple compares two structs (original and updated) using cached metadata

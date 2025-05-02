@@ -3,12 +3,12 @@ package thing_test
 import (
 	"encoding/json"
 	"testing"
-	"thing"
 	"time"
 
 	"strings"
 
-	"thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing"
+	"github.com/burugo/thing/internal/drivers/db/sqlite"
 
 	"github.com/stretchr/testify/require"
 )

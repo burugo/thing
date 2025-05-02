@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"thing"
-	"thing/common"
-	"thing/internal/schema"
-	"thing/internal/sqlbuilder"
-	"thing/internal/types"
+	"github.com/burugo/thing/common"
+	interfaces "github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/sqlbuilder"
+	"github.com/burugo/thing/internal/types"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 )
@@ -41,13 +41,13 @@ type MySQLTx struct {
 }
 
 // Compile-time checks to ensure interfaces are implemented.
-var _ thing.DBAdapter = (*MySQLAdapter)(nil)
-var _ thing.Tx = (*MySQLTx)(nil) // Use thing.Tx interface
+var _ interfaces.DBAdapter = (*MySQLAdapter)(nil)
+var _ interfaces.Tx = (*MySQLTx)(nil) // Use thing.Tx interface
 
 // --- Constructor ---
 
 // NewMySQLAdapter creates a new MySQL adapter instance.
-func NewMySQLAdapter(dsn string) (thing.DBAdapter, error) {
+func NewMySQLAdapter(dsn string) (interfaces.DBAdapter, error) {
 	// return nil, fmt.Errorf("NewMySQLAdapter not yet implemented") // Remove placeholder
 
 	db, err := sql.Open("mysql", dsn)
@@ -333,7 +333,7 @@ func (a *MySQLAdapter) GetCount(ctx context.Context, info *schema.ModelInfo, par
 }
 
 // BeginTx starts a transaction.
-func (a *MySQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, error) {
+func (a *MySQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (interfaces.Tx, error) {
 	// TODO: Implement using db.BeginTx
 	// TODO: Wrap the sql.Tx in MySQLTx
 	// return nil, fmt.Errorf("MySQLAdapter.BeginTx not implemented") // Remove placeholder

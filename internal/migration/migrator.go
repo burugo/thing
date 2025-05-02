@@ -9,24 +9,24 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"thing/internal/schema"
 	"time"
 
-	"thing"
+	"github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/internal/schema"
 )
 
 const migrationsTableName = "schema_migrations"
 
 // Migrator handles database migrations
 type Migrator struct {
-	Db         thing.DBAdapter
+	Db         interfaces.DBAdapter
 	dir        string
 	dialect    string
 	logEnabled bool
 }
 
 // NewMigrator creates a new Migrator instance
-func NewMigrator(db thing.DBAdapter, migrationsDir string) *Migrator {
+func NewMigrator(db interfaces.DBAdapter, migrationsDir string) *Migrator {
 	return &Migrator{
 		Db:         db,
 		dir:        migrationsDir,

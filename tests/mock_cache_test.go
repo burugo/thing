@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"sync"
 	"testing"
-	"thing"
-	"thing/common"
-	"thing/internal/drivers/db/sqlite"
-	"thing/internal/schema"
-	"thing/internal/types"
 	"time"
+
+	"github.com/burugo/thing/common"
+	"github.com/burugo/thing/internal/drivers/db/sqlite"
+	interfaces "github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/types"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -499,7 +500,7 @@ func (m *mockDBAdapter) GetCount(ctx context.Context, info *schema.ModelInfo, pa
 	return m.SQLiteAdapter.GetCount(ctx, info, params)
 }
 
-func (m *mockDBAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, error) {
+func (m *mockDBAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (interfaces.Tx, error) {
 	return m.SQLiteAdapter.BeginTx(ctx, opts)
 }
 
@@ -636,12 +637,12 @@ func (m *mockCacheClient) GetModelCount() int {
 // GetCacheStats returns a snapshot of cache operation counters for the mock client.
 // The returned map is a copy and safe for concurrent use.
 // Typical keys: "Get", "GetMiss", "GetModel", "GetModelMiss", etc.
-func (m *mockCacheClient) GetCacheStats(ctx context.Context) thing.CacheStats {
+func (m *mockCacheClient) GetCacheStats(ctx context.Context) interfaces.CacheStats {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	stats := make(map[string]int, len(m.Counters))
 	for k, v := range m.Counters {
 		stats[k] = v
 	}
-	return thing.CacheStats{Counters: stats}
+	return interfaces.CacheStats{Counters: stats}
 }

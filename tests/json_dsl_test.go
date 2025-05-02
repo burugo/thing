@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	thing "thing"
+	"github.com/burugo/thing"
 )
 
 // Test with struct that has no json tags

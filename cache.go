@@ -14,11 +14,12 @@ import (
 	"sync"
 	"time"
 
-	"thing/common" // Added import for common errors/constants
-	"thing/internal/cache"
-	"thing/internal/schema"
-	"thing/internal/types" // Import internal cache package
-	"thing/internal/utils"
+	"github.com/burugo/thing/common" // Added import for common errors/constants
+	"github.com/burugo/thing/internal/cache"
+	"github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/types" // Import internal cache package
+	"github.com/burugo/thing/internal/utils"
 	// "thing/internal/helpers" // Removed import
 )
 
@@ -37,7 +38,7 @@ var GlobalCacheKeyLocker = NewCacheKeyLockManagerInternal()
 // --- Cache Helpers ---
 
 // withLock acquires a lock, executes the action, and releases the lock.
-func withLock(ctx context.Context, cache CacheClient, lockKey string, action func(ctx context.Context) error) error {
+func withLock(ctx context.Context, cache interfaces.CacheClient, lockKey string, action func(ctx context.Context) error) error {
 	if cache == nil {
 		log.Printf("Warning: Proceeding without lock for key '%s', cache client is nil", lockKey)
 		return action(ctx)
@@ -633,6 +634,6 @@ func (m *localCache) ReleaseLock(ctx context.Context, lockKey string) error {
 	m.locks.Delete(lockKey)
 	return nil
 }
-func (m *localCache) GetCacheStats(ctx context.Context) CacheStats {
-	return CacheStats{Counters: map[string]int{}}
+func (m *localCache) GetCacheStats(ctx context.Context) interfaces.CacheStats {
+	return interfaces.CacheStats{Counters: map[string]int{}}
 }

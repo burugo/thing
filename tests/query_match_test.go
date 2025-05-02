@@ -3,15 +3,16 @@ package thing_test
 import (
 	"reflect"
 	"testing"
-	"thing/internal/cache"
-	"thing/internal/schema"
-	"thing/internal/types"
+
+	"github.com/burugo/thing/internal/cache"
+	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/types"
 
 	"github.com/stretchr/testify/require"
 
 	// Import the package we are testing
 	// Adjust the import path if your module structure is different
-	"thing"
+	"github.com/burugo/thing"
 )
 
 // Use a model defined within the main thing package or define one here if needed.

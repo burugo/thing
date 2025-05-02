@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"log"     // For placeholder logging
 	"reflect" // Added for parsing env var
-	"thing/internal/schema"
-	"thing/internal/sqlbuilder"
+
+	"github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/sqlbuilder"
+	// Added for configuring cache TTL
 )
 
 // --- Thing Core Struct ---
@@ -21,8 +24,8 @@ type Model interface {
 // Thing is the central access point for ORM operations, analogous to gorm.DB.
 // It holds database/cache clients and the context for operations.
 type Thing[T Model] struct {
-	db      DBAdapter
-	cache   CacheClient
+	db      interfaces.DBAdapter
+	cache   interfaces.CacheClient
 	ctx     context.Context
 	info    *schema.ModelInfo      // Pre-computed metadata for type T
 	builder *sqlbuilder.SQLBuilder // Add builder field
@@ -31,35 +34,31 @@ type Thing[T Model] struct {
 // --- Thing Constructors & Accessors ---
 
 // New creates a new Thing instance with default context.Background().
-// Made generic: requires type parameter T when called, e.g., New[MyModel](...).
-func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
+// Accepts one or more CacheClient; if none provided, uses defaultLocalCache.
+func New[T Model](db interfaces.DBAdapter, cache interfaces.CacheClient) (*Thing[T], error) {
 	log.Println("DEBUG: Entering New[T]") // Added log
 	if db == nil {
 		log.Println("DEBUG: New[T] - DB is nil") // Added log
 		return nil, errors.New("DBAdapter must be non-nil")
 	}
 	if cache == nil {
-		log.Println("DEBUG: New[T] - Cache is nil") // Added log
-		return nil, errors.New("CacheClient must be non-nil")
+		log.Println("DEBUG: New[T] - No cache provided, using defaultLocalCache")
+		cache = defaultLocalCache
 	}
 	log.Println("New Thing instance created.")
-
 	// Pre-compute model info for T
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
-	log.Printf("DEBUG: New[T] - Getting model info for type: %s", modelType.Name()) // Added log
+	log.Printf("DEBUG: New[T] - Getting model info for type: %s", modelType.Name())
 	info, err := schema.GetCachedModelInfo(modelType)
 	if err != nil {
-		log.Printf("DEBUG: New[T] - Error getting model info: %v", err) // Added log
+		log.Printf("DEBUG: New[T] - Error getting model info: %v", err)
 		return nil, fmt.Errorf("failed to get model info for type %s: %w", modelType.Name(), err)
 	}
-	log.Printf("DEBUG: New[T] - Got model info: %+v", info) // Added log
-	// TableName is now populated within GetCachedModelInfo
-	// info.TableName = getTableNameFromType(modelType) // Removed redundant call
+	log.Printf("DEBUG: New[T] - Got model info: %+v", info)
 	if info.TableName == "" {
 		log.Printf("Warning: Could not determine table name for type %s during New. Relying on instance method?", modelType.Name())
 	}
-
-	log.Println("DEBUG: New[T] - Creating Thing struct") // Added log
+	log.Println("DEBUG: New[T] - Creating Thing struct")
 	t := &Thing[T]{
 		db:      db,
 		cache:   cache,
@@ -67,7 +66,7 @@ func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 		info:    info,
 		builder: db.Builder(),
 	}
-	log.Println("DEBUG: New[T] - Returning new Thing instance") // Added log
+	log.Println("DEBUG: New[T] - Returning new Thing instance")
 	return t, nil
 }
 
@@ -100,11 +99,11 @@ func (t *Thing[T]) WithContext(ctx context.Context) *Thing[T] { // Returns *Thin
 }
 
 // DBAdapter returns the underlying DBAdapter for advanced use cases.
-func (t *Thing[T]) DBAdapter() DBAdapter {
+func (t *Thing[T]) DBAdapter() interfaces.DBAdapter {
 	return t.db
 }
 
 // GlobalDB returns the global DBAdapter (for internal use, e.g., AutoMigrate)
-func GlobalDB() DBAdapter {
+func GlobalDB() interfaces.DBAdapter {
 	return globalDB
 }

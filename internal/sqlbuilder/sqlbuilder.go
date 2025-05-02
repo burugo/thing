@@ -5,7 +5,8 @@ import (
 	"log"
 	"reflect"
 	"strings"
-	"thing/internal/types"
+
+	"github.com/burugo/thing/internal/types"
 )
 
 // Dialector defines how to quote identifiers and bind variables for a specific SQL dialect.

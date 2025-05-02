@@ -4,7 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"thing/internal/schema"
+
+	"github.com/burugo/thing/internal/schema"
 )
 
 // SQLiteIntrospector implements schema.Introspector for SQLite.

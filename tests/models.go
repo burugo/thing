@@ -1,7 +1,7 @@
 package thing
 
 import (
-	"thing"
+	thing "github.com/burugo/thing"
 )
 
 // User is a sample model for testing purposes within the tests package.

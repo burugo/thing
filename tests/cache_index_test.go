@@ -6,8 +6,8 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	// Import the package we are testing
-	"thing/internal/cache"
-	"thing/internal/types"
+	"github.com/burugo/thing/internal/cache"
+	"github.com/burugo/thing/internal/types"
 )
 
 func TestCacheIndex_RegisterAndGet(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"strings"
 
-	"thing/internal/utils"
+	"github.com/burugo/thing/internal/utils"
 )
 
 // Helper function to check if a string slice contains a string (case-insensitive)

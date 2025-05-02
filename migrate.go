@@ -3,7 +3,8 @@ package thing
 import (
 	"context"
 	"fmt"
-	"thing/internal/schema"
+
+	"github.com/burugo/thing/internal/schema"
 )
 
 // AutoMigrate 生成并执行建表 SQL，支持批量建表

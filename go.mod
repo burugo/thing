@@ -1,4 +1,4 @@
-module thing
+module github.com/burugo/thing
 
 go 1.24.2
 

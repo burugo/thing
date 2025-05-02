@@ -4,7 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"thing/internal/schema" // 导入 internal 包
+
+	"github.com/burugo/thing/internal/schema" // 导入 internal 包
 )
 
 // mockModelInfo returns a minimal *schema.ModelInfo for testing

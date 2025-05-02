@@ -1,18 +1,32 @@
 ---
-description: project-tree
-globs: 
+description: 
+globs: *.go
 alwaysApply: false
 ---
 ## this is project-tree
 
 .
+├── .env
 ├── .gitignore
 ├── cache.go
+├── common
+│   └── errors.go
+├── config.go
 ├── crud_internal.go
 ├── crud.go
+├── diff.go
 ├── docs
-├── errors.go
+│   ├── BaseModel.class.php
+│   ├── ComUtils
+│   │   ├── CachedResult.class.php
+│   │   ├── Event.class.php
+│   │   └── Lock.class.php
+│   └── thing.py
 ├── examples
+│   ├── 04_hooks
+│   │   ├── main.go
+│   │   └── models.go
+│   ├── 05_relationships.go
 │   ├── main.go
 │   └── wire.go
 ├── go.mod
@@ -24,33 +38,80 @@ alwaysApply: false
 │   │   ├── helpers.go
 │   │   ├── index.go
 │   │   ├── locker.go
-│   │   ├── query_match.go
-│   │   └── types.go
+│   │   └── query_match.go
 │   ├── drivers
 │   │   ├── cache
 │   │   │   └── redis
 │   │   │       └── client.go
 │   │   └── db
+│   │       ├── mysql
+│   │       │   ├── introspect.go
+│   │       │   └── mysql.go
+│   │       ├── postgres
+│   │       │   ├── introspect.go
+│   │       │   └── postgres.go
 │   │       └── sqlite
+│   │           ├── introspect.go
 │   │           └── sqlite.go
+│   ├── migration
+│   │   ├── migration.go
+│   │   └── migrator.go
+│   ├── schema
+│   │   ├── auto.go
+│   │   ├── generate.go
+│   │   └── metadata.go
+│   ├── sqlbuilder
+│   │   └── sqlbuilder.go
+│   ├── types
+│   │   └── types.go
 │   └── utils
+│       ├── orderedmap.go
 │       └── utils.go
+├── json.go
 ├── LICENSE
+├── migrate.go
 ├── model.go
 ├── query.go
 ├── README.md
+├── relationships.go
+├── schema
+│   ├── generate.go
+│   ├── migrator.go
+│   └── types.go
+├── test_output_dialect_refactor.log
+├── test_output_final.log
+├── test_output_final2.log
+├── test_output_generic_thing.log
+├── test_output.log
+├── test_output2.log
+├── test.log
 ├── tests
 │   ├── basic_operations_test.go
 │   ├── cache_index_test.go
 │   ├── cache_locker_test.go
 │   ├── cache_operations_test.go
-│   ├── cached_result_test.go
+│   ├── cache_stats_test.go
+│   ├── hooks_test.go
+│   ├── json_dsl_test.go
+│   ├── many_to_many_cache_test.go
+│   ├── migration_test.go
+│   ├── migrator_test.go
 │   ├── mock_cache_test.go
 │   ├── model_test.go
+│   ├── models.go
+│   ├── mysql_adapter_test.go
+│   ├── postgres_adapter_test.go
 │   ├── query_match_test.go
+│   ├── query_test.go
 │   ├── relationships_test.go
+│   ├── schema_generate_test.go
 │   ├── setup_test.go
+│   ├── soft_delete_test.go
+│   ├── sqlite_adapter_test.go
 │   ├── thing_test.go
 │   └── transaction_test.go
 └── thing.go
+
+22 directories, 84 files
+
 

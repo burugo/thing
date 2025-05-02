@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"thing" // For QueryParams used in GetCount test
-	"thing/common"
-	"thing/internal/drivers/db/sqlite"
-	"thing/internal/schema"
-	"thing/internal/types"
+	// For QueryParams used in GetCount test
+	"github.com/burugo/thing/common"
+	"github.com/burugo/thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/types"
 
 	_ "github.com/mattn/go-sqlite3" // Import driver
 	"github.com/stretchr/testify/assert"
@@ -29,7 +30,7 @@ type TestItem struct {
 
 // setupSQLiteAdapterTest initializes an in-memory SQLite DB, creates a test table,
 // and returns the adapter and a cleanup function.
-func setupSQLiteAdapterTest(t *testing.T) (thing.DBAdapter, func()) {
+func setupSQLiteAdapterTest(t *testing.T) (interfaces.DBAdapter, func()) {
 	t.Helper()
 	// Use a unique in-memory database for each test run
 	dsn := fmt.Sprintf("file:%s-%d?mode=memory&cache=shared", t.Name(), time.Now().UnixNano())

@@ -5,7 +5,8 @@ import (
 	"log"
 	"strings"
 	"sync"
-	"thing/internal/types"
+
+	"github.com/burugo/thing/internal/types"
 )
 
 // Global instance of the cache index.

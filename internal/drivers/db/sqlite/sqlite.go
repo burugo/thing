@@ -9,18 +9,16 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"thing/internal/types"
 	"time"
 
-	"thing/common" // Added import
-	"thing/internal/schema"
-	"thing/internal/sqlbuilder" // Added import for SQLBuilder
+	"github.com/burugo/thing/common"
+	"github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/sqlbuilder"
+	"github.com/burugo/thing/internal/types"
 
 	// "github.com/jmoiron/sqlx" // Removed sqlx import
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
-
-	// Import the core package (now at module root)
-	thing "thing"
 )
 
 // SQLiteDialector implements the sqlbuilder.Dialector interface for SQLite.
@@ -33,7 +31,7 @@ func (d SQLiteDialector) Placeholder(_ int) string {
 	return "?"
 }
 
-// SQLiteAdapter implements the thing.DBAdapter interface for SQLite.
+// SQLiteAdapter implements the interfaces.DBAdapter interface for SQLite.
 type SQLiteAdapter struct {
 	db      *sql.DB // Changed from *sqlx.DB
 	dsn     string
@@ -42,13 +40,13 @@ type SQLiteAdapter struct {
 	builder *sqlbuilder.SQLBuilder // Added SQLBuilder field
 }
 
-// Ensure SQLiteAdapter implements thing.DBAdapter.
-var _ thing.DBAdapter = (*SQLiteAdapter)(nil)
+// Ensure SQLiteAdapter implements interfaces.DBAdapter.
+var _ interfaces.DBAdapter = (*SQLiteAdapter)(nil)
 
 // NewSQLiteAdapter creates a new SQLite database adapter.
 // It opens a connection pool and pings the database.
-// Returns thing.DBAdapter interface type for broader compatibility.
-func NewSQLiteAdapter(dsn string) (thing.DBAdapter, error) { // Return interface type
+// Returns interfaces.DBAdapter interface type for broader compatibility.
+func NewSQLiteAdapter(dsn string) (interfaces.DBAdapter, error) { // Return interface type
 	log.Printf("Initializing SQLite adapter with DSN: %s", dsn)
 	// db, err := sqlx.Connect("sqlite3", dsn) // Replaced sqlx.Connect
 	db, err := sql.Open("sqlite3", dsn) // Use sql.Open
@@ -310,7 +308,7 @@ func (a *SQLiteAdapter) GetCount(ctx context.Context, info *schema.ModelInfo, pa
 }
 
 // BeginTx starts a new database transaction.
-func (a *SQLiteAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, error) { // Return interface type
+func (a *SQLiteAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (interfaces.Tx, error) { // Return interface type
 	if a.isClosed() {
 		return nil, fmt.Errorf("adapter is closed")
 	}
@@ -342,7 +340,7 @@ func (a *SQLiteAdapter) isClosed() bool {
 
 // --- Transaction Wrapper ---
 
-// SQLiteTx wraps a standard sql.Tx to implement the thing.Tx interface.
+// SQLiteTx wraps a standard sql.Tx to implement the interfaces.Tx interface.
 type SQLiteTx struct {
 	tx *sql.Tx // Changed from *sqlx.Tx
 }
