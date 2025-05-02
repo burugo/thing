@@ -81,6 +81,9 @@ type DBAdapter interface {
 	// Builder returns a SQLBuilder for building SQL queries.
 	Builder() *sqlbuilder.SQLBuilder
 
+	// DialectName returns the SQL dialect name (e.g., "mysql", "postgres", "sqlite").
+	DialectName() string
+
 	// TODO: Add Ping or other health check methods?
 }
 

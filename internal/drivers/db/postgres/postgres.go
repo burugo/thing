@@ -345,6 +345,11 @@ func (a *PostgreSQLAdapter) Builder() *sqlbuilder.SQLBuilder {
 	return a.builder
 }
 
+// DialectName returns the name of the database dialect.
+func (a *PostgreSQLAdapter) DialectName() string {
+	return "postgres"
+}
+
 // --- Tx Methods ---
 
 // Commit commits the transaction.

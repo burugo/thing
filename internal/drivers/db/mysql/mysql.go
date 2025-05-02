@@ -700,3 +700,7 @@ func (a *MySQLAdapter) DB() *sql.DB {
 func (a *MySQLAdapter) Builder() *sqlbuilder.SQLBuilder {
 	return a.builder
 }
+
+func (a *MySQLAdapter) DialectName() string {
+	return "mysql"
+}

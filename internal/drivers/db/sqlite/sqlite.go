@@ -755,3 +755,7 @@ func (a *SQLiteAdapter) DB() *sql.DB {
 func (a *SQLiteAdapter) Builder() *sqlbuilder.SQLBuilder {
 	return a.builder
 }
+
+func (a *SQLiteAdapter) DialectName() string {
+	return "sqlite"
+}

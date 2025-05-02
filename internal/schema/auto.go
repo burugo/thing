@@ -6,7 +6,10 @@ import (
 )
 
 // AutoMigrate 只负责生成 SQL 并返回，由 migrate.go 调用时实际执行 SQL
-func AutoMigrate(models ...interface{}) ([]string, error) {
+// 移除 AutoMigrate 方法，只保留 AutoMigrateWithDialect。
+
+// AutoMigrateWithDialect 支持指定方言
+func AutoMigrateWithDialect(dialect string, models ...interface{}) ([]string, error) {
 	var sqls []string
 	for _, m := range models {
 		t := reflect.TypeOf(m)
@@ -18,9 +21,9 @@ func AutoMigrate(models ...interface{}) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("AutoMigrate: failed to get model info for %s: %w", t.Name(), err)
 		}
-		sql, err := GenerateCreateTableSQL(info, "mysql")
+		sql, err := GenerateCreateTableSQL(info, dialect)
 		if err != nil {
-			return nil, fmt.Errorf("AutoMigrate: failed to generate SQL for %s: %w", t.Name(), err)
+			return nil, fmt.Errorf("AutoMigrateWithDialect: failed to generate SQL for %s: %w", t.Name(), err)
 		}
 		sqls = append(sqls, sql)
 	}

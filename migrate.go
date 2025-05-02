@@ -11,7 +11,8 @@ func AutoMigrate(models ...interface{}) error {
 	if globalDB == nil {
 		return fmt.Errorf("AutoMigrate: globalDB is nil, please call thing.Configure(db, cache)")
 	}
-	sqls, err := schema.AutoMigrate(models...)
+	dialect := globalDB.DialectName()
+	sqls, err := schema.AutoMigrateWithDialect(dialect, models...)
 	if err != nil {
 		return err
 	}
