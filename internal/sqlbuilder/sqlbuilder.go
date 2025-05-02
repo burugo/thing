@@ -163,11 +163,19 @@ func (b *SQLBuilder) BuildUpdateSQL(tableName string, setClauses []string, pkNam
 		log.Printf("Error: BuildUpdateSQL called with incomplete info: TableName='%s', SetClauses=%d, PkName='%s'", tableName, len(setClauses), pkName)
 		return ""
 	}
+	// Generate set clauses with incrementing placeholders
+	setParts := make([]string, len(setClauses))
+	for i, clause := range setClauses {
+		// clause is like "col = ?", replace ? with correct placeholder
+		setParts[i] = strings.Replace(clause, "?", b.Dialect.Placeholder(i+1), 1)
+	}
+	// WHERE uses next placeholder
+	wherePlaceholder := b.Dialect.Placeholder(len(setClauses) + 1)
 	return fmt.Sprintf("UPDATE %s SET %s WHERE %s = %s",
 		b.Dialect.Quote(tableName),
-		strings.Join(setClauses, ", "),
+		strings.Join(setParts, ", "),
 		b.Dialect.Quote(pkName),
-		b.Dialect.Placeholder(1))
+		wherePlaceholder)
 }
 
 // BuildDeleteSQL constructs a DELETE statement for the given table and primary key.
@@ -200,16 +208,18 @@ func (b *SQLBuilder) BuildCountSQL(tableName string, whereClause string) string 
 func (b *SQLBuilder) Rebind(query string) string {
 	// For MySQL and SQLite, ? placeholders are already correct
 
-	// Replace ? with $1, $2, etc.
-	rqb := make([]byte, 0, len(query)+10)
-	var i, j int
-	for i = strings.Index(query, "?"); i >= 0; i = strings.Index(query[j:], "?") {
-		i += j
-		rqb = append(rqb, query[j:i]...)
-		j = i + 1
-		rqb = append(rqb, b.Dialect.Placeholder(j)...)
+	// Replace ? with $1, $2, etc. (must increment index for each ?)
+	var (
+		result strings.Builder
+		idx    = 1
+	)
+	for i := 0; i < len(query); i++ {
+		if query[i] == '?' {
+			result.WriteString(b.Dialect.Placeholder(idx))
+			idx++
+		} else {
+			result.WriteByte(query[i])
+		}
 	}
-	rqb = append(rqb, query[j:]...)
-	return string(rqb)
-
+	return result.String()
 }

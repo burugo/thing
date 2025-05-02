@@ -260,10 +260,25 @@ func (a *PostgreSQLAdapter) Select(ctx context.Context, dest interface{}, query 
 // Exec executes a query that doesn't return rows.
 // PostgreSQL uses '$N' placeholders.
 func (a *PostgreSQLAdapter) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	// return nil, fmt.Errorf("PostgreSQLAdapter.Exec not implemented") // Remove placeholder
-
 	reboundQuery := a.builder.Rebind(query)
 	start := time.Now()
+
+	// Detect INSERT and add RETURNING id if not present
+	isInsert := strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "INSERT")
+	if isInsert && !strings.Contains(strings.ToUpper(query), "RETURNING") {
+		reboundQuery += " RETURNING id"
+		var lastInsertId int64
+		row := a.db.QueryRowContext(ctx, reboundQuery, args...)
+		err := row.Scan(&lastInsertId)
+		duration := time.Since(start)
+		if err != nil {
+			log.Printf("DB Exec Error (PostgreSQL INSERT RETURNING): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+			return nil, fmt.Errorf("postgres ExecContext error (insert returning): %w", err)
+		}
+		log.Printf("DB Exec (PostgreSQL INSERT RETURNING): %s [%v] (LastInsertId: %d, %s)", reboundQuery, args, lastInsertId, duration)
+		return &pgResult{lastInsertId: lastInsertId, rowsAffected: 1}, nil
+	}
+
 	result, err := a.db.ExecContext(ctx, reboundQuery, args...)
 	duration := time.Since(start)
 	if err != nil {
@@ -271,9 +286,6 @@ func (a *PostgreSQLAdapter) Exec(ctx context.Context, query string, args ...inte
 		return nil, fmt.Errorf("postgres ExecContext error: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()
-	// LastInsertId is often not supported or requires RETURNING clause in PostgreSQL.
-	// Handle this potential difference if needed by the core ORM logic.
-	// lastInsertID, _ := result.LastInsertId()
 	log.Printf("DB Exec (PostgreSQL): %s [%v] (Affected: %d) (%s)", reboundQuery, args, rowsAffected, duration)
 	return result, nil
 }
@@ -524,10 +536,24 @@ func (tx *PostgreSQLTx) Select(ctx context.Context, dest interface{}, query stri
 
 // Exec executes a query within the transaction.
 func (tx *PostgreSQLTx) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	// return nil, fmt.Errorf("PostgreSQLTx.Exec not implemented") // Remove placeholder
-
 	reboundQuery := tx.builder.Rebind(query)
 	start := time.Now()
+
+	isInsert := strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "INSERT")
+	if isInsert && !strings.Contains(strings.ToUpper(query), "RETURNING") {
+		reboundQuery += " RETURNING id"
+		var lastInsertId int64
+		row := tx.tx.QueryRowContext(ctx, reboundQuery, args...)
+		err := row.Scan(&lastInsertId)
+		duration := time.Since(start)
+		if err != nil {
+			log.Printf("DB Tx Exec Error (PostgreSQL INSERT RETURNING): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+			return nil, fmt.Errorf("postgres Tx ExecContext error (insert returning): %w", err)
+		}
+		log.Printf("DB Tx Exec (PostgreSQL INSERT RETURNING): %s [%v] (LastInsertId: %d, %s)", reboundQuery, args, lastInsertId, duration)
+		return &pgResult{lastInsertId: lastInsertId, rowsAffected: 1}, nil
+	}
+
 	result, err := tx.tx.ExecContext(ctx, reboundQuery, args...)
 	duration := time.Since(start)
 	if err != nil {
@@ -535,7 +561,6 @@ func (tx *PostgreSQLTx) Exec(ctx context.Context, query string, args ...interfac
 		return nil, fmt.Errorf("postgres Tx ExecContext error: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()
-	// lastInsertID, _ := result.LastInsertId() // Not standard in PG
 	log.Printf("DB Tx Exec (PostgreSQL): %s [%v] (Affected: %d) (%s)", reboundQuery, args, rowsAffected, duration)
 	return result, nil
 }
@@ -653,3 +678,13 @@ func isBasicType(t reflect.Type) bool {
 		return false
 	}
 }
+
+// pgResult implements sql.Result for PostgreSQL INSERT RETURNING id
+// to support LastInsertId in ORM logic.
+type pgResult struct {
+	lastInsertId int64
+	rowsAffected int64
+}
+
+func (r *pgResult) LastInsertId() (int64, error) { return r.lastInsertId, nil }
+func (r *pgResult) RowsAffected() (int64, error) { return r.rowsAffected, nil }

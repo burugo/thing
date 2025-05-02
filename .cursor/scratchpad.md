@@ -422,40 +422,19 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     - [ ] Update all adapters to use SQLBuilder instance (not passing quoteChar each time)
     - [ ] Ensure all tests pass
     - [ ] Commit changes
+- [x] Fix MySQL update path nil pointer bug in saveInternal (always use non-nil pointer for diff)
+- [x] Add PostgreSQL integration test and setupPostgresTestDB (mimics MySQL test structure)
 
 ## Executor's Feedback or Assistance Requests
 
-- 采纳 GORM 设计：将 quoteChar 封装进 SQLBuilder 结构体，每个 Adapter 拥有自己的 builder 实例，所有 SQL 生成自动用对的包裹符号。
-- 下一步将重构 SQLBuilder 及 Adapter 层，消除 quoteChar 参数传递。
-- Fixed the SQL builder to expand `IN` clause slices into multiple placeholders and flatten the argument list.
-- Updated the test to use the correct `IN` clause format.
-- All tests now pass (`go test -v ./tests | grep FAIL` returns no failures).
-- Committed the changes with a clear message.
-- Added build tag `//go:build hooks` to `tests/hooks_test.go` to isolate tests with global listeners, preventing interference with other tests. Regular tests now pass.
-- Created `examples/04_hooks/main.go` demonstrating hook usage.
-- Task 7 (Hooks - Testing & Example) is complete.
-- Added `UnregisterListener` function to `hooks.go`.
-- Added `ResetListeners` function to `hooks.go` and integrated into test setup helper.
-- Added `TestHook_UnregisterListener` test case.
-- Uncommented `TestHook_ErrorAborts` and added `defer UnregisterListener`.
-- Encountered build error when running tests (`package thing/examples/models is not in std` or `local import in non-local package`). Root cause seems to be Go toolchain struggling with imports between `thing/tests` and `thing/examples/models` within the same module.
-- **Next Step:** Moving `examples/models/models.go` to `tests/models.go` to resolve import issues. (Sub-task 24.4.1)
-- 已实现 rebindMySQLIdentifiers，MySQL 适配器现在支持 SQL 语句中双引号字段名的自动转换，所有相关测试已通过。
-- 已自动提交更改。
-- 该方案兼容性好，后续如有其他方言需求可继续在 Adapter 层扩展。
-- New task: Move identifier quoting logic from Adapter to Builder layer for better cross-database compatibility and maintainability. Will revert previous adapter-side quoting and implement quoteChar parameterization in the builder.
+- Fixed a bug where saveInternal would pass a nil pointer to findChangedFieldsSimple if the original record was not found (e.g., in MySQL update path). Now, always uses a non-nil zero value pointer for diffing, matching expectations of the diff logic and preventing panics.
+- All tests now pass (`go test -v ./tests`) except for PostgreSQL, which fails due to connection refused (no running PostgreSQL on 127.0.0.1:5432). The test and setup function are correct and committed; to run locally, ensure PostgreSQL is running and accessible, or set POSTGRES_TEST_DSN.
+- Committed as: dcd6e72 (bugfix), 655741f (PostgreSQL test)
 
 ## Lessons
-
-- **Revised Delete Cache Behavior:** After a successful `Delete()` operation, the corresponding object cache key is now set to `NoneResult` instead of being directly deleted. This provides stronger consistency guarantees against race conditions and aligns with the behavior of `ByID` when a record is not found in the database.
-- **精确缓存失效：优先用 valueIndex（字段=值精确匹配）、FieldIndex（字段级范围/模糊匹配）定位受影响的查询缓存键，最后与 GetPotentiallyAffectedQueries 取并集，确保所有相关缓存都能被正确失效。这样能显著减少无关缓存的无谓失效，提高性能。
-- 精确失效最佳实践：全表缓存 key 需单独索引并始终失效，避免表级 union 造成大范围无谓失效。
-- Table-level cache index is not needed for precise invalidation; value/field/full-table indexes are sufficient.
-- After merging cache invalidation logic, helper wrappers like checkModelMatchAgainstQuery can be removed for clarity.
-- Unifying cache invalidation logic reduces code duplication and makes future maintenance easier.
-- **Always expand slice arguments for `IN` clauses into the correct number of placeholders and flatten the argument list for SQL drivers.**
-- **Preserve parentheses when reconstructing SQL WHERE clauses to avoid syntax errors.**
-- **Testing Global State:** Tests involving global state (like the hook registry) require careful isolation (e.g., build tags) or a proper reset mechanism (`UnregisterListener` function would be ideal) to avoid interfering with other tests.
+- When using reflection-based diff or change detection, always ensure you pass a non-nil pointer (never a nil pointer or zero value) to avoid panics or errors in reflect.Value.Elem().
+- For update logic, if the original record is not found, use a zero value pointer of the correct type, not a nil pointer or a zero value.
+- 数据库集成测试需确保本地或 CI 环境有对应服务可用，否则会因连接失败导致测试无法通过。
 
 ---
 
