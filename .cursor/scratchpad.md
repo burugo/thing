@@ -142,13 +142,14 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
         *   [x] 9.5: Implement postgres.NewPostgreSQLAdapter.
         *   [x] 9.6: Implement DBAdapter/DBTransaction for MySQL (using ? placeholders).
         *   [x] 9.7: Implement DBAdapter/DBTransaction for PostgreSQL (using $N placeholders, potentially with rebinding helper).
-        *   [ ] 9.8: (Optional) Create SQL builder/helper utils for dialect differences (placeholders, simple statements, specific columns in SELECT).
-        *   [ ] 9.9: (Optional) Update `thing.Configure` or add functions to select/configure adapters.
+        *   [x] 9.8: (Optional) Create SQL builder/helper utils for dialect differences (placeholders, simple statements, specific columns in SELECT).
+        *   [x] 9.9: (Optional) Update `thing.Configure` or add functions to select/configure adapters.
         *   [x] 9.10: Set up local/Docker test environments for MySQL & PostgreSQL.
         *   [ ] 9.11: Run full test suite (`./tests`) against MySQL, fix failures.
         *   [ ] 9.12: Run full test suite (`./tests`) against PostgreSQL, fix failures.
         *   [ ] 9.13: Commit
     *   **Success Criteria:** All ORM features work consistently across MySQL, PostgreSQL, and SQLite. All tests in `./tests` pass on all three databases.
+    *   [x] Configuration now matches mainstream ORM: user initializes Adapter and CacheClient in main and passes to Thing ORM.
 10. **[ ] Querying Refinements:** (Scope Reduced)
     *   Refine the implementation and API for list queries (filtering, ordering, pagination) based on feedback and testing. *(Refactoring covered in Task 16)*
     *   Ensure efficient SQL generation for supported databases for these simple queries, **selecting only the necessary struct fields**.
@@ -570,3 +571,5 @@ The user wants to change the signature of the `CheckQueryMatch` function in `int
 ## Lessons
 
 *   When refactoring function signatures, remember to update all call sites, including those in test files. Compiler errors are a good guide for finding these locations.
+
+- [x] Thing[T].DBAdapter() and all Adapter.DB() methods implemented, supporting layered access to underlying DB connection.

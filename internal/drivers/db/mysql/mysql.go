@@ -35,7 +35,7 @@ var _ thing.Tx = (*MySQLTx)(nil) // Use thing.Tx interface
 // --- Constructor ---
 
 // NewMySQLAdapter creates a new MySQL adapter instance.
-func NewMySQLAdapter(dsn string) (*MySQLAdapter, error) {
+func NewMySQLAdapter(dsn string) (thing.DBAdapter, error) {
 	// return nil, fmt.Errorf("NewMySQLAdapter not yet implemented") // Remove placeholder
 
 	db, err := sql.Open("mysql", dsn)

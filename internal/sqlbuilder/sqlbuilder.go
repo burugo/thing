@@ -127,3 +127,49 @@ func expandInClauses(where string, args []interface{}) (string, []interface{}) {
 	}
 	return newWhere.String(), newArgs
 }
+
+// BuildInsertSQL constructs an INSERT statement for the given table and columns.
+func BuildInsertSQL(tableName string, columns []string) string {
+	if tableName == "" || len(columns) == 0 {
+		log.Printf("Error: BuildInsertSQL called with incomplete info: TableName='%s', Columns=%d", tableName, len(columns))
+		return ""
+	}
+	quotedCols := make([]string, len(columns))
+	placeholders := make([]string, len(columns))
+	for i, c := range columns {
+		quotedCols[i] = fmt.Sprintf("\"%s\"", c)
+		placeholders[i] = "?"
+	}
+	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tableName, strings.Join(quotedCols, ", "), strings.Join(placeholders, ", "))
+}
+
+// BuildUpdateSQL constructs an UPDATE statement for the given table, set clauses, and primary key.
+func BuildUpdateSQL(tableName string, setClauses []string, pkName string) string {
+	if tableName == "" || len(setClauses) == 0 || pkName == "" {
+		log.Printf("Error: BuildUpdateSQL called with incomplete info: TableName='%s', SetClauses=%d, PkName='%s'", tableName, len(setClauses), pkName)
+		return ""
+	}
+	return fmt.Sprintf("UPDATE %s SET %s WHERE \"%s\" = ?", tableName, strings.Join(setClauses, ", "), pkName)
+}
+
+// BuildDeleteSQL constructs a DELETE statement for the given table and primary key.
+func BuildDeleteSQL(tableName, pkName string) string {
+	if tableName == "" || pkName == "" {
+		log.Printf("Error: BuildDeleteSQL called with incomplete info: TableName='%s', PkName='%s'", tableName, pkName)
+		return ""
+	}
+	return fmt.Sprintf("DELETE FROM %s WHERE \"%s\" = ?", tableName, pkName)
+}
+
+// BuildCountSQL constructs a SELECT COUNT(*) statement for the given table and optional WHERE clause.
+func BuildCountSQL(tableName string, whereClause string) string {
+	if tableName == "" {
+		log.Printf("Error: BuildCountSQL called with incomplete info: TableName='%s'", tableName)
+		return ""
+	}
+	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", tableName)
+	if whereClause != "" {
+		query = fmt.Sprintf("%s WHERE %s", query, whereClause)
+	}
+	return query
+}

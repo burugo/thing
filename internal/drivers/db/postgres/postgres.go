@@ -37,7 +37,7 @@ var _ thing.Tx = (*PostgreSQLTx)(nil)
 // --- Constructor ---
 
 // NewPostgreSQLAdapter creates a new PostgreSQL adapter instance.
-func NewPostgreSQLAdapter(dsn string) (*PostgreSQLAdapter, error) {
+func NewPostgreSQLAdapter(dsn string) (thing.DBAdapter, error) {
 	// return nil, fmt.Errorf("NewPostgreSQLAdapter not yet implemented") // Remove placeholder
 
 	db, err := sql.Open("postgres", dsn)
