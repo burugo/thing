@@ -16,16 +16,12 @@ var GlobalCacheIndex = NewCacheIndex()
 // back to their corresponding QueryParams.
 // EXPORTED
 type CacheIndex struct {
-	// tableToQueries maps a table name (string) to a set of query cache keys (map[string]bool)
-	// associated with that table.
-	tableToQueries map[string]map[string]bool
-
 	// keyToParams maps a query cache key (string) back to the QueryParams used to generate it.
 	// This is needed to evaluate if a changed model matches the query conditions.
 	keyToParams map[string]QueryParams
 
 	// valueIndex maps table -> field -> value (as string) -> set of cache keys.
-	// Only for exact match ("=", "IN") queries. Used for高效失效定位。
+	// Only for exact match ("=", "IN") queries. Used for efficient invalidation location.
 	// Example: valueIndex["users"]["user_id"]["42"] = {"list:users:hash1": true, ...}
 	valueIndex map[string]map[string]map[string]map[string]bool
 
@@ -33,7 +29,7 @@ type CacheIndex struct {
 	// Example: FieldIndex["users"]["age"] = {"list:users:hash2": true, ...}
 	FieldIndex map[string]map[string]map[string]bool
 
-	// TableToFullTableListKeys 记录 where 为空的全表 list cache key
+	// TableToFullTableListKeys records all list cache keys with empty where clause (i.e., full table cache)
 	TableToFullTableListKeys map[string]map[string]bool
 
 	mu sync.RWMutex // Protects access to all maps
@@ -42,7 +38,6 @@ type CacheIndex struct {
 // NewCacheIndex creates and initializes a new CacheIndex.
 func NewCacheIndex() *CacheIndex {
 	return &CacheIndex{
-		tableToQueries:           make(map[string]map[string]bool),
 		keyToParams:              make(map[string]QueryParams),
 		valueIndex:               make(map[string]map[string]map[string]map[string]bool),
 		FieldIndex:               make(map[string]map[string]map[string]bool),
@@ -61,12 +56,6 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params QueryPar
 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
-
-	// Register table -> key mapping
-	if _, exists := idx.tableToQueries[tableName]; !exists {
-		idx.tableToQueries[tableName] = make(map[string]bool)
-	}
-	idx.tableToQueries[tableName][cacheKey] = true
 
 	// Register key -> params mapping
 	idx.keyToParams[cacheKey] = params
@@ -110,7 +99,7 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params QueryPar
 	}
 }
 
-// toIndexValueString 将索引值转为字符串，便于 map key
+// toIndexValueString converts an index value to string for use as a map key
 func toIndexValueString(v interface{}) string {
 	switch x := v.(type) {
 	case string:
@@ -128,7 +117,7 @@ func toIndexValueString(v interface{}) string {
 	}
 }
 
-// extractAllWhereFields 提取 WHERE 中所有字段名
+// extractAllWhereFields extracts all field names from the WHERE clause
 func extractAllWhereFields(params QueryParams) []string {
 	var fields []string
 	where := params.Where
@@ -147,31 +136,6 @@ func extractAllWhereFields(params QueryParams) []string {
 		}
 	}
 	return fields
-}
-
-// GetPotentiallyAffectedQueries returns a slice of all registered query cache keys
-// associated with the given table name.
-// This is used during Save/Delete operations to find caches that might need incremental updates.
-// It returns an empty slice if the table name is not found or has no associated queries.
-// It is safe for concurrent use.
-func (idx *CacheIndex) GetPotentiallyAffectedQueries(tableName string) []string {
-	if tableName == "" {
-		return nil
-	}
-
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-
-	keys := []string{} // Initialize as empty slice, not nil
-	if queries, exists := idx.tableToQueries[tableName]; exists {
-		// Allocate with estimated size for potential performance improvement
-		keys = make([]string, 0, len(queries))
-		for key := range queries {
-			keys = append(keys, key)
-		}
-	}
-	// log.Printf("DEBUG: Found %d potentially affected queries for table '%s'", len(keys), tableName) // Optional debug log
-	return keys
 }
 
 // GetQueryParamsForKey returns the QueryParams associated with a given cache key.
@@ -201,7 +165,7 @@ func ResetGlobalCacheIndex() {
 // TODO: Consider persistence options if the index needs to survive application restarts.
 
 // ParseExactMatchFields parses QueryParams and returns a map of field name to value slice for all exact match (=, IN) conditions.
-// Only supports AND 连接的简单条件。
+// Only supports simple conditions connected by AND.
 func ParseExactMatchFields(params QueryParams) map[string][]interface{} {
 	result := make(map[string][]interface{})
 	where := params.Where
@@ -339,7 +303,7 @@ func (idx *CacheIndex) GetKeysByValue(table, field string, value interface{}) []
 	return keys
 }
 
-// GetFullTableListKeys 返回该表所有 where 为空的 list cache key
+// GetFullTableListKeys returns all list cache keys for the table with empty where clause (i.e., full table cache)
 func (idx *CacheIndex) GetFullTableListKeys(tableName string) []string {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()

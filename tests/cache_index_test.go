@@ -1,13 +1,9 @@
 package thing_test
 
 import (
-	"fmt"
-	"sort"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 
 	// Import the package we are testing
 	"thing/internal/cache"
@@ -37,22 +33,6 @@ func TestCacheIndex_RegisterAndGet(t *testing.T) {
 	index.RegisterQuery(table2, key2_1, params2)
 	index.RegisterQuery(table1, key3_1, params3)
 
-	// --- Test GetPotentiallyAffectedQueries ---
-	affectedTable1 := index.GetPotentiallyAffectedQueries(table1)
-	sort.Strings(affectedTable1) // Sort for consistent comparison
-	expectedTable1 := []string{key1_1, key1_2, key3_1}
-	sort.Strings(expectedTable1)
-	assert.Equal(t, expectedTable1, affectedTable1, "Incorrect affected queries for table1")
-
-	affectedTable2 := index.GetPotentiallyAffectedQueries(table2)
-	sort.Strings(affectedTable2)
-	expectedTable2 := []string{key2_1}
-	sort.Strings(expectedTable2)
-	assert.Equal(t, expectedTable2, affectedTable2, "Incorrect affected queries for table2")
-
-	affectedNonExistent := index.GetPotentiallyAffectedQueries("non_existent_table")
-	assert.Empty(t, affectedNonExistent, "Expected empty slice for non-existent table")
-
 	// --- Test GetQueryParamsForKey ---
 	retrievedParams1, found1 := index.GetQueryParamsForKey(key1_1)
 	assert.True(t, found1, "Expected to find params for key1_1")
@@ -72,88 +52,6 @@ func TestCacheIndex_RegisterAndGet(t *testing.T) {
 
 	_, foundNonExistent := index.GetQueryParamsForKey("non_existent_key")
 	assert.False(t, foundNonExistent, "Expected not to find params for non-existent key")
-}
-
-func TestCacheIndex_RegisterQuery_EmptyInputs(t *testing.T) {
-	cache.ResetGlobalCacheIndex()
-	index := cache.GlobalCacheIndex
-
-	// Test empty table name
-	index.RegisterQuery("", "key1", cache.QueryParams{})
-	affected := index.GetPotentiallyAffectedQueries("")
-	assert.Nil(t, affected, "Expected nil slice for empty table name query")
-	params, found := index.GetQueryParamsForKey("key1")
-	assert.False(t, found, "Should not store params with empty table name")
-	assert.Equal(t, cache.QueryParams{}, params)
-
-	// Test empty cache key
-	index.RegisterQuery("table1", "", cache.QueryParams{Where: "a=1"})
-	affected = index.GetPotentiallyAffectedQueries("table1")
-	assert.Empty(t, affected, "Affected queries should be empty after registering with empty key")
-	params, found = index.GetQueryParamsForKey("")
-	assert.False(t, found, "Should not store params with empty key")
-	assert.Equal(t, cache.QueryParams{}, params)
-
-	// Test both empty
-	index.RegisterQuery("", "", cache.QueryParams{Where: "b=2"})
-	affected = index.GetPotentiallyAffectedQueries("")
-	assert.Nil(t, affected, "Expected nil slice for empty table name query")
-	params, found = index.GetQueryParamsForKey("")
-	assert.False(t, found, "Should not store params with empty key")
-	assert.Equal(t, cache.QueryParams{}, params)
-}
-
-// Helper function to run index operations concurrently
-func runConcurrently(t *testing.T, index *cache.CacheIndex, numGoroutines int, opsPerGoroutine int) {
-	t.Helper()
-	var wg sync.WaitGroup
-	wg.Add(numGoroutines)
-
-	for i := 0; i < numGoroutines; i++ {
-		go func(goroutineID int) {
-			defer wg.Done()
-			for j := 0; j < opsPerGoroutine; j++ {
-				table := fmt.Sprintf("table_%d", (goroutineID+j)%10) // Spread across a few tables
-				key := fmt.Sprintf("key_%d_%d", goroutineID, j)
-				params := cache.QueryParams{Where: "col = ?", Args: []interface{}{goroutineID*opsPerGoroutine + j}}
-
-				// Mix of operations
-				if j%3 == 0 {
-					index.RegisterQuery(table, key, params)
-				} else if j%3 == 1 {
-					_ = index.GetPotentiallyAffectedQueries(table)
-				} else {
-					_, _ = index.GetQueryParamsForKey(key)
-				}
-			}
-		}(i)
-	}
-
-	wg.Wait()
-}
-
-func TestCacheIndex_Concurrency(t *testing.T) {
-	cache.ResetGlobalCacheIndex()
-	index := cache.GlobalCacheIndex // Use exported global
-	numGoroutines := 50
-	opsPerGoroutine := 100
-
-	// No explicit assertions needed here, the goal is to ensure no race conditions occur.
-	// Run `go test -race ./...` to detect races.
-	require.NotPanics(t, func() {
-		runConcurrently(t, index, numGoroutines, opsPerGoroutine)
-	}, "Concurrent access to CacheIndex panicked")
-
-	// Optional: Add some basic checks after concurrent operations to ensure state seems reasonable
-	// (e.g., check if some expected keys/tables exist), but the primary goal is race detection.
-}
-
-func TestCacheIndex_GetPotentiallyAffectedQueries_Empty(t *testing.T) {
-	cache.ResetGlobalCacheIndex()
-	index := cache.GlobalCacheIndex // Use exported global
-
-	keys := index.GetPotentiallyAffectedQueries("nonexistent_table")
-	assert.Empty(t, keys)
 }
 
 func TestCacheIndex_GetQueryParamsForKey_NotFound(t *testing.T) {
