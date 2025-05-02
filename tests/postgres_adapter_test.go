@@ -12,6 +12,14 @@ func TestPostgresBasicCRUD(t *testing.T) {
 	db, cacheClient, cleanup := setupPostgresTestDB(t)
 	defer cleanup()
 
+	// 检查数据库连接
+	if sqlDB := db.DB(); sqlDB != nil {
+		if err := sqlDB.Ping(); err != nil {
+			t.Logf("PostgreSQL not available, skipping test: %v", err)
+			t.Skip("PostgreSQL not available")
+		}
+	}
+
 	// Use the shared User model from the thing package
 	thingInstance, err := thing.New[*User](db, cacheClient)
 	require.NoError(t, err)

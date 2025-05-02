@@ -12,6 +12,14 @@ func TestMySQLBasicCRUD(t *testing.T) {
 	db, cacheClient, cleanup := setupMySQLTestDB(t)
 	defer cleanup()
 
+	// 检查数据库连接
+	if sqlDB := db.DB(); sqlDB != nil {
+		if err := sqlDB.Ping(); err != nil {
+			t.Logf("MySQL not available, skipping test: %v", err)
+			t.Skip("MySQL not available")
+		}
+	}
+
 	// Use the shared User model from the thing package
 	// (imported automatically since package thing_test is in tests/ and models.go is in tests/)
 

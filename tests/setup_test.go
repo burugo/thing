@@ -91,7 +91,10 @@ func setupMySQLTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()
 		dsn = "root:password@tcp(127.0.0.1:3306)/test_db?parseTime=true"
 	}
 	adapter, err := mysql.NewMySQLAdapter(dsn)
-	require.NoError(tb, err, "Failed to create MySQL adapter")
+	if err != nil {
+		tb.Logf("MySQL not available, skipping test: %v", err)
+		tb.Skip("MySQL not available")
+	}
 
 	// Create test tables (same schema as SQLite)
 	_, err = adapter.Exec(
@@ -139,7 +142,10 @@ func setupPostgresTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, fun
 		dsn = "postgres://postgres:password@localhost:5432/test_db?sslmode=disable"
 	}
 	adapter, err := postgres.NewPostgreSQLAdapter(dsn)
-	require.NoError(tb, err, "Failed to create PostgreSQL adapter")
+	if err != nil {
+		tb.Logf("PostgreSQL not available, skipping test: %v", err)
+		tb.Skip("PostgreSQL not available")
+	}
 
 	// Create test tables (same schema as MySQL/SQLite)
 	_, err = adapter.Exec(
