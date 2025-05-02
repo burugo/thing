@@ -8,7 +8,7 @@ import (
 
 	"thing/common"
 	"thing/internal/cache"
-	"thing/internal/sql"
+	"thing/internal/sqlbuilder"
 	"thing/internal/types"
 )
 
@@ -175,7 +175,7 @@ func (cr *CachedResult[T]) _fetch_ids_from_db(offset, limit int) ([]int64, error
 
 	// Build the SQL query with pagination
 	// Pass includeDeleted flag via params to the builder
-	query, args := sql.BuildSelectIDsSQL(cr.thing.info.TableName, cr.thing.info.PkName, cr.params)
+	query, args := sqlbuilder.BuildSelectIDsSQL(cr.thing.info.TableName, cr.thing.info.PkName, cr.params)
 	queryWithPagination := fmt.Sprintf("%s LIMIT %d OFFSET %d", query, limit, offset)
 
 	// Execute the query
