@@ -306,6 +306,11 @@ func (a *PostgreSQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (t
 	return &PostgreSQLTx{tx: tx}, nil
 }
 
+// DB returns the underlying *sql.DB for advanced use cases.
+func (a *PostgreSQLAdapter) DB() *sql.DB {
+	return a.db
+}
+
 // --- Tx Methods ---
 
 // Commit commits the transaction.

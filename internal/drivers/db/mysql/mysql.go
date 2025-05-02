@@ -661,3 +661,8 @@ func isBasicType(t reflect.Type) bool {
 		return false
 	}
 }
+
+// DB returns the underlying *sql.DB for advanced use cases.
+func (a *MySQLAdapter) DB() *sql.DB {
+	return a.db
+}

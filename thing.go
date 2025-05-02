@@ -94,3 +94,8 @@ func (t *Thing[T]) WithContext(ctx context.Context) *Thing[T] { // Returns *Thin
 	newThing.ctx = ctx // Set the new context
 	return &newThing   // Return pointer to the copy
 }
+
+// DBAdapter returns the underlying DBAdapter for advanced use cases.
+func (t *Thing[T]) DBAdapter() DBAdapter {
+	return t.db
+}

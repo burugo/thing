@@ -73,6 +73,9 @@ type DBAdapter interface {
 	// Close releases database resources.
 	Close() error
 
+	// DB returns the underlying *sql.DB for advanced use cases.
+	DB() *sql.DB
+
 	// TODO: Add Ping or other health check methods?
 }
 
