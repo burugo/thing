@@ -284,6 +284,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
             *   **Next Step:** Run individual transaction tests with `-v` to get detailed logs.
             *   **Fixed:** Root cause identified as incorrect parsing of `db` tags (e.g., `"id,pk"`) in `getStructFieldMap`. Corrected the parsing logic.
         *   **Success Criteria:** All adapter methods implemented using `database/sql`. All transaction tests pass. `sqlx` dependency removed.
+        *   **Planner Review:** Fix accepted. All tests pass. (2025-05-02)
 19. **[x] Extend `CheckQueryMatch` for Comparison Operators:** *(New Task - Completed)*
     *   **Goal:** Add support for `>`, `<`, `>=`, `<=`, `IN` operators.
     *   **Sub-tasks:**
