@@ -397,7 +397,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		}
 
 		// --- Update Query Caches (Incremental) ---
-		t.updateAffectedQueryCaches(ctx, value, original, isNew)
+		t.invalidateAffectedQueryCaches(ctx, value, original, isNew, false)
 		// --- End Update Query Caches ---
 	}
 
@@ -471,8 +471,8 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 		// --- Incremental Query Cache Update for Delete ---
 		// Requires access to the global index or passing it in.
 		// Placeholder call, assumes handleDeleteInQueryCaches exists on Thing
-		t.handleDeleteInQueryCaches(ctx, value) // Pass T
-		return nil                              // Success
+		t.invalidateAffectedQueryCaches(ctx, value, value, false, true)
+		return nil // Success
 	})
 
 	if err != nil {
