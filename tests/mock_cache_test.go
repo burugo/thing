@@ -342,7 +342,6 @@ func (m *mockCacheClient) DeleteModel(ctx context.Context, key string) error {
 // It now checks for the NoneResult marker and returns ErrQueryCacheNoneResult if found.
 func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
 	m.incrementCounter("GetQueryIDs") // Use helper
-	m.Counters["GetListIDs"]++        // Also increment GetListIDs for test compatibility
 	m.mu.Lock()
 	m.mu.Unlock()
 
@@ -452,36 +451,6 @@ func (m *mockCacheClient) ReleaseLock(ctx context.Context, lockKey string) error
 	// log.Printf("DEBUG ReleaseLock: Releasing lock: %s", lockKey)
 	m.store.Delete(lockKey)
 	m.expiryStore.Delete(lockKey)
-	return nil
-}
-
-func (m *mockCacheClient) DeleteByPrefix(ctx context.Context, prefix string) error {
-	m.incrementCounter("DeleteByPrefix") // Use helper
-	m.mu.Lock()
-	m.mu.Unlock()
-
-	// log.Printf("DEBUG DeleteByPrefix: Deleting keys with prefix: %s", prefix)
-	var keysToDelete []interface{}
-
-	// First collect keys (to avoid concurrent modification)
-	m.store.Range(func(key, _ interface{}) bool {
-		keyStr, ok := key.(string)
-		if ok && keyStr != "" && len(keyStr) >= len(prefix) && keyStr[:len(prefix)] == prefix {
-			// log.Printf("DEBUG DeleteByPrefix: Found matching key: %s", keyStr)
-			keysToDelete = append(keysToDelete, key)
-		}
-		return true
-	})
-
-	// Then delete them
-	deletedCount := 0
-	for _, key := range keysToDelete {
-		m.store.Delete(key)
-		m.expiryStore.Delete(key)
-		deletedCount++
-	}
-	// log.Printf("DEBUG DeleteByPrefix: Deleted %d keys with prefix: %s", deletedCount, prefix)
-
 	return nil
 }
 
@@ -660,5 +629,22 @@ func (m *mockCacheClient) GetCount(ctx context.Context, key string) (int64, erro
 func (m *mockCacheClient) GetModelCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.Counters["GetModel"]
+
+	count := 0
+	m.store.Range(func(_, _ interface{}) bool {
+		count++
+		return true
+	})
+	return count
+}
+
+// GetCacheStats returns the current cache operation counters for the mock client.
+func (m *mockCacheClient) GetCacheStats(ctx context.Context) thing.CacheStats {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	stats := make(map[string]int, len(m.Counters))
+	for k, v := range m.Counters {
+		stats[k] = v
+	}
+	return thing.CacheStats{Counters: stats}
 }

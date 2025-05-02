@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -14,13 +15,25 @@ import (
 )
 
 // client implements thing.CacheClient using Redis.
-// Renamed from redisCache to client (internal type).
+// It now collects cache operation statistics for monitoring.
 type client struct {
-	redisClient *redis.Client // Renamed field for clarity
+	redisClient *redis.Client  // Renamed field for clarity
+	mu          sync.Mutex     // Protects counters map
+	counters    map[string]int // Operation counters for stats
 }
 
 // Ensure client implements thing.CacheClient.
 var _ thing.CacheClient = (*client)(nil)
+
+// incrementCounter safely increments a named operation counter.
+func (c *client) incrementCounter(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.counters == nil {
+		c.counters = make(map[string]int)
+	}
+	c.counters[name]++
+}
 
 // Options holds configuration for the Redis client.
 type Options struct {
@@ -54,11 +67,12 @@ func NewClient(opts Options) (thing.CacheClient, func(), error) {
 		}
 	}
 	// Return our internal client type which implements the interface
-	return &client{redisClient: rdb}, cleanup, nil
+	return &client{redisClient: rdb, counters: make(map[string]int)}, cleanup, nil
 }
 
 // Get retrieves a raw string value from Redis.
 func (c *client) Get(ctx context.Context, key string) (string, error) {
+	c.incrementCounter("Get")
 	val, err := c.redisClient.Get(ctx, key).Result()
 	if err == redis.Nil {
 		return "", thing.ErrNotFound // Use standard not found error
@@ -70,6 +84,7 @@ func (c *client) Get(ctx context.Context, key string) (string, error) {
 
 // Set stores a raw string value in Redis.
 func (c *client) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+	c.incrementCounter("Set")
 	err := c.redisClient.Set(ctx, key, value, expiration).Err()
 	if err != nil {
 		return fmt.Errorf("redis Set error for key '%s': %w", key, err)
@@ -79,6 +94,7 @@ func (c *client) Set(ctx context.Context, key string, value string, expiration t
 
 // Delete removes a key from Redis.
 func (c *client) Delete(ctx context.Context, key string) error {
+	c.incrementCounter("Delete")
 	err := c.redisClient.Del(ctx, key).Err()
 	if err != nil && err != redis.Nil { // Don't error if key didn't exist
 		return fmt.Errorf("redis Del error for key '%s': %w", key, err)
@@ -88,6 +104,7 @@ func (c *client) Delete(ctx context.Context, key string) error {
 
 // GetModel retrieves a model from Redis.
 func (c *client) GetModel(ctx context.Context, key string, dest interface{}) error {
+	c.incrementCounter("GetModel")
 	val, err := c.redisClient.Get(ctx, key).Result() // Use Result() to get string value
 	if err == redis.Nil {
 		return thing.ErrNotFound // Key truly not found in Redis
@@ -111,6 +128,7 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 
 // SetModel stores a model in Redis.
 func (c *client) SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error {
+	c.incrementCounter("SetModel")
 	data, err := json.Marshal(model)
 	if err != nil {
 		return fmt.Errorf("redis Marshal error for key '%s': %w", key, err)
@@ -124,6 +142,7 @@ func (c *client) SetModel(ctx context.Context, key string, model interface{}, ex
 
 // DeleteModel removes a model from Redis.
 func (c *client) DeleteModel(ctx context.Context, key string) error {
+	c.incrementCounter("DeleteModel")
 	err := c.redisClient.Del(ctx, key).Err()
 	if err != nil && err != redis.Nil { // Don't error if key didn't exist
 		return fmt.Errorf("redis Del error for key '%s': %w", key, err)
@@ -134,6 +153,7 @@ func (c *client) DeleteModel(ctx context.Context, key string) error {
 // GetQueryIDs retrieves a list of IDs from Redis.
 // It now checks for the NoneResult marker and returns ErrQueryCacheNoneResult if found.
 func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
+	c.incrementCounter("GetQueryIDs")
 	val, err := c.redisClient.Get(ctx, queryKey).Result() // Use Result() to get string directly
 	if err == redis.Nil {
 		return nil, thing.ErrNotFound
@@ -158,6 +178,7 @@ func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, err
 
 // SetQueryIDs stores a list of IDs in Redis.
 func (c *client) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
+	c.incrementCounter("SetQueryIDs")
 	// Handle empty slice case - store an empty JSON array? Or delete?
 	// Storing empty array is safer if Get expects a list.
 	if ids == nil {
@@ -176,6 +197,7 @@ func (c *client) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, 
 
 // DeleteQueryIDs removes a list of IDs from Redis.
 func (c *client) DeleteQueryIDs(ctx context.Context, queryKey string) error {
+	c.incrementCounter("DeleteQueryIDs")
 	err := c.redisClient.Del(ctx, queryKey).Err()
 	if err != nil && err != redis.Nil {
 		return fmt.Errorf("redis Del error for query key '%s': %w", queryKey, err)
@@ -185,6 +207,7 @@ func (c *client) DeleteQueryIDs(ctx context.Context, queryKey string) error {
 
 // AcquireLock tries to acquire a lock using Redis SETNX.
 func (c *client) AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error) {
+	c.incrementCounter("AcquireLock")
 	// Use a unique value for the lock holder if needed for more complex scenarios,
 	// but for simple lock/unlock, a placeholder is fine.
 	lockValue := "1"
@@ -198,6 +221,7 @@ func (c *client) AcquireLock(ctx context.Context, lockKey string, expiration tim
 // ReleaseLock releases a lock by deleting the key.
 // Consider using Lua script for atomic check-and-delete if lock value matters.
 func (c *client) ReleaseLock(ctx context.Context, lockKey string) error {
+	c.incrementCounter("ReleaseLock")
 	err := c.redisClient.Del(ctx, lockKey).Err()
 	// Ignore redis.Nil error, as it means the lock might have expired or already released.
 	if err != nil && err != redis.Nil {
@@ -209,6 +233,7 @@ func (c *client) ReleaseLock(ctx context.Context, lockKey string) error {
 // DeleteByPrefix removes all cache entries whose keys match the given prefix.
 // Uses SCAN for safe iteration over keys.
 func (c *client) DeleteByPrefix(ctx context.Context, prefix string) error {
+	c.incrementCounter("DeleteByPrefix")
 	var cursor uint64
 	var keysToDelete []string
 	const scanCount = 100 // How many keys to fetch per SCAN iteration
@@ -325,3 +350,14 @@ func (c *client) InvalidateQueriesContainingID(ctx context.Context, prefix strin
 	return nil
 }
 */
+
+// GetCacheStats returns a snapshot of cache operation counters.
+func (c *client) GetCacheStats(ctx context.Context) thing.CacheStats {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	stats := make(map[string]int, len(c.counters))
+	for k, v := range c.counters {
+		stats[k] = v
+	}
+	return thing.CacheStats{Counters: stats}
+}

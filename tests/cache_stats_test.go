@@ -1,0 +1,61 @@
+package thing_test
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+)
+
+// TestMockCacheClient_GetCacheStats verifies that mockCacheClient tracks operation counters correctly.
+func TestMockCacheClient_GetCacheStats(t *testing.T) {
+	// Initialize a fresh mock cache client via setupTestDB or direct instantiation
+	mock := &mockCacheClient{}
+	mock.Reset()
+
+	ctx := context.Background()
+
+	// No operations yet: stats should be empty
+	stats := mock.GetCacheStats(ctx)
+	assert.Empty(t, stats.Counters, "Expected no counters before any operations")
+
+	// Perform various cache operations to increment counters
+	mock.Get(ctx, "key")
+	mock.Set(ctx, "key", "value", time.Second)
+	mock.Delete(ctx, "key")
+
+	mock.GetModel(ctx, "model", &struct{ ID int }{1})
+	mock.SetModel(ctx, "model", &struct{ ID int }{1}, time.Second)
+	mock.DeleteModel(ctx, "model")
+
+	mock.GetQueryIDs(ctx, "query1")
+	mock.SetQueryIDs(ctx, "query1", []int64{1, 2}, time.Second)
+	mock.DeleteQueryIDs(ctx, "query1")
+
+	mock.AcquireLock(ctx, "lockKey", time.Second)
+	mock.ReleaseLock(ctx, "lockKey")
+
+	mock.SetCount(ctx, "cntKey", 5, time.Second)
+	mock.GetCount(ctx, "cntKey")
+
+	// Retrieve stats
+	stats = mock.GetCacheStats(ctx)
+
+	expected := map[string]int{
+		"Get":            1,
+		"Set":            1,
+		"Delete":         1,
+		"GetModel":       1,
+		"SetModel":       1,
+		"DeleteModel":    1,
+		"GetQueryIDs":    1,
+		"SetQueryIDs":    1,
+		"DeleteQueryIDs": 1,
+		"AcquireLock":    1,
+		"ReleaseLock":    1,
+		"SetCount":       1,
+		"GetCount":       1,
+	}
+	assert.Equal(t, expected, stats.Counters, "Counters should match expected values after operations")
+}
