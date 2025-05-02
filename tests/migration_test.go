@@ -1,9 +1,10 @@
-package migration
+package thing_test
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+	"thing/internal/migration" // 导入 internal 包
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,31 +37,31 @@ func TestDiscoverMigrations(t *testing.T) {
 	require.NoError(t, err)
 
 	// 测试 DiscoverMigrations
-	migrations, err := DiscoverMigrations(tempDir)
+	migrationsResult, err := migration.DiscoverMigrations(tempDir) // 使用 migration.DiscoverMigrations
 	require.NoError(t, err)
 
 	// 验证结果
-	assert.Len(t, migrations, 4, "should find 4 valid migration files")
+	assert.Len(t, migrationsResult, 4, "should find 4 valid migration files")
 
 	// 验证排序和内容
-	assert.Equal(t, int64(1), migrations[0].Version)
-	assert.Equal(t, "create_users", migrations[0].Name)
-	assert.Equal(t, "down", migrations[0].Direction) // down 应排在 up 前面，但实际版本号一样，go sort 不稳定，顺序不保证
+	assert.Equal(t, int64(1), migrationsResult[0].Version)
+	assert.Equal(t, "create_users", migrationsResult[0].Name)
+	assert.Equal(t, "down", migrationsResult[0].Direction) // down 应排在 up 前面，但实际版本号一样，go sort 不稳定，顺序不保证
 
-	assert.Equal(t, int64(1), migrations[1].Version)
-	assert.Equal(t, "create_users", migrations[1].Name)
-	assert.Equal(t, "up", migrations[1].Direction)
+	assert.Equal(t, int64(1), migrationsResult[1].Version)
+	assert.Equal(t, "create_users", migrationsResult[1].Name)
+	assert.Equal(t, "up", migrationsResult[1].Direction)
 
-	assert.Equal(t, int64(2), migrations[2].Version)
-	assert.Equal(t, "add_email", migrations[2].Name)
-	assert.Equal(t, "down", migrations[2].Direction) // 同上
+	assert.Equal(t, int64(2), migrationsResult[2].Version)
+	assert.Equal(t, "add_email", migrationsResult[2].Name)
+	assert.Equal(t, "down", migrationsResult[2].Direction) // 同上
 
-	assert.Equal(t, int64(2), migrations[3].Version)
-	assert.Equal(t, "add_email", migrations[3].Name)
-	assert.Equal(t, "up", migrations[3].Direction)
+	assert.Equal(t, int64(2), migrationsResult[3].Version)
+	assert.Equal(t, "add_email", migrationsResult[3].Name)
+	assert.Equal(t, "up", migrationsResult[3].Direction)
 
 	// 测试目录不存在的情况
-	migs, err := DiscoverMigrations(filepath.Join(tempDir, "non_existent_dir"))
+	migs, err := migration.DiscoverMigrations(filepath.Join(tempDir, "non_existent_dir")) // 使用 migration.DiscoverMigrations
 	require.NoError(t, err)
 	assert.Empty(t, migs)
 }
