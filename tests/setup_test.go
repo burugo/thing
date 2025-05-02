@@ -12,6 +12,7 @@ import (
 	"thing"
 	"thing/internal/cache"
 	"thing/internal/drivers/db/mysql"
+	"thing/internal/drivers/db/postgres"
 	"thing/internal/drivers/db/sqlite"
 )
 
@@ -127,6 +128,54 @@ func setupMySQLTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()
 			_ = adapter.Close()
 		}
 		tb.Logf("--- setupMySQLTestDB: Cleanup finished ---")
+	}
+	return adapter, mockcache, cleanup
+}
+
+// setupPostgresTestDB creates a PostgreSQL database for testing.
+func setupPostgresTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
+	dsn := os.Getenv("POSTGRES_TEST_DSN")
+	if dsn == "" {
+		dsn = "postgres://postgres:password@localhost:5432/test_db?sslmode=disable"
+	}
+	adapter, err := postgres.NewPostgreSQLAdapter(dsn)
+	require.NoError(tb, err, "Failed to create PostgreSQL adapter")
+
+	// Create test tables (same schema as MySQL/SQLite)
+	_, err = adapter.Exec(
+		context.Background(),
+		`CREATE TABLE IF NOT EXISTS users (
+			id SERIAL PRIMARY KEY,
+			created_at TIMESTAMP,
+			updated_at TIMESTAMP,
+			deleted BOOLEAN DEFAULT FALSE,
+			name VARCHAR(255),
+			email VARCHAR(255)
+		);`,
+	)
+	require.NoError(tb, err, "Failed to create users table (PostgreSQL)")
+
+	_, err = adapter.Exec(
+		context.Background(),
+		`CREATE TABLE IF NOT EXISTS books (
+			id SERIAL PRIMARY KEY,
+			created_at TIMESTAMP,
+			updated_at TIMESTAMP,
+			deleted BOOLEAN DEFAULT FALSE,
+			title VARCHAR(255),
+			user_id INT,
+			FOREIGN KEY(user_id) REFERENCES users(id)
+		);`,
+	)
+	require.NoError(tb, err, "Failed to create books table (PostgreSQL)")
+
+	mockcache := &mockCacheClient{}
+	cleanup := func() {
+		tb.Logf("--- setupPostgresTestDB: Running cleanup function ---")
+		if adapter != nil {
+			_ = adapter.Close()
+		}
+		tb.Logf("--- setupPostgresTestDB: Cleanup finished ---")
 	}
 	return adapter, mockcache, cleanup
 }
