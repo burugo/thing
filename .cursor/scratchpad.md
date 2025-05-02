@@ -140,8 +140,8 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
         *   [x] 9.3: Create internal/drivers/db/postgres/postgres.go with PostgreSQLAdapter, PostgreSQLTx structs.
         *   [x] 9.4: Implement mysql.NewMySQLAdapter.
         *   [x] 9.5: Implement postgres.NewPostgreSQLAdapter.
-        *   [ ] 9.6: Implement `DBAdapter`/`DBTransaction` for MySQL (using `?` placeholders).
-        *   [ ] 9.7: Implement `DBAdapter`/`DBTransaction` for PostgreSQL (using `$N` placeholders, potentially with rebinding helper).
+        *   [x] 9.6: Implement DBAdapter/DBTransaction for MySQL (using ? placeholders).
+        *   [x] 9.7: Implement DBAdapter/DBTransaction for PostgreSQL (using $N placeholders, potentially with rebinding helper).
         *   [ ] 9.8: (Optional) Create SQL builder/helper utils for dialect differences (placeholders, simple statements, specific columns in SELECT).
         *   [ ] 9.9: (Optional) Update `thing.Configure` or add functions to select/configure adapters.
         *   [x] 9.10: Set up local/Docker test environments for MySQL & PostgreSQL.
