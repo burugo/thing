@@ -40,7 +40,16 @@ type CacheClient interface {
 
 	// Potentially add methods for atomic operations if needed (e.g., Incr)
 
-	// GetCacheStats returns the current cache hit/miss/set/delete counters.
+	// GetCacheStats returns a snapshot of cache operation counters for monitoring purposes.
+	// Typical keys include:
+	//   - "Get": total Get calls
+	//   - "GetMiss": Get calls that missed (not found)
+	//   - "GetModel": total GetModel calls
+	//   - "GetModelMiss": GetModel calls that missed
+	//   - "GetQueryIDs": total GetQueryIDs calls
+	//   - "GetQueryIDsMiss": GetQueryIDs calls that missed
+	//   (and similar for other operations)
+	// To compute hit count: hit = total - miss. Hit rate = hit / total.
 	GetCacheStats(ctx context.Context) CacheStats
 }
 
@@ -82,6 +91,9 @@ type Tx interface {
 }
 
 // CacheStats holds cache operation counters for monitoring.
+// Counters is a map from operation name (e.g., "Get", "GetMiss") to count.
+// For each operation, the total number of calls and the number of misses are tracked.
+// To compute hit count: hit = total - miss. Hit rate = hit / total.
 type CacheStats struct {
 	Counters map[string]int // Operation name to count
 }

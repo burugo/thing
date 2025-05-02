@@ -15,11 +15,11 @@ import (
 )
 
 // client implements thing.CacheClient using Redis.
-// It now collects cache operation statistics for monitoring.
+// The counters field tracks operation statistics for monitoring (thread-safe).
 type client struct {
-	redisClient *redis.Client  // Renamed field for clarity
+	redisClient *redis.Client  // Underlying Redis client
 	mu          sync.Mutex     // Protects counters map
-	counters    map[string]int // Operation counters for stats
+	counters    map[string]int // Operation counters for stats (e.g., "Get", "GetMiss")
 }
 
 // Ensure client implements thing.CacheClient.
@@ -72,13 +72,16 @@ func NewClient(opts Options) (thing.CacheClient, func(), error) {
 
 // Get retrieves a raw string value from Redis.
 func (c *client) Get(ctx context.Context, key string) (string, error) {
-	c.incrementCounter("Get")
+	c.incrementCounter("Get") // total calls
 	val, err := c.redisClient.Get(ctx, key).Result()
 	if err == redis.Nil {
-		return "", thing.ErrNotFound // Use standard not found error
+		c.incrementCounter("GetMiss")
+		return "", thing.ErrNotFound
 	} else if err != nil {
+		c.incrementCounter("GetError")
 		return "", fmt.Errorf("redis Get error for key '%s': %w", key, err)
 	}
+	c.incrementCounter("GetHit")
 	return val, nil
 }
 
@@ -107,15 +110,19 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 	c.incrementCounter("GetModel")
 	val, err := c.redisClient.Get(ctx, key).Result() // Use Result() to get string value
 	if err == redis.Nil {
-		return thing.ErrNotFound // Key truly not found in Redis
+		c.incrementCounter("GetModelMiss")
+		return thing.ErrNotFound
 	} else if err != nil {
+		c.incrementCounter("GetModelError")
 		return fmt.Errorf("redis Get error for key '%s': %w", key, err)
 	}
 
 	// Check for NoneResult marker AFTER checking for redis.Nil
 	if val == thing.NoneResult {
+		c.incrementCounter("GetModelMiss")
 		return thing.ErrCacheNoneResult // Return specific error for NoneResult
 	}
+	c.incrementCounter("GetModelHit")
 
 	// If not NoneResult, attempt to unmarshal as the destination type
 	err = json.Unmarshal([]byte(val), dest) // Unmarshal from string value bytes
@@ -156,10 +163,13 @@ func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, err
 	c.incrementCounter("GetQueryIDs")
 	val, err := c.redisClient.Get(ctx, queryKey).Result() // Use Result() to get string directly
 	if err == redis.Nil {
+		c.incrementCounter("GetQueryIDsMiss")
 		return nil, thing.ErrNotFound
 	} else if err != nil {
+		c.incrementCounter("GetQueryIDsError")
 		return nil, fmt.Errorf("redis Get error for query key '%s': %w", queryKey, err)
 	}
+	c.incrementCounter("GetQueryIDsHit")
 
 	// Remove the check for the no longer used NoneResult marker
 	// if val == thing.NoneResult {
@@ -351,7 +361,9 @@ func (c *client) InvalidateQueriesContainingID(ctx context.Context, prefix strin
 }
 */
 
-// GetCacheStats returns a snapshot of cache operation counters.
+// GetCacheStats returns a snapshot of cache operation counters for monitoring.
+// The returned map is a copy and safe for concurrent use.
+// Typical keys: "Get", "GetMiss", "GetModel", "GetModelMiss", etc.
 func (c *client) GetCacheStats(ctx context.Context) thing.CacheStats {
 	c.mu.Lock()
 	defer c.mu.Unlock()

@@ -8,6 +8,12 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+// cache_stats_test.go
+//
+// This test verifies that the cache client (mockCacheClient) correctly tracks operation statistics
+// such as total calls, misses, and allows calculation of hit rates for Get, GetModel, GetQueryIDs, etc.
+// It ensures that GetCacheStats returns accurate counters for monitoring and debugging purposes.
+
 // TestMockCacheClient_GetCacheStats verifies that mockCacheClient tracks operation counters correctly.
 func TestMockCacheClient_GetCacheStats(t *testing.T) {
 	// Initialize a fresh mock cache client via setupTestDB or direct instantiation
@@ -43,19 +49,22 @@ func TestMockCacheClient_GetCacheStats(t *testing.T) {
 	stats = mock.GetCacheStats(ctx)
 
 	expected := map[string]int{
-		"Get":            1,
-		"Set":            1,
-		"Delete":         1,
-		"GetModel":       1,
-		"SetModel":       1,
-		"DeleteModel":    1,
-		"GetQueryIDs":    1,
-		"SetQueryIDs":    1,
-		"DeleteQueryIDs": 1,
-		"AcquireLock":    1,
-		"ReleaseLock":    1,
-		"SetCount":       1,
-		"GetCount":       1,
+		"Get":             1,
+		"GetMiss":         1,
+		"Set":             1,
+		"Delete":          1,
+		"GetModel":        1,
+		"GetModelMiss":    1,
+		"SetModel":        1,
+		"DeleteModel":     1,
+		"GetQueryIDs":     1,
+		"GetQueryIDsMiss": 1,
+		"SetQueryIDs":     1,
+		"DeleteQueryIDs":  1,
+		"AcquireLock":     1,
+		"ReleaseLock":     1,
+		"SetCount":        1,
+		"GetCount":        1,
 	}
 	assert.Equal(t, expected, stats.Counters, "Counters should match expected values after operations")
 }

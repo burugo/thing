@@ -95,5 +95,38 @@ thing.ToJSON(user, thing.WithFields("name,profile{avatar},-id"))
 
 - Both `Include` and `WithFields` are fully compatible with struct tags and method-based virtuals as described above.
 
+## Cache Monitoring & Hit/Miss Statistics
+
+Thing ORM provides built-in cache operation monitoring for all cache clients (including Redis and the mock client used in tests).
+
+### How to Use
+
+You can call `GetCacheStats(ctx)` on any `CacheClient` instance to retrieve a snapshot of cache operation counters. The returned `CacheStats.Counters` map includes keys such as:
+
+- `Get`: total number of Get calls
+- `GetMiss`: number of Get calls that missed (not found)
+- `GetModel`, `GetModelMiss`: same for model cache
+- `GetQueryIDs`, `GetQueryIDsMiss`: same for query ID list cache
+
+**To compute hit count and hit rate:**
+
+- `hit = total - miss`
+- `hit rate = hit / total`
+
+### Example
+
+```go
+stats := cacheClient.GetCacheStats(ctx)
+getTotal := stats.Counters["Get"]
+getMiss := stats.Counters["GetMiss"]
+getHit := getTotal - getMiss
+hitRate := float64(getHit) / float64(getTotal)
+fmt.Printf("Get hit rate: %.2f%%\n", hitRate*100)
+```
+
+This mechanism allows you to monitor cache effectiveness, debug performance issues, and tune your caching strategy.
+
+**Note:** All counters are thread-safe and represent the state since the cache client was created or last reset.
+
 
 

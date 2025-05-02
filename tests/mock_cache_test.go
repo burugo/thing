@@ -32,7 +32,7 @@ type mockCacheClient struct {
 	lastQueryCacheHit bool
 
 	// Call counters for assertions (Exported)
-	Counters map[string]int // Made public
+	Counters map[string]int // Operation counters for stats (e.g., "Get", "GetMiss"). Thread-safe via mu.
 
 	// Additional fields for call counters
 	GetCalls            int
@@ -217,7 +217,7 @@ func unmarshalFromMock(stored []byte, dest interface{}) error {
 
 // Get retrieves a raw string value from the mock cache.
 func (m *mockCacheClient) Get(ctx context.Context, key string) (string, error) {
-	m.incrementCounter("Get") // Use helper
+	m.incrementCounter("Get") // Use helper (total calls)
 	m.mu.Lock()
 	m.mu.Unlock()
 
@@ -225,14 +225,14 @@ func (m *mockCacheClient) Get(ctx context.Context, key string) (string, error) {
 	// Use GetValue helper which includes expiry check
 	storedBytes, ok := m.GetValue(key)
 	if !ok {
-		// log.Printf("DEBUG Get: Key %s NOT FOUND in cache", key)
+		m.incrementCounter("GetMiss") // cache miss
 		return "", thing.ErrNotFound
 	}
+	m.incrementCounter("GetHit") // cache hit
 
 	// Assuming the value stored by Set is the raw string
 	// For mock purposes, we stored bytes, so convert back
 	val := string(storedBytes)
-	// log.Printf("DEBUG Get: Key %s FOUND in cache, value: '%s'", key, val)
 	return val, nil
 }
 
@@ -282,15 +282,16 @@ func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr int
 	// Use GetValue helper which includes expiry check
 	storedBytes, ok := m.GetValue(key)
 	if !ok {
-		// log.Printf("DEBUG GetModel: Key %s NOT FOUND in cache", key)
+		m.incrementCounter("GetModelMiss")
 		return thing.ErrNotFound
 	}
 
 	// Check for NoneResult marker BEFORE trying to unmarshal
 	if string(storedBytes) == thing.NoneResult {
-		// log.Printf("DEBUG GetModel: Found NoneResult marker for key %s", key)
-		return thing.ErrCacheNoneResult // <-- FIX: Return specific error
+		m.incrementCounter("GetModelMiss")
+		return thing.ErrCacheNoneResult
 	}
+	m.incrementCounter("GetModelHit")
 
 	// log.Printf("DEBUG GetModel: Key %s FOUND in cache, unmarshaling...", key)
 	if err := unmarshalFromMock(storedBytes, modelPtr); err != nil {
@@ -350,26 +351,20 @@ func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]i
 	// Use GetValue helper which includes expiry check
 	storedBytes, ok := m.GetValue(queryKey)
 	if !ok {
-		// log.Printf("DEBUG GetQueryIDs: Query key %s NOT FOUND in cache", queryKey)
-		m.mu.Lock()
+		m.incrementCounter("GetQueryIDsMiss")
 		m.lastQueryCacheHit = false
-		m.mu.Unlock()
 		return nil, thing.ErrNotFound
 	}
+	m.incrementCounter("GetQueryIDsHit")
+	m.lastQueryCacheHit = true
 
 	var ids []int64
 	if err := unmarshalFromMock(storedBytes, &ids); err != nil {
 		// log.Printf("DEBUG GetQueryIDs: Error unmarshaling for query key %s: %v", queryKey, err)
-		m.mu.Lock()
-		m.lastQueryCacheHit = false // Treat unmarshal error as a miss
-		m.mu.Unlock()
+		m.lastQueryCacheHit = false
 		return nil, fmt.Errorf("mock cache unmarshal error for query key '%s': %w", queryKey, err)
 	}
 
-	m.mu.Lock()
-	m.lastQueryCacheHit = true
-	m.mu.Unlock()
-	// log.Printf("DEBUG GetQueryIDs: Found %d IDs for query key %s", len(ids), queryKey)
 	return ids, nil
 }
 
@@ -638,7 +633,9 @@ func (m *mockCacheClient) GetModelCount() int {
 	return count
 }
 
-// GetCacheStats returns the current cache operation counters for the mock client.
+// GetCacheStats returns a snapshot of cache operation counters for the mock client.
+// The returned map is a copy and safe for concurrent use.
+// Typical keys: "Get", "GetMiss", "GetModel", "GetModelMiss", etc.
 func (m *mockCacheClient) GetCacheStats(ctx context.Context) thing.CacheStats {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
