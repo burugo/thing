@@ -339,7 +339,7 @@ func (cr *CachedResult[T]) invalidateCache() error {
 
 // Fetch returns a subset of records starting from the given offset with the specified limit.
 // It filters out soft-deleted items and triggers cache updates if inconsistencies are found.
-// This implementation closely follows the PHP CachedResult.fetch() logic:
+// This implementation closely follows the CachedResult.fetch() logic:
 // - It iteratively fetches batches from cache or DB
 // - It filters items using KeepItem()
 // - It dynamically calculates how many more items to fetch based on filtering results
@@ -367,11 +367,11 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 		totalCount = int64(len(cr.cachedIDs))
 	}
 
-	// --- Setup for iterative fetching (similar to PHP CachedResult.fetch implementation) ---
+	// --- Setup for iterative fetching ---
 	finalResults := make([]T, 0, limit)
-	nextFetchOffset := offset // Starting offset (PHP's $start)
-	nextFetchLimit := limit   // Initial fetch limit (PHP's $limit)
-	remainingNeeded := limit  // How many more items we need (PHP's $need_count)
+	nextFetchOffset := offset // Starting offset
+	nextFetchLimit := limit   // Initial fetch limit
+	remainingNeeded := limit  // How many more items we need
 	cacheInvalidated := false // Flag to track if cache was invalidated
 
 	// Main loop - keep fetching until we have enough results or run out of data
@@ -380,9 +380,9 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 		var idsToCheck []int64
 		var fetchSource string
 
-		// --- Similar to PHP parent::fetch($start, $limit) - get items from cache or DB ---
+		// --- get items from cache or DB ---
 		if nextFetchOffset < len(cr.cachedIDs) {
-			// Get slice from cached IDs (similar to ListResult.ids() in PHP)
+			// Get slice from cached IDs
 			fetchSource = "Cache"
 
 			// Adjust limit if it would exceed cached IDs
@@ -427,7 +427,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 			break // Should not happen with above checks, but safety first
 		}
 
-		// --- Fetch models for IDs (PHP does this via parent::fetch return) ---
+		// --- Fetch models for IDs ---
 		// Pass preloads from the query params to ByIDs to support relationship loading
 		models, err := cr.thing.ByIDs(idsToCheck, cr.params.Preloads...)
 		if err != nil {
@@ -455,7 +455,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 		// Flag to track if any issue was found with cached IDs
 		anyIssueFound := false
 
-		// --- Process and filter fetched models (similar to PHP fetch foreach loop) ---
+		// --- Process and filter fetched models ---
 		processedFromBatch := 0
 		for _, id := range idsToCheck {
 			processedFromBatch++
@@ -491,14 +491,14 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 			// from the database in the next iteration
 		}
 
-		// --- Prepare for next iteration (similar to PHP calculation after foreach) ---
+		// --- Prepare for next iteration ---
 		// Advance offset by how many we processed this iteration
 		nextFetchOffset += processedFromBatch
 
 		// Set next limit to how many more we need
 		nextFetchLimit = remainingNeeded
 
-		// PHP checks if we need more and if there's anything left to fetch
+		// checks if we need more and if there's anything left to fetch
 		if remainingNeeded == 0 {
 			log.Printf("Fetch Iteration: Collected all %d needed items", limit)
 			break
