@@ -193,16 +193,29 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model T, origi
 			Preloads: paramsInternal.Preloads,
 		}
 
-		// Check if the model matches the query conditions using the wrapper method
-		matchesCurrent, matchesOriginal, err := t.checkModelMatchAgainstQuery(model, originalModel, paramsRoot, isCreate)
+		// Check if the model matches the query conditions using the internal cache.CheckQueryMatch directly
+		infoInternal := &cache.ModelInfo{
+			TableName:        t.info.TableName,
+			ColumnToFieldMap: t.info.ColumnToFieldMap,
+		}
+		matchesCurrent, err := cache.CheckQueryMatch(model, infoInternal, paramsRoot)
 		if err != nil {
-			// Log the error and delete the specific cache key that failed the check
 			log.Printf("ERROR CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
-			// Attempt to delete the specific key for this iteration
 			if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, ErrNotFound) {
 				log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
 			}
-			continue // Skip further processing for this query cache
+			continue
+		}
+		matchesOriginal := false
+		if !isCreate && !reflect.ValueOf(originalModel).IsNil() {
+			matchesOriginal, err = cache.CheckQueryMatch(originalModel, infoInternal, paramsRoot)
+			if err != nil {
+				log.Printf("ERROR CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
+				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, ErrNotFound) {
+					log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
+				}
+				continue
+			}
 		}
 
 		// Determine action
@@ -736,42 +749,6 @@ func containsID(ids []int64, id int64) bool {
 		}
 	}
 	return false
-}
-
-// Helper function to check if a model matches query parameters.
-// This now acts as a wrapper calling the internal cache version.
-func (t *Thing[T]) checkModelMatchAgainstQuery(model T, originalModel T, params cache.QueryParams, isCreate bool) (bool, bool, error) {
-	var matchesCurrent, matchesOriginal bool
-	var matchErr error
-
-	// Convert root QueryParams to internal QueryParams
-	paramsInternal := cache.QueryParams{
-		Where:    params.Where,
-		Args:     params.Args,
-		Order:    params.Order,
-		Preloads: params.Preloads,
-	}
-	// Convert root ModelInfo to internal ModelInfo
-	infoInternal := &cache.ModelInfo{
-		TableName:        t.info.TableName,
-		ColumnToFieldMap: t.info.ColumnToFieldMap,
-		// Add other needed fields if internal CheckQueryMatch requires them
-	}
-
-	// Check current model state using internal function
-	matchesCurrent, matchErr = cache.CheckQueryMatch(model, infoInternal, paramsInternal)
-	if matchErr != nil {
-		return false, false, fmt.Errorf("error checking query match for current model: %w", matchErr)
-	}
-
-	// Check original model state using internal function
-	if !isCreate && !reflect.ValueOf(originalModel).IsNil() {
-		matchesOriginal, matchErr = cache.CheckQueryMatch(originalModel, infoInternal, paramsInternal)
-		if matchErr != nil {
-			return false, false, fmt.Errorf("error checking query match for original model: %w", matchErr)
-		}
-	}
-	return matchesCurrent, matchesOriginal, nil
 }
 
 // determineCacheAction determines cache add/remove actions.
