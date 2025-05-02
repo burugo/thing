@@ -14,8 +14,8 @@ package main
 
 // type User struct {
 // 	thing.BaseModel
-// 	Name  string `db:"name"`
-// 	Email string `db:"email"`
+// 	Name  string `db:"name" thing:"index"`
+// 	Email string `db:"email" thing:"unique"`
 // }
 
 // func (u *User) TableName() string {
@@ -24,8 +24,8 @@ package main
 
 // type Book struct {
 // 	thing.BaseModel
-// 	Title  string `db:"title"`
-// 	UserID int64  `db:"user_id"`
+// 	Title  string `db:"title" thing:"index"`
+// 	UserID int64  `db:"user_id" thing:"index"`
 // }
 
 // func (b *Book) TableName() string {
@@ -65,6 +65,12 @@ package main
 // 	_, err = app.DB.Exec(ctx, `CREATE TABLE books (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT, user_id INTEGER, created_at DATETIME, updated_at DATETIME);`)
 // 	if err != nil {
 // 		log.Fatalf("Failed to create books table: %v", err)
+// 	}
+
+// 	// 自动迁移（建表+索引）
+// 	err = thing.AutoMigrate(&User{}, &Book{})
+// 	if err != nil {
+// 		log.Fatalf("AutoMigrate failed: %v", err)
 // 	}
 
 // 	// 2. Use the injected repositories from the Application struct

@@ -115,6 +115,32 @@ func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 		cols = append(cols, strings.TrimSpace(colDef))
 	}
 
-	sql := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n);", info.TableName, strings.Join(cols, ",\n  "))
-	return sql, nil
+	tableName := info.TableName
+	createTableSQL := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n);", tableName, strings.Join(cols, ",\n  "))
+
+	// 索引 SQL 生成
+	var indexSQLs []string
+	for _, idx := range info.Indexes {
+		idxName := idx.Name
+		if idxName == "" {
+			idxName = fmt.Sprintf("idx_%s_%s", tableName, strings.Join(idx.Columns, "_"))
+		}
+		indexSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s);", idxName, tableName, strings.Join(idx.Columns, ", "))
+		indexSQLs = append(indexSQLs, indexSQL)
+	}
+	for _, idx := range info.UniqueIndexes {
+		idxName := idx.Name
+		if idxName == "" {
+			idxName = fmt.Sprintf("uniq_%s_%s", tableName, strings.Join(idx.Columns, "_"))
+		}
+		indexSQL := fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s (%s);", idxName, tableName, strings.Join(idx.Columns, ", "))
+		indexSQLs = append(indexSQLs, indexSQL)
+	}
+
+	allSQL := createTableSQL
+	if len(indexSQLs) > 0 {
+		allSQL += "\n" + strings.Join(indexSQLs, "\n")
+	}
+
+	return allSQL, nil
 }

@@ -128,5 +128,44 @@ This mechanism allows you to monitor cache effectiveness, debug performance issu
 
 **Note:** All counters are thread-safe and represent the state since the cache client was created or last reset.
 
+## Schema/Migrate 工具
+
+### 用法简介
+
+- 通过 `thing.AutoMigrate` 可一键生成并执行建表 SQL，自动适配当前数据库方言（MySQL/PostgreSQL/SQLite）。
+- 支持通过 struct tag 声明普通索引和唯一索引。
+
+### 索引声明方法
+
+- 普通索引：在 struct 字段加 tag `thing:"index"`
+- 唯一索引：在 struct 字段加 tag `thing:"unique"`
+
+```go
+// 示例
+ type User struct {
+     ID    int64  `db:"id,pk"`
+     Name  string `db:"name" thing:"index"`
+     Email string `db:"email" thing:"unique"`
+ }
+```
+
+### 自动迁移示例
+
+```go
+import "thing"
+
+// 配置数据库适配器
+thing.Configure(dbAdapter, cacheClient)
+
+// 自动建表（含索引）
+err := thing.AutoMigrate(&User{})
+if err != nil {
+    panic(err)
+}
+```
+
+- 迁移时会自动生成 CREATE TABLE 和 CREATE INDEX/UNIQUE INDEX 语句。
+- 支持多模型批量迁移：`thing.AutoMigrate(&User{}, &Book{})`
+
 
 

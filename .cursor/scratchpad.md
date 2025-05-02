@@ -451,6 +451,8 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     - [ ] 12.5: 迁移版本管理（可选/后续）（New Feature）
     - [ ] 12.6: API 设计与 dry-run 支持（New Feature）
     - [ ] 12.7: 测试与文档（New Feature）
+- [x] AutoMigrate supports index/unique struct tag and generates correct SQL (tested)
+- [x] TestAutoMigrate_IndexAndUnique passes (index/unique index creation verified)
 
 ## Executor's Feedback or Assistance Requests
 
@@ -461,12 +463,15 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - JSON 序列化高级特性（Task 21）已完成：支持灵活字段包含/排除、关系嵌套、虚拟属性，ToJSON 规则与 Mongoose 类似，测试覆盖。
 - 查询功能完善（Task 10）已完成：API、SQL 生成、分页/排序/过滤、IN 查询、参数绑定等均实现，所有数据库下表现一致，测试通过。
 - 测试、基准测试与优化（Task 13）已完成：所有核心功能均有测试覆盖，mock cache、本地/CI DB 环境、反射元数据缓存、并发安全、性能健壮性均已实现，所有测试通过。
+- Fixed a bug in schema metadata parsing: now only skips fields with relationship thing tags (hasMany, belongsTo, rel=, model:, fk:), so index/unique tags are correctly processed for index generation.
+- All tests pass after the fix. Changes committed: fix(schema): allow index/unique tags to generate indexes, only skip relationship fields for thing tag; all tests pass
 
 ## Lessons
 - When using reflection-based diff or change detection, always ensure you pass a non-nil pointer (never a nil pointer or zero value) to avoid panics or errors in reflect.Value.Elem().
 - For update logic, if the original record is not found, use a zero value pointer of the correct type, not a nil pointer or a zero value.
 - 数据库集成测试需确保本地或 CI 环境有对应服务可用，否则会因连接失败导致测试无法通过。
 - PostgreSQL 占位符必须严格递增编号，UPDATE/INSERT/SELECT 参数顺序必须与 SQL 一致，RETURNING id 必须用于主键赋值。
+- When parsing struct tags for schema, only skip fields with thing tags indicating relationships (hasMany, belongsTo, rel=, model:, fk:). Do not skip fields with thing:"index" or thing:"unique"; these must be processed for index/unique index generation.
 
 ---
 
