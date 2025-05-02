@@ -118,3 +118,111 @@ func ResetGlobalCacheIndex() {
 // TODO: Consider adding a DeregisterQuery method if cache keys can expire or become invalid permanently.
 // This would need to remove entries from both maps.
 // TODO: Consider persistence options if the index needs to survive application restarts.
+
+// ParseExactMatchFields parses QueryParams and returns a map of field name to value slice for all exact match (=, IN) conditions.
+// Only supports AND 连接的简单条件。
+func ParseExactMatchFields(params QueryParams) map[string][]interface{} {
+	result := make(map[string][]interface{})
+	where := params.Where
+	args := params.Args
+	if where == "" || len(args) == 0 {
+		return result
+	}
+	conditions := splitAndConditions(where)
+	argIdx := 0
+	for _, cond := range conditions {
+		cond = trimSpace(cond)
+		if cond == "" {
+			continue
+		}
+		parts := splitFields(cond)
+		if len(parts) == 3 && parts[1] == "=" && parts[2] == "?" && argIdx < len(args) {
+			field := parts[0]
+			result[field] = []interface{}{args[argIdx]}
+			argIdx++
+		} else if len(parts) == 3 && parts[1] == "IN" && parts[2] == "(?)" && argIdx < len(args) {
+			field := parts[0]
+			arg := args[argIdx]
+			var vals []interface{}
+			switch v := arg.(type) {
+			case []interface{}:
+				vals = v
+			case []int:
+				for _, n := range v {
+					vals = append(vals, n)
+				}
+			case []string:
+				for _, s := range v {
+					vals = append(vals, s)
+				}
+			default:
+				// 不支持的类型，跳过
+			}
+			if len(vals) > 0 {
+				result[field] = vals
+			}
+			argIdx++
+		} else if argIdx < len(args) {
+			// 非 =/IN 条件，参数也要递增
+			argIdx++
+		}
+	}
+	return result
+}
+
+// splitAndConditions splits a WHERE string by AND (case-insensitive)
+func splitAndConditions(where string) []string {
+	var res []string
+	for _, s := range splitByAND(where) {
+		res = append(res, trimSpace(s))
+	}
+	return res
+}
+
+// splitFields splits a condition string by whitespace
+func splitFields(s string) []string {
+	var res []string
+	curr := ""
+	for i := 0; i < len(s); i++ {
+		if s[i] == ' ' || s[i] == '\t' {
+			if curr != "" {
+				res = append(res, curr)
+				curr = ""
+			}
+		} else {
+			curr += string(s[i])
+		}
+	}
+	if curr != "" {
+		res = append(res, curr)
+	}
+	return res
+}
+
+// splitByAND splits by AND (case-insensitive)
+func splitByAND(s string) []string {
+	var res []string
+	last := 0
+	for i := 0; i+3 <= len(s); i++ {
+		if (s[i] == 'A' || s[i] == 'a') && (s[i+1] == 'N' || s[i+1] == 'n') && (s[i+2] == 'D' || s[i+2] == 'd') {
+			if (i == 0 || s[i-1] == ' ') && (i+3 == len(s) || s[i+3] == ' ') {
+				res = append(res, s[last:i])
+				last = i + 3
+			}
+		}
+	}
+	res = append(res, s[last:])
+	return res
+}
+
+// trimSpace removes leading/trailing spaces/tabs
+func trimSpace(s string) string {
+	start, end := 0, len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
+	return s[start:end]
+}

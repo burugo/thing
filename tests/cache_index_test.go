@@ -164,3 +164,59 @@ func TestCacheIndex_GetQueryParamsForKey_NotFound(t *testing.T) {
 	assert.False(t, found)
 	assert.Equal(t, cache.QueryParams{}, params) // Use internal type
 }
+
+func TestParseExactMatchFields(t *testing.T) {
+	testCases := []struct {
+		name   string
+		params cache.QueryParams
+		expect map[string][]interface{}
+	}{
+		{
+			name:   "single =",
+			params: cache.QueryParams{Where: "id = ?", Args: []interface{}{1}},
+			expect: map[string][]interface{}{"id": {1}},
+		},
+		{
+			name:   "multiple =",
+			params: cache.QueryParams{Where: "id = ? AND status = ?", Args: []interface{}{1, "active"}},
+			expect: map[string][]interface{}{"id": {1}, "status": {"active"}},
+		},
+		{
+			name:   "single IN",
+			params: cache.QueryParams{Where: "user_id IN (?)", Args: []interface{}{[]int{1, 2, 3}}},
+			expect: map[string][]interface{}{"user_id": {1, 2, 3}},
+		},
+		{
+			name:   "mixed = and IN",
+			params: cache.QueryParams{Where: "user_id IN (?) AND status = ?", Args: []interface{}{[]int{1, 2}, "active"}},
+			expect: map[string][]interface{}{"user_id": {1, 2}, "status": {"active"}},
+		},
+		{
+			name:   "non-exact operator ignored",
+			params: cache.QueryParams{Where: "age > ? AND id = ?", Args: []interface{}{18, 2}},
+			expect: map[string][]interface{}{"id": {2}},
+		},
+		{
+			name:   "empty where",
+			params: cache.QueryParams{Where: "", Args: nil},
+			expect: map[string][]interface{}{},
+		},
+		{
+			name:   "IN with string slice",
+			params: cache.QueryParams{Where: "name IN (?)", Args: []interface{}{[]string{"a", "b"}}},
+			expect: map[string][]interface{}{"name": {"a", "b"}},
+		},
+		{
+			name:   "IN with interface{} slice",
+			params: cache.QueryParams{Where: "tag IN (?)", Args: []interface{}{[]interface{}{1, "x"}}},
+			expect: map[string][]interface{}{"tag": {1, "x"}},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cache.ParseExactMatchFields(tc.params)
+			assert.Equal(t, tc.expect, got)
+		})
+	}
+}
