@@ -3,6 +3,7 @@ package cache
 import (
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 )
 
@@ -32,16 +33,20 @@ type CacheIndex struct {
 	// Example: FieldIndex["users"]["age"] = {"list:users:hash2": true, ...}
 	FieldIndex map[string]map[string]map[string]bool
 
+	// TableToFullTableListKeys 记录 where 为空的全表 list cache key
+	TableToFullTableListKeys map[string]map[string]bool
+
 	mu sync.RWMutex // Protects access to all maps
 }
 
 // NewCacheIndex creates and initializes a new CacheIndex.
 func NewCacheIndex() *CacheIndex {
 	return &CacheIndex{
-		tableToQueries: make(map[string]map[string]bool),
-		keyToParams:    make(map[string]QueryParams),
-		valueIndex:     make(map[string]map[string]map[string]map[string]bool),
-		FieldIndex:     make(map[string]map[string]map[string]bool),
+		tableToQueries:           make(map[string]map[string]bool),
+		keyToParams:              make(map[string]QueryParams),
+		valueIndex:               make(map[string]map[string]map[string]map[string]bool),
+		FieldIndex:               make(map[string]map[string]map[string]bool),
+		TableToFullTableListKeys: make(map[string]map[string]bool),
 	}
 }
 
@@ -65,6 +70,14 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params QueryPar
 
 	// Register key -> params mapping
 	idx.keyToParams[cacheKey] = params
+
+	// --- 新增: 注册全表 list cache key ---
+	if params.Where == "" && strings.HasPrefix(cacheKey, "list:") {
+		if _, ok := idx.TableToFullTableListKeys[tableName]; !ok {
+			idx.TableToFullTableListKeys[tableName] = make(map[string]bool)
+		}
+		idx.TableToFullTableListKeys[tableName][cacheKey] = true
+	}
 
 	// --- 新增: 注册值级索引 ---
 	exactFields := ParseExactMatchFields(params)
@@ -322,6 +335,19 @@ func (idx *CacheIndex) GetKeysByValue(table, field string, value interface{}) []
 	}
 	for k := range valMap {
 		keys = append(keys, k)
+	}
+	return keys
+}
+
+// GetFullTableListKeys 返回该表所有 where 为空的 list cache key
+func (idx *CacheIndex) GetFullTableListKeys(tableName string) []string {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	var keys []string
+	if m, ok := idx.TableToFullTableListKeys[tableName]; ok {
+		for k := range m {
+			keys = append(keys, k)
+		}
 	}
 	return keys
 }

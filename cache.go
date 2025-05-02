@@ -144,8 +144,8 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model T, origi
 			}
 		}
 	}
-	// Fallback: union with GetPotentiallyAffectedQueries
-	for _, k := range cache.GlobalCacheIndex.GetPotentiallyAffectedQueries(tableName) {
+	// 只 union 全表 list cache key（where 为空的 key）
+	for _, k := range cache.GlobalCacheIndex.GetFullTableListKeys(tableName) {
 		cacheKeySet[k] = struct{}{}
 	}
 	// Convert set to slice
@@ -486,8 +486,8 @@ func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model T) {
 			}
 		}
 	}
-	// Fallback: union with GetPotentiallyAffectedQueries
-	for _, k := range cache.GlobalCacheIndex.GetPotentiallyAffectedQueries(tableName) {
+	// 只 union 全表 list cache key（where 为空的 key）
+	for _, k := range cache.GlobalCacheIndex.GetFullTableListKeys(tableName) {
 		cacheKeySet[k] = struct{}{}
 	}
 	// Convert set to slice
