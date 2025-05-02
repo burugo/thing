@@ -8,6 +8,7 @@ import (
 	"thing/internal/cache"
 
 	"thing"
+	"thing/common"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -125,7 +126,7 @@ func TestThing_ByID_Cache_NoneResult(t *testing.T) {
 	// 4. Fetch again - should miss cache, miss DB, cache NoneResult, return ErrNotFound
 	_, err = th.ByID(userID)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after delete")
+	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound after delete")
 
 	// Verify cache operations for the first fetch after delete
 	assert.Equal(t, 1, mockCache.Counters["GetModel"], "Should attempt cache get (miss)")
@@ -138,7 +139,7 @@ func TestThing_ByID_Cache_NoneResult(t *testing.T) {
 	cacheKey := "users:" + mockCache.FormatID(userID)
 	rawVal, rawErr := mockCache.Get(context.Background(), cacheKey)
 	require.NoError(t, rawErr, "Should be able to get raw value from cache")
-	assert.Equal(t, thing.NoneResult, rawVal, "Cache should contain NoneResult string")
+	assert.Equal(t, common.NoneResult, rawVal, "Cache should contain NoneResult string")
 
 	// Record counts before the final fetch
 	getCallsBeforeFinal := mockCache.Counters["GetModel"]
@@ -148,7 +149,7 @@ func TestThing_ByID_Cache_NoneResult(t *testing.T) {
 	// 5. Fetch one more time - should hit NoneResult in cache, return ErrNotFound immediately
 	_, err = th.ByID(userID)
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound again")
+	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound again")
 
 	// Verify cache operations for the second fetch after delete
 	assert.Equal(t, getCallsBeforeFinal+1, mockCache.Counters["GetModel"], "Should attempt cache get again (hit NoneResult)")
@@ -639,7 +640,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	// Check list cache: Cache should have been INVALIDATED by the Save operation
 	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
 	assert.Error(t, err, "Expected error getting query IDs after invalidation")
-	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after invalidation")
+	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound after invalidation")
 
 	// Check count cache: count should be incremented (count cache is still updated)
 	countStr, err = mockCache.Get(ctx, countCacheKey)
@@ -680,7 +681,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	// Check list cache: Cache should have been INVALIDATED by the Save operation
 	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
 	assert.Error(t, err, "Expected error getting query IDs after update TO match (invalidation)")
-	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after update TO match (invalidation)")
+	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound after update TO match (invalidation)")
 
 	// Check count cache: count should be incremented
 	countStr, err = mockCache.Get(ctx, countCacheKey)
@@ -706,7 +707,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	// Check list cache: Cache should have been INVALIDATED by the Save operation
 	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
 	assert.Error(t, err, "Expected error getting query IDs after update TO NOT match (invalidation)")
-	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after update TO NOT match (invalidation)")
+	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound after update TO NOT match (invalidation)")
 
 	// Check count cache: count should be decremented
 	countStr, err = mockCache.Get(ctx, countCacheKey)
@@ -746,7 +747,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	// Check list cache: Cache should have been INVALIDATED by the Delete operation
 	_, err = mockCache.GetQueryIDs(ctx, listCacheKey)
 	assert.Error(t, err, "Expected error getting query IDs after delete (invalidation)")
-	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound after delete (invalidation)")
+	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound after delete (invalidation)")
 
 	// Check count cache: count should be decremented
 	countStr, err = mockCache.Get(ctx, countCacheKey)

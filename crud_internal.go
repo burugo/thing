@@ -12,6 +12,7 @@ import (
 	"time"
 
 	// Import internal cache package
+	"thing/common"
 	"thing/internal/utils"
 )
 
@@ -52,10 +53,10 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 				setNewRecordFlagIfBaseModel(instancePtr, false)
 				resultMap[id] = reflect.ValueOf(instancePtr)   // Store the pointer
 				log.Printf("DEBUG CACHE HIT for %s", cacheKey) // Added log
-			} else if errors.Is(err, ErrCacheNoneResult) {
+			} else if errors.Is(err, common.ErrCacheNoneResult) {
 				// Found NoneResult marker - this ID is handled, DO NOT add to missingIDs.
 				log.Printf("DEBUG CACHE HIT (NoneResult) for %s", cacheKey) // Added log
-			} else if errors.Is(err, ErrNotFound) {
+			} else if errors.Is(err, common.ErrNotFound) {
 				// True cache miss
 				log.Printf("DEBUG CACHE MISS for %s", cacheKey) // Added log
 				missingIDs = append(missingIDs, id)
@@ -153,7 +154,7 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 					// This ID was queried but not returned by DB
 					cacheKey := generateCacheKey(modelInfo.TableName, batchID)
 					log.Printf("DEBUG DB NOT FOUND for %s (in batch %v). Caching NoneResult.", cacheKey, batchIDs)
-					errCacheSet := cache.Set(ctx, cacheKey, NoneResult, globalCacheTTL) // USE globalCacheTTL
+					errCacheSet := cache.Set(ctx, cacheKey, common.NoneResult, globalCacheTTL) // USE globalCacheTTL
 					if errCacheSet != nil {
 						log.Printf("WARN: Failed to set NoneResult in cache for key %s: %v", cacheKey, errCacheSet)
 					}
@@ -196,7 +197,7 @@ func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest *T) error {
 		}
 	} else {
 		// ID not found in resultsMap, implies it wasn't in DB or cache (or marked NoneResult)
-		return ErrNotFound
+		return common.ErrNotFound
 	}
 }
 
@@ -456,7 +457,7 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 		// --- Object Cache Invalidate ---
 		if t.cache != nil {
 			// Delete the primary cache entry for this object
-			if errCache := t.cache.Delete(ctx, cacheKey); errCache != nil && !errors.Is(errCache, ErrNotFound) {
+			if errCache := t.cache.Delete(ctx, cacheKey); errCache != nil && !errors.Is(errCache, common.ErrNotFound) {
 				// Log warning but don't fail the DB delete
 				log.Printf("WARN: Failed to delete cache key %s during delete operation: %v", cacheKey, errCache)
 			}
@@ -465,7 +466,7 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 
 		// If we got here, DB delete was attempted. Check if it actually deleted something.
 		if rowsAffected == 0 {
-			return ErrNotFound // Now return NotFound if DB didn't affect rows
+			return common.ErrNotFound // Now return NotFound if DB didn't affect rows
 		}
 
 		// --- Incremental Query Cache Update for Delete ---
@@ -477,9 +478,9 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 
 	if err != nil {
 		// Don't trigger AfterDelete hook if the lock or DB/Cache operation failed
-		if errors.Is(err, ErrNotFound) {
+		if errors.Is(err, common.ErrNotFound) {
 			log.Printf("Attempted to delete non-existent record %s %d", tableName, id)
-			return ErrNotFound // Propagate not found error
+			return common.ErrNotFound // Propagate not found error
 		}
 		return fmt.Errorf("delete operation failed (lock or db/cache exec): %w", err)
 	}

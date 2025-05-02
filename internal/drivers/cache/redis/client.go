@@ -10,8 +10,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	// Import the core thing package for interfaces/errors
 	"thing"
+	"thing/common"
+	// "thing/thing" // Removed if unused
 )
 
 // client implements thing.CacheClient using Redis.
@@ -76,7 +77,7 @@ func (c *client) Get(ctx context.Context, key string) (string, error) {
 	val, err := c.redisClient.Get(ctx, key).Result()
 	if err == redis.Nil {
 		c.incrementCounter("GetMiss")
-		return "", thing.ErrNotFound
+		return "", common.ErrNotFound
 	} else if err != nil {
 		c.incrementCounter("GetError")
 		return "", fmt.Errorf("redis Get error for key '%s': %w", key, err)
@@ -111,16 +112,16 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 	val, err := c.redisClient.Get(ctx, key).Result() // Use Result() to get string value
 	if err == redis.Nil {
 		c.incrementCounter("GetModelMiss")
-		return thing.ErrNotFound
+		return common.ErrNotFound
 	} else if err != nil {
 		c.incrementCounter("GetModelError")
 		return fmt.Errorf("redis Get error for key '%s': %w", key, err)
 	}
 
 	// Check for NoneResult marker AFTER checking for redis.Nil
-	if val == thing.NoneResult {
+	if val == common.NoneResult {
 		c.incrementCounter("GetModelMiss")
-		return thing.ErrCacheNoneResult // Return specific error for NoneResult
+		return common.ErrCacheNoneResult
 	}
 	c.incrementCounter("GetModelHit")
 
@@ -164,7 +165,7 @@ func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, err
 	val, err := c.redisClient.Get(ctx, queryKey).Result() // Use Result() to get string directly
 	if err == redis.Nil {
 		c.incrementCounter("GetQueryIDsMiss")
-		return nil, thing.ErrNotFound
+		return nil, common.ErrNotFound
 	} else if err != nil {
 		c.incrementCounter("GetQueryIDsError")
 		return nil, fmt.Errorf("redis Get error for query key '%s': %w", queryKey, err)
@@ -172,8 +173,8 @@ func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, err
 	c.incrementCounter("GetQueryIDsHit")
 
 	// Remove the check for the no longer used NoneResult marker
-	// if val == thing.NoneResult {
-	// 	return nil, thing.ErrQueryCacheNoneResult
+	// if val == common.NoneResult {
+	// 	return nil, common.ErrQueryCacheNoneResult
 	// }
 
 	// If not NoneResult, attempt to unmarshal as list of IDs
@@ -315,7 +316,7 @@ func (c *client) InvalidateQueriesContainingID(ctx context.Context, prefix strin
 			if getErr != nil {
 				// Log error (e.g., key expired between SCAN and GET, or not an ID list) but continue
 				// If it's ErrNotFound, the key disappeared, which is fine.
-				if !errors.Is(getErr, thing.ErrNotFound) {
+				if !errors.Is(getErr, common.ErrNotFound) {
 					log.Printf("WARN: Failed to get query IDs for key '%s' during invalidation check: %v", queryKey, getErr)
 				}
 				continue

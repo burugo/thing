@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+
+	"thing/common"
 	"thing/internal/cache"
 	"thing/internal/sql"
 )
@@ -86,7 +88,7 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 			// Optionally delete the invalid cache entry here
 			_ = cr.thing.cache.Delete(cr.thing.ctx, cacheKey)
 		}
-	} else if errors.Is(cacheErr, cache.ErrNotFound) {
+	} else if errors.Is(cacheErr, common.ErrNotFound) {
 		// Cache Miss
 		log.Printf("CACHE MISS (Count): Key %s not found.", cacheKey)
 		// Fall through to DB fetch
@@ -205,11 +207,13 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	}
 
 	// 3. Handle Cache Miss or Error
-	if !errors.Is(idsCacheErr, ErrNotFound) {
+	if errors.Is(idsCacheErr, common.ErrNotFound) || errors.Is(idsCacheErr, common.ErrQueryCacheNoneResult) {
+		// Normal cache miss or explicit none result found
+		log.Printf("CACHE MISS/NoneResult: List Key: %s (Error: %v)", listCacheKey, idsCacheErr)
+	} else { // Handle unexpected errors
 		// Log unexpected errors but treat as cache miss
 		log.Printf("WARN: Cache GetQueryIDs error for list key %s: %v. Proceeding to DB query.", listCacheKey, idsCacheErr)
 	}
-	log.Printf("CACHE MISS: List Key: %s (Error: %v)", listCacheKey, idsCacheErr)
 
 	// 4. Cache Miss: Query Database and filter results
 	// 4a. Prepare to collect valid, non-deleted IDs
@@ -311,7 +315,7 @@ func (cr *CachedResult[T]) invalidateCache() error {
 	listCacheKey := cr.generateListCacheKey()
 
 	deleteErr := cr.thing.cache.Delete(cr.thing.ctx, listCacheKey)
-	if deleteErr != nil && !errors.Is(deleteErr, ErrNotFound) {
+	if deleteErr != nil && !errors.Is(deleteErr, common.ErrNotFound) {
 		log.Printf("WARN: Failed to invalidate list cache for key %s: %v", listCacheKey, deleteErr)
 		// Continue despite error, try to invalidate count cache as well
 	} else {
@@ -322,7 +326,7 @@ func (cr *CachedResult[T]) invalidateCache() error {
 	countCacheKey := cr.generateCountCacheKey()
 
 	deleteErr = cr.thing.cache.Delete(cr.thing.ctx, countCacheKey)
-	if deleteErr != nil && !errors.Is(deleteErr, ErrNotFound) {
+	if deleteErr != nil && !errors.Is(deleteErr, common.ErrNotFound) {
 		log.Printf("WARN: Failed to invalidate count cache for key %s: %v", countCacheKey, deleteErr)
 	} else {
 		log.Printf("Cache invalidated for count key: %s", countCacheKey)
@@ -563,7 +567,7 @@ func (cr *CachedResult[T]) First() (T, error) {
 		// For simplicity now, just return ErrNotFound directly.
 		// TODO: Consider integrating with NoneResult caching for the query itself?
 		var zero T
-		return zero, ErrNotFound // Use the existing ErrNotFound
+		return zero, common.ErrNotFound // Use the existing ErrNotFound
 	}
 
 	// 3. Return the first result

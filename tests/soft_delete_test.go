@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"thing"
+	"thing/common"
 	"thing/internal/cache"
 
 	"github.com/stretchr/testify/assert"
@@ -172,7 +172,7 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	// List cache should be gone
 	_, err = mockCache.GetQueryIDs(context.Background(), listCacheKey)
 	require.Error(t, err, "List cache should be invalidated")
-	assert.True(t, errors.Is(err, thing.ErrNotFound), "Expected ErrNotFound for list cache")
+	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound for list cache")
 
 	// Count cache should be updated to 0
 	countStr, err := mockCache.Get(context.Background(), countCacheKey)

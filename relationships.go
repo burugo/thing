@@ -11,6 +11,7 @@ import (
 	"log"
 	"reflect"
 	"strings"
+	"thing/common"
 	"thing/internal/cache"
 )
 
@@ -352,7 +353,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 				log.Printf("CACHE HIT (Query IDs): Found %d related IDs for key %s", len(cachedIDs), listCacheKey)
 				relatedIDs = cachedIDs
 				cacheHit = true // Got the IDs from cache
-			} else if errors.Is(queryIDsErr, ErrNotFound) {
+			} else if errors.Is(queryIDsErr, common.ErrNotFound) {
 				// Cache miss
 				log.Printf("CACHE MISS (Query IDs): Key %s not found.", listCacheKey)
 				// cacheHit remains false
@@ -405,7 +406,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 				}
 			} else {
 				log.Printf("Caching NoneResult for query key %s", listCacheKey)
-				if qcErr := t.cache.Set(ctx, listCacheKey, NoneResult, globalCacheTTL); qcErr != nil {
+				if qcErr := t.cache.Set(ctx, listCacheKey, common.NoneResult, globalCacheTTL); qcErr != nil {
 					log.Printf("WARN: Failed to cache NoneResult for query key %s: %v", listCacheKey, qcErr)
 				}
 			}

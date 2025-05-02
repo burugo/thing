@@ -12,6 +12,7 @@ import (
 	"thing/internal/cache"
 	"time"
 
+	"thing/common" // Added import
 	// "github.com/jmoiron/sqlx" // Removed sqlx import
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 
@@ -82,7 +83,7 @@ func (a *SQLiteAdapter) Get(ctx context.Context, dest interface{}, query string,
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			log.Printf("DB Get (No Rows): %s [%v] (%s)", query, args, duration)
-			return thing.ErrNotFound // Use error from parent package
+			return common.ErrNotFound // Use error from common package
 		}
 		log.Printf("DB Get Error (Scan): %s [%v] (%s) - %v", query, args, duration, err) // Clarify error source
 		return fmt.Errorf("sqlite Get scan error: %w", err)
@@ -262,7 +263,7 @@ func (a *SQLiteAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, par
 		// which shouldn't happen for COUNT(*). So, any error here is likely a real issue.
 		if errors.Is(err, sql.ErrNoRows) {
 			log.Printf("WARN: GetCount query returned no rows unexpectedly for query: %s [%v] (%s)", query, args, duration)
-			return 0, nil // Interpret as 0 count if ErrNoRows occurs
+			return 0, common.ErrNotFound // Return common.ErrNotFound for consistency.
 		}
 		log.Printf("DB GetCount Error: %s [%v] (%s) - %v", query, args, duration, err)
 		return 0, fmt.Errorf("sqlite GetCount error: %w", err)
@@ -339,7 +340,7 @@ func (t *SQLiteTx) Get(ctx context.Context, dest interface{}, query string, args
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			log.Printf("DB Tx Get (No Rows): %s [%v] (%s)", query, args, duration)
-			return thing.ErrNotFound // Use error from parent package
+			return common.ErrNotFound // Use common error
 		}
 		log.Printf("DB Tx Get Error (Scan): %s [%v] (%s) - %v", query, args, duration, err) // Clarify error source
 		return fmt.Errorf("sqlite Tx Get scan error: %w", err)

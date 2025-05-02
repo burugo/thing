@@ -4,7 +4,7 @@ import (
 	"testing"
 	"thing/internal/cache"
 
-	"thing"
+	"thing/common"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +40,7 @@ func TestThing_ByID_NotFound(t *testing.T) {
 	nonExistentID := int64(999)
 	_, err := th.ByID(nonExistentID)
 	assert.Error(t, err)
-	assert.Equal(t, thing.ErrNotFound, err)
+	assert.Equal(t, common.ErrNotFound, err)
 }
 
 func TestThing_Save_Create(t *testing.T) {
@@ -155,7 +155,7 @@ func TestThing_Delete(t *testing.T) {
 	// Verify user no longer exists
 	_, err = th.ByID(user.ID)
 	assert.Error(t, err)
-	assert.Equal(t, thing.ErrNotFound, err, "User should not exist after deletion")
+	assert.Equal(t, common.ErrNotFound, err, "User should not exist after deletion")
 
 	// Access the Counters map directly
 	// Check counts *after* the Delete operation.

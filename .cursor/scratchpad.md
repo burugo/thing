@@ -75,7 +75,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 1.  **[~] Project Setup & Core Structure:** (Partially addressed by `thing.go`)
     *   Initialize/Verify Go module. **Package name: `thing`**.
     *   **Rename `thing.go` to `thing.go`**.
-    *   [x] Define/Refine core interfaces (`DBAdapter`, `CacheClient`, `Model`, `QueryExecutor`, etc.).
+    *   [x] Define/Refine core interfaces (`DBAdapter`, `CacheClient`, `Model`, etc.).
     *   Set up basic project layout (`thing/`, `thing/internal/`, `examples/`, `tests/`).
     *   Setup basic logging and configuration handling.
     *   **Success Criteria:** Project structure created (`thing` package with `thing.go`), core interfaces defined, basic build/test pipeline works.

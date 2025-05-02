@@ -1,9 +1,5 @@
 package cache
 
-import (
-	"errors"
-)
-
 // --- Local Interfaces/Structs/Vars for internal/cache --- //
 // Local QueryParams matching root structure
 type QueryParams struct {
@@ -22,5 +18,5 @@ type ModelInfo struct {
 	// Add other fields like PkName if needed by internal funcs
 }
 
-// Local error variable equivalent to thing.ErrNotFound
-var ErrNotFound = errors.New("cache: key not found") // Simple local definition
+// Local error variable removed, use common.ErrNotFound instead.
+// var ErrNotFound = errors.New("cache: key not found")

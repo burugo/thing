@@ -14,20 +14,19 @@ import (
 	"sync"
 	"time"
 
+	"thing/common"         // Added import for common errors/constants
 	"thing/internal/cache" // Import internal cache package
 	"thing/internal/utils"
 	// "thing/internal/helpers" // Removed import
 )
 
 // --- Cache Constants ---
-const (
-	// Represents a non-existent entry in the cache
-	NoneResult = "NoneResult"
-	// Lock duration
-	LockDuration   = 5 * time.Second
-	LockRetryDelay = 50 * time.Millisecond
-	LockMaxRetries = 5
-)
+// Represents a non-existent entry in the cache - moved to common/errors.go
+// const NoneResult = "NoneResult" // Migrated
+// Lock duration
+const LockDuration = 5 * time.Second
+const LockRetryDelay = 50 * time.Millisecond
+const LockMaxRetries = 5
 
 // Global instance of the lock manager for cache keys.
 // Defined here to avoid import cycles.
@@ -60,7 +59,7 @@ func withLock(ctx context.Context, cache CacheClient, lockKey string, action fun
 		}
 	}
 	if !acquired {
-		return fmt.Errorf("failed to acquire lock for key '%s' after %d retries: %w", lockKey, LockMaxRetries, ErrLockNotAcquired)
+		return fmt.Errorf("failed to acquire lock for key '%s' after %d retries: %w", lockKey, LockMaxRetries, common.ErrLockNotAcquired)
 	}
 	defer func() {
 		releaseErr := cache.ReleaseLock(ctx, lockKey)
@@ -221,7 +220,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			matchesCurrent, err := cache.CheckQueryMatch(model, infoInternal, paramsRoot)
 			if err != nil {
 				log.Printf("ERROR CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
-				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, ErrNotFound) {
+				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
 					log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
 				}
 				continue
@@ -231,7 +230,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 				matchesOriginal, err = cache.CheckQueryMatch(originalModel, infoInternal, paramsRoot)
 				if err != nil {
 					log.Printf("ERROR CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
-					if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, ErrNotFound) {
+					if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
 						log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
 					}
 					continue
@@ -273,12 +272,12 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 		if task.isListKey {
 			if _, exists := initialListValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
 				cachedIDs, err := t.cache.GetQueryIDs(ctx, task.cacheKey)
-				if err != nil && !errors.Is(err, ErrNotFound) {
+				if err != nil && !errors.Is(err, common.ErrNotFound) {
 					log.Printf("ERROR: Failed to read initial list cache for key %s: %v", task.cacheKey, err)
 					readErrors[task.cacheKey] = err
 					initialListValues[task.cacheKey] = nil
 				} else {
-					if errors.Is(err, ErrNotFound) {
+					if errors.Is(err, common.ErrNotFound) {
 						initialListValues[task.cacheKey] = []int64{}
 					} else if cachedIDs == nil {
 						initialListValues[task.cacheKey] = []int64{}
@@ -293,7 +292,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 				countStr, err := t.cache.Get(ctx, task.cacheKey)
 				var count int64
 				if err != nil {
-					if errors.Is(err, ErrNotFound) {
+					if errors.Is(err, common.ErrNotFound) {
 						count = 0
 						err = nil
 					} else {
@@ -411,7 +410,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			writeErr = t.cache.Delete(ctx, key)
 			if writeErr == nil {
 				log.Printf("DEBUG Write (%s): Successfully invalidated list cache.", key)
-			} else if errors.Is(writeErr, ErrNotFound) {
+			} else if errors.Is(writeErr, common.ErrNotFound) {
 				log.Printf("DEBUG Write (%s): List cache key not found during invalidation (already gone?).", key)
 				writeErr = nil
 			}

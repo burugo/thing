@@ -14,6 +14,8 @@ import (
 
 	"thing/internal/drivers/db/sqlite"
 
+	"thing/common"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -226,7 +228,7 @@ func (m *mockCacheClient) Get(ctx context.Context, key string) (string, error) {
 	storedBytes, ok := m.GetValue(key)
 	if !ok {
 		m.incrementCounter("GetMiss") // cache miss
-		return "", thing.ErrNotFound
+		return "", common.ErrNotFound
 	}
 	m.incrementCounter("GetHit") // cache hit
 
@@ -283,13 +285,13 @@ func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr int
 	storedBytes, ok := m.GetValue(key)
 	if !ok {
 		m.incrementCounter("GetModelMiss")
-		return thing.ErrNotFound
+		return common.ErrNotFound
 	}
 
 	// Check for NoneResult marker BEFORE trying to unmarshal
-	if string(storedBytes) == thing.NoneResult {
+	if string(storedBytes) == common.NoneResult {
 		m.incrementCounter("GetModelMiss")
-		return thing.ErrCacheNoneResult
+		return common.ErrCacheNoneResult
 	}
 	m.incrementCounter("GetModelHit")
 
@@ -353,7 +355,7 @@ func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]i
 	if !ok {
 		m.incrementCounter("GetQueryIDsMiss")
 		m.lastQueryCacheHit = false
-		return nil, thing.ErrNotFound
+		return nil, common.ErrNotFound
 	}
 	m.incrementCounter("GetQueryIDsHit")
 	m.lastQueryCacheHit = true
@@ -535,7 +537,7 @@ type mockTx struct {
 }
 
 func (tx *mockTx) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	return thing.ErrNotFound
+	return common.ErrNotFound
 }
 
 func (tx *mockTx) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
@@ -610,7 +612,7 @@ func (m *mockCacheClient) GetCount(ctx context.Context, key string) (int64, erro
 	m.incrementCounter("GetCount")
 	storedBytes, ok := m.GetValue(key) // Uses expiry check
 	if !ok {
-		return 0, thing.ErrNotFound
+		return 0, common.ErrNotFound
 	}
 	var count int64
 	err := unmarshalFromMock(storedBytes, &count)

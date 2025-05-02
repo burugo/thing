@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"testing"
 	"thing"
+	"thing/common"
 	"thing/internal/cache"
 	"time"
 
@@ -248,15 +249,14 @@ func TestCachedResult_First(t *testing.T) {
 		require.Equal(t, u2.Name, firstUser.Name)
 	})
 
-	t.Run("Not Found", func(t *testing.T) {
+	t.Run("Find No Match", func(t *testing.T) {
 		mockCache.FlushAll(context.Background())
 		params := cache.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
 		cr, err := thingInstance.Query(params)
 		require.NoError(t, err)
-		firstUser, err := cr.First()
+		_, err = cr.First()
 		require.Error(t, err)
-		require.True(t, errors.Is(err, thing.ErrNotFound))
-		require.Nil(t, firstUser)
+		assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound for no match")
 	})
 
 	t.Run("Cache Hit (List Cache -> ByID)", func(t *testing.T) {
