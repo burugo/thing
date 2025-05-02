@@ -216,15 +216,18 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		return errors.New("value must be a non-nil pointer")
 	}
 
+	// --- Prepare state ---
+	id := value.GetID()
+	isNew := id == 0
+	now := time.Now()
+	// Set the internal flag *before* hooks are called
+	setNewRecordFlagIfBaseModel(value, isNew)
+
 	// --- Trigger BeforeSave hook ---
 	if err := triggerEvent(ctx, EventTypeBeforeSave, value, nil); err != nil { // Uses helper defined later
 		return fmt.Errorf("BeforeSave hook failed: %w", err)
 	}
 
-	// Use Model interface methods directly
-	id := value.GetID()
-	isNew := id == 0
-	now := time.Now()
 	var query string
 	var args []interface{}
 	var err error

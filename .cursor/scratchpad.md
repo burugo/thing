@@ -79,7 +79,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   Set up basic project layout (`thing/`, `thing/internal/`, `examples/`, `tests/`).
     *   Setup basic logging and configuration handling.
     *   **Success Criteria:** Project structure created (`thing` package with `thing.go`), core interfaces defined, basic build/test pipeline works.
-2.  **[ ] Database Adapter Layer:**
+2.  **[x] Database Adapter Layer:** (Initial SQLite implementation completed via Task 18)
     *   Design the `DBAdapter` interface (potentially refining `DBExecutor`).
     *   Implement initial adapter for one database (e.g., SQLite or PostgreSQL using `sqlx` or `database/sql`). `thing.go` uses placeholder logic.
     *   Implement connection pooling/management.
@@ -107,12 +107,25 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   Ensure implementations reuse cached `thing.ByID` and `thing.Query`/`CachedResult`.
     *   Integrate relationship loading with preloading.
     *   **Success Criteria:** Can define and load simple `BelongsTo` and `HasMany` relationships, leveraging cached data access.
-7.  **[~] Hooks/Events System:** (Partially addressed by `thing.go`)
+7.  **[ ] Hooks/Events System:** (Partially addressed by `thing.go`)
     *   Implement/Refine the Hooks system. (`thing.go` has definitions and integration points).
     *   Define standard lifecycle events (`BeforeCreate`, `AfterCreate`, etc.). (`thing.go` has some defined).
     *   Integrate event triggering into CRUD and potentially relationship operations.
-    *   Add tests for the hooks system.
-    *   **Success Criteria:** Users can register listeners to react to model lifecycle events; system is tested.
+    *   Add tests for the hooks system. (**Task Type: New Feature**)
+        *   [x] 7.1: Create `tests/hooks_test.go` file.
+        *   [x] 7.2: Implement Hook Tests (TDD):
+            *   Test listener registration (`RegisterListener`).
+            *   Test Before/After hooks are called during Create/Save/Delete.
+            *   Test listener receives correct model/event data.
+            *   Test listener returning error aborts the operation.
+            *   Test listener modifying data (e.g., in BeforeSave).
+            *   Test multiple listeners for the same event.
+    *   Add example usage. (**Task Type: New Feature**)
+        *   [ ] 7.3: Create and implement `examples/04_hooks/main.go`.
+    *   Verify tests and commit.
+        *   [ ] 7.4: Run all tests (`go test -v ./...`) to ensure they pass.
+        *   [ ] 7.5: Commit changes.
+    *   **Success Criteria:** Users can register listeners to react to model lifecycle events; system is tested and demonstrated with an example.
 8.  **[x] Transaction Management:** (Implementation complete, tests pass)
     *   Implement helpers/API for managing database transactions.
     *   Ensure ORM operations can be performed within a transaction.
@@ -371,6 +384,13 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - [x] 3. Fix the query builder to expand `IN` clause slices into multiple placeholders and flatten arguments.
 - [x] 4. Update documentation/comments for clarity on `IN` clause usage.
 - [x] 5. Re-run all tests to verify.
+- [x] Task 18: Refactor SQLite Adapter & Fix Tests (Completed & Verified)
+*   [ ] **Task 7: Hooks/Events System**
+    *   [x] 7.1: Create `tests/hooks_test.go`.
+    *   [x] 7.2: Implement Hook Tests (TDD).
+    *   [ ] 7.3: Create and implement `examples/04_hooks/main.go`.
+    *   [ ] 7.4: Run all tests.
+    *   [ ] 7.5: Commit changes.
 
 ## Executor's Feedback or Assistance Requests
 

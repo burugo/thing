@@ -159,15 +159,17 @@ func findChangedFieldsSimple[T any](original, updated T, info *ModelInfo) (map[s
 	}
 
 	// Get the UpdatedAt field name for special handling later
-	var updatedAtDBColName string
-	updatedAtGoFieldName := "UpdatedAt"
-	if col, ok := info.FieldToColumnMap[updatedAtGoFieldName]; ok {
-		updatedAtDBColName = col
-	}
+	/*
+		var updatedAtDBColName string
+		updatedAtGoFieldName := "UpdatedAt"
+		if col, ok := info.FieldToColumnMap[updatedAtGoFieldName]; ok {
+			updatedAtDBColName = col
+		}
+	*/
 
 	for _, fieldInfo := range info.CompareFields {
-		// Skip ignored fields, the PK field, and UpdatedAt (handled separately at the end)
-		if fieldInfo.IgnoreInDiff || fieldInfo.DBColumn == info.PkName || fieldInfo.DBColumn == updatedAtDBColName {
+		// Skip ignored fields, the PK field
+		if fieldInfo.IgnoreInDiff || fieldInfo.DBColumn == info.PkName {
 			continue
 		}
 
@@ -193,23 +195,6 @@ func findChangedFieldsSimple[T any](original, updated T, info *ModelInfo) (map[s
 
 		if !areEqual {
 			changed[fieldInfo.DBColumn] = uField.Interface()
-		}
-	}
-
-	// Exclude UpdatedAt only if it's the *sole* change
-	if updatedAtDBColName != "" && len(changed) == 0 {
-		// If changed map is empty *before* checking UpdatedAt, check UpdatedAt now.
-		for _, fieldInfo := range info.CompareFields {
-			if fieldInfo.DBColumn == updatedAtDBColName {
-				oField := originalVal.FieldByIndex(fieldInfo.Index)
-				uField := updatedVal.FieldByIndex(fieldInfo.Index)
-				if oField.IsValid() && uField.IsValid() && !reflect.DeepEqual(oField.Interface(), uField.Interface()) {
-					// UpdatedAt changed, but since it's the only potential change, we still return an empty map.
-					// changed[fieldInfo.DBColumn] = uField.Interface() // Don't actually add it
-					log.Printf("DEBUG: UpdatedAt (%s) is the only changed field, ignoring.", updatedAtDBColName)
-				}
-				break
-			}
 		}
 	}
 
