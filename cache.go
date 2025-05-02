@@ -557,3 +557,82 @@ func GenerateCacheKey(prefix, tableName string, params types.QueryParams) string
 	hash := GenerateQueryHash(normalizedParams)
 	return fmt.Sprintf("%s:%s:%s", prefix, tableName, hash)
 }
+
+type localCache struct {
+	store sync.Map // map[string]string
+	locks sync.Map // map[string]struct{}
+}
+
+var defaultLocalCache = &localCache{}
+
+func (m *localCache) Get(ctx context.Context, key string) (string, error) {
+	if v, ok := m.store.Load(key); ok {
+		if s, ok := v.(string); ok {
+			return s, nil
+		}
+	}
+	return "", nil
+}
+func (m *localCache) Set(ctx context.Context, key, value string, expiration time.Duration) error {
+	m.store.Store(key, value)
+	return nil
+}
+func (m *localCache) Delete(ctx context.Context, key string) error {
+	m.store.Delete(key)
+	return nil
+}
+func (m *localCache) Exists(key string) bool {
+	_, ok := m.store.Load(key)
+	return ok
+}
+func (m *localCache) GetModel(ctx context.Context, key string, dest interface{}) error {
+	if v, ok := m.store.Load(key); ok {
+		b, ok := v.(string)
+		if !ok {
+			return nil
+		}
+		return json.Unmarshal([]byte(b), dest)
+	}
+	return nil
+}
+func (m *localCache) SetModel(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	b, _ := json.Marshal(value)
+	m.store.Store(key, string(b))
+	return nil
+}
+func (m *localCache) DeleteModel(ctx context.Context, key string) error {
+	m.store.Delete(key)
+	return nil
+}
+func (m *localCache) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
+	if v, ok := m.store.Load(queryKey); ok {
+		b, ok := v.(string)
+		if !ok {
+			return nil, nil
+		}
+		var ids []int64
+		_ = json.Unmarshal([]byte(b), &ids)
+		return ids, nil
+	}
+	return nil, nil
+}
+func (m *localCache) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
+	b, _ := json.Marshal(ids)
+	m.store.Store(queryKey, string(b))
+	return nil
+}
+func (m *localCache) DeleteQueryIDs(ctx context.Context, queryKey string) error {
+	m.store.Delete(queryKey)
+	return nil
+}
+func (m *localCache) AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error) {
+	_, loaded := m.locks.LoadOrStore(lockKey, struct{}{})
+	return !loaded, nil
+}
+func (m *localCache) ReleaseLock(ctx context.Context, lockKey string) error {
+	m.locks.Delete(lockKey)
+	return nil
+}
+func (m *localCache) GetCacheStats(ctx context.Context) CacheStats {
+	return CacheStats{Counters: map[string]int{}}
+}
