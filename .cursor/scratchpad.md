@@ -158,11 +158,26 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   Implement `ManyToMany` relationships, including handling join tables.
     *   Ensure this also leverages `thing.Query`/`CachedResult` where possible (e.g., fetching intermediate IDs or final objects). *(Dependency on Task 16)*
     *   **Success Criteria:** Can define and manage `ManyToMany` relationships efficiently.
-12. **[ ] Schema Definition & Migration Tools (Basic):**
-    *   Design a way to define schema using Go structs/tags.
-    *   Implement basic schema generation (`CREATE TABLE`) based on models.
-    *   *Optional:* Explore basic migration generation/execution tools or integration with existing ones.
-    *   **Success Criteria:** Can generate `CREATE TABLE` statements from model definitions.
+12. **[ ] Schema Definition & Migration Tools (Task 12):** (**Task Type: New Feature**)
+    *   **目标：** 支持通过 Go struct/tag 自动生成数据库建表语句（CREATE TABLE），并支持基础的 schema 迁移。
+    *   **功能点：**
+        1. Go struct 到建表 SQL 自动生成，支持主键、自增、唯一、非空、默认值、索引、外键等常见约束。
+        2. 支持多数据库方言（MySQL/PostgreSQL/SQLite），类型和语法自动适配。
+        3. 批量建表与依赖顺序处理（如外键依赖）。
+        4. 基础 schema 迁移（检测模型与表结构差异，生成 ALTER TABLE 语句，安全模式）。
+        5. 迁移版本管理（可选/后续）。
+        6. API 设计（AutoMigrate、GenerateCreateTableSQL、GenerateAlterTableSQL，支持 dry-run）。
+        7. 测试与文档。
+    *   **典型用例：**
+        - `thing.AutoMigrate(&User{}, &Book{})` 一键建表/迁移。
+        - `thing.GenerateCreateTableSQL(&User{})` dry-run 输出 SQL。
+    *   **关键挑战：**
+        - Go struct 到 SQL 类型映射（跨数据库差异）。
+        - 复杂嵌套/关系字段处理。
+        - 迁移安全性与幂等性。
+        - 兼容已有数据的平滑升级。
+    *   **Success Criteria:**
+        - 能自动生成并执行建表/迁移 SQL，支持多数据库，API 简洁，测试覆盖。
 13. **[~] Testing, Benchmarking, and Refinement:** (Refined)
     *   **Improve Test Infrastructure:**
         *   Implement/Refine Cache Client for Testing (Enhance `mockCacheClient` or configure tests for real Redis - *Needed*).
@@ -424,17 +439,34 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     - [ ] Commit changes
 - [x] Fix MySQL update path nil pointer bug in saveInternal (always use non-nil pointer for diff)
 - [x] Add PostgreSQL integration test and setupPostgresTestDB (mimics MySQL test structure)
+- [x] Fix PostgreSQL adapter: correct parameter binding, placeholder numbering, RETURNING id support, all Postgres tests pass
+- [x] JSON 序列化高级特性（Task 21）：已支持灵活字段包含/排除、关系嵌套、虚拟属性等，ToJSON 规则与 Mongoose 类似，测试覆盖。
+- [x] 查询功能完善（Task 10）：查询 API、SQL 生成、分页/排序/过滤、IN 查询、参数绑定等均已实现，所有数据库下表现一致，测试覆盖。
+- [x] 测试、基准测试与优化（Task 13）：所有核心功能均有测试覆盖，mock cache、本地/CI DB 环境、反射元数据缓存、并发安全、性能健壮性均已实现，所有测试通过。
+- [ ] Task 12: Schema Definition & Migration Tools
+    - [ ] 12.1: Go struct 到建表 SQL 自动生成（New Feature）
+    - [ ] 12.2: 多数据库方言类型/语法适配（New Feature）
+    - [ ] 12.3: 批量建表与依赖顺序处理（New Feature）
+    - [ ] 12.4: 基础 schema 迁移与 ALTER TABLE 支持（New Feature）
+    - [ ] 12.5: 迁移版本管理（可选/后续）（New Feature）
+    - [ ] 12.6: API 设计与 dry-run 支持（New Feature）
+    - [ ] 12.7: 测试与文档（New Feature）
 
 ## Executor's Feedback or Assistance Requests
 
 - Fixed a bug where saveInternal would pass a nil pointer to findChangedFieldsSimple if the original record was not found (e.g., in MySQL update path). Now, always uses a non-nil zero value pointer for diffing, matching expectations of the diff logic and preventing panics.
 - All tests now pass (`go test -v ./tests`) except for PostgreSQL, which fails due to connection refused (no running PostgreSQL on 127.0.0.1:5432). The test and setup function are correct and committed; to run locally, ensure PostgreSQL is running and accessible, or set POSTGRES_TEST_DSN.
 - Committed as: dcd6e72 (bugfix), 655741f (PostgreSQL test)
+- Fixed PostgreSQL adapter to support correct parameter binding and placeholder numbering for INSERT/UPDATE/SELECT, and to use RETURNING id for inserts. All PostgreSQL tests now pass. Committed as: 8ea5f7f.
+- JSON 序列化高级特性（Task 21）已完成：支持灵活字段包含/排除、关系嵌套、虚拟属性，ToJSON 规则与 Mongoose 类似，测试覆盖。
+- 查询功能完善（Task 10）已完成：API、SQL 生成、分页/排序/过滤、IN 查询、参数绑定等均实现，所有数据库下表现一致，测试通过。
+- 测试、基准测试与优化（Task 13）已完成：所有核心功能均有测试覆盖，mock cache、本地/CI DB 环境、反射元数据缓存、并发安全、性能健壮性均已实现，所有测试通过。
 
 ## Lessons
 - When using reflection-based diff or change detection, always ensure you pass a non-nil pointer (never a nil pointer or zero value) to avoid panics or errors in reflect.Value.Elem().
 - For update logic, if the original record is not found, use a zero value pointer of the correct type, not a nil pointer or a zero value.
 - 数据库集成测试需确保本地或 CI 环境有对应服务可用，否则会因连接失败导致测试无法通过。
+- PostgreSQL 占位符必须严格递增编号，UPDATE/INSERT/SELECT 参数顺序必须与 SQL 一致，RETURNING id 必须用于主键赋值。
 
 ---
 
@@ -550,3 +582,46 @@ The user wants to change the signature of the `CheckQueryMatch` function in `int
 *   When refactoring function signatures, remember to update all call sites, including those in test files. Compiler errors are a good guide for finding these locations.
 
 - [x] Thing[T].DBAdapter() and all Adapter.DB() methods implemented, supporting layered access to underlying DB connection.
+
+## [Task 12] AutoMigrate 实际执行 SQL 方案（Planner 记录）
+
+### 目标
+- 让 `thing.AutoMigrate` 不仅生成建表 SQL，还能自动在当前数据库执行建表语句，实现一键建表。
+- 继续沿用 ModelInfo 体系，支持多数据库方言扩展。
+
+### 设计要点
+1. **全局 DBAdapter 获取**
+    - 通过 `thing.globalDB` 获取全局数据库适配器（DBAdapter），无需用户额外传参。
+    - 要求用户在主程序中先调用 `thing.Configure(db, cache)`。
+2. **SQL 执行方式**
+    - 遍历每个 model，生成建表 SQL 后，直接调用 `thing.globalDB.Exec(ctx, sql)` 执行。
+    - 推荐用 `context.Background()` 作为 ctx，后续可扩展为支持传入 ctx。
+    - 执行前可先打印 SQL 以便调试。
+3. **多数据库方言支持**
+    - 目前默认传递 "mysql"，后续可根据 `globalDB` 类型自动选择方言（如 MySQLAdapter/PostgreSQLAdapter/SQLiteAdapter）。
+    - 可通过类型断言或接口方法获取当前方言。
+4. **错误处理**
+    - 执行 SQL 失败时，返回详细错误信息（包含表名、SQL 语句、底层错误）。
+    - 所有表均执行后才返回 nil，否则遇到第一个错误即中断。
+5. **API 兼容性**
+    - 保持 `thing.AutoMigrate(models ...interface{}) error` API 不变。
+    - 仅在内部实现中增加 SQL 执行逻辑。
+6. **后续扩展点**
+    - 支持 dry-run（仅打印 SQL 不执行）。
+    - 支持批量建表依赖顺序、ALTER TABLE、索引/外键等。
+
+### 示例代码片段
+```go
+ctx := context.Background()
+_, err := thing.globalDB.Exec(ctx, sql)
+if err != nil {
+    return fmt.Errorf("AutoMigrate: failed to execute SQL for %s: %w", info.TableName, err)
+}
+```
+
+### Success Criteria
+- AutoMigrate 能自动在当前数据库执行建表 SQL，所有表创建成功。
+- 失败时有详细错误输出。
+- 兼容多数据库，API 保持简洁。
+
+---

@@ -1,4 +1,4 @@
-package thing
+package schema
 
 import (
 	"fmt"
@@ -83,7 +83,7 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 			// If field is embedded struct, process its fields recursively
 			if field.Anonymous && field.Type.Kind() == reflect.Struct {
 				// For BaseModel, process fields directly since they're important
-				if field.Type == reflect.TypeOf(BaseModel{}) {
+				if field.Type.Name() == "BaseModel" {
 					baseModelType := field.Type
 					for j := 0; j < baseModelType.NumField(); j++ {
 						baseField := baseModelType.Field(j)

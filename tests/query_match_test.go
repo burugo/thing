@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 	"thing/internal/cache"
+	"thing/internal/schema"
 	"thing/internal/types"
 
 	"github.com/stretchr/testify/require"
@@ -33,7 +34,7 @@ func (m MatchTestModel) TableName() string {
 
 func TestCheckQueryMatch(t *testing.T) {
 	// Get ModelInfo for the test model
-	modelInfo, err := thing.GetCachedModelInfo(reflect.TypeOf(MatchTestModel{}))
+	modelInfo, err := schema.GetCachedModelInfo(reflect.TypeOf(MatchTestModel{}))
 	require.NoError(t, err)
 	require.NotNil(t, modelInfo)
 

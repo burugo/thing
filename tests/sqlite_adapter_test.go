@@ -11,6 +11,7 @@ import (
 	"thing" // For QueryParams used in GetCount test
 	"thing/common"
 	"thing/internal/drivers/db/sqlite"
+	"thing/internal/schema"
 	"thing/internal/types"
 
 	_ "github.com/mattn/go-sqlite3" // Import driver
@@ -230,7 +231,7 @@ func TestSQLiteAdapter_GetCount(t *testing.T) {
 	require.NoError(t, err)
 
 	// Minimal ModelInfo needed for GetCount (TableName)
-	info := &thing.ModelInfo{TableName: "test_items"}
+	info := &schema.ModelInfo{TableName: "test_items"}
 	params := types.QueryParams{Where: "name = ?", Args: []interface{}{"CountMe"}}
 
 	count, err := adapter.GetCount(ctx, info, params)

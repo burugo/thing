@@ -12,6 +12,8 @@ import (
 	"thing/internal/types"
 	"time"
 
+	"thing/internal/schema"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -304,7 +306,7 @@ func TestCachedResult_First(t *testing.T) {
 // Helper to generate list cache key for testing
 func testGenerateListCacheKey[T thing.Model](t *testing.T, instance *thing.Thing[T], params types.QueryParams) string {
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
-	info, err := thing.GetCachedModelInfo(modelType)
+	info, err := schema.GetCachedModelInfo(modelType)
 	require.NoError(t, err)
 	return thing.GenerateCacheKey("list", info.TableName, params)
 }
@@ -312,7 +314,7 @@ func testGenerateListCacheKey[T thing.Model](t *testing.T, instance *thing.Thing
 // Helper to generate count cache key for testing
 func testGenerateCountCacheKey[T thing.Model](t *testing.T, instance *thing.Thing[T], params types.QueryParams) string {
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
-	info, err := thing.GetCachedModelInfo(modelType)
+	info, err := schema.GetCachedModelInfo(modelType)
 	require.NoError(t, err)
 	return thing.GenerateCacheKey("count", info.TableName, params)
 }

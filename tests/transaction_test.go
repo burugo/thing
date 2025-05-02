@@ -2,6 +2,7 @@ package thing_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"thing/internal/types"
 	"time"
@@ -9,7 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	thing "thing"
+	"thing/internal/schema"
 )
 
 // TestTransaction_Commit verifies that operations within a committed transaction persist.
@@ -123,12 +124,9 @@ func TestTransaction_Rollback(t *testing.T) {
 
 	// 5b. Check if the temporary user exists using DBAdapter.GetCount
 	// Construct minimal ModelInfo needed for GetCount
-	userInfo := &thing.ModelInfo{
-		TableName: "users",
-		// Columns might not be strictly needed if GetCount only uses TableName and Where
-		// Columns: []string{"id", "name", "email", "created_at", "updated_at"},
-	}
-	tempUserCount, dbErr := dbAdapter.GetCount(ctx, userInfo, types.QueryParams{Where: "email = ?", Args: []interface{}{newUserTx.Email}})
+	info, err := schema.GetCachedModelInfo(reflect.TypeOf(User{}))
+	require.NoError(t, err, "Failed to get cached model info")
+	tempUserCount, dbErr := dbAdapter.GetCount(ctx, info, types.QueryParams{Where: "email = ?", Args: []interface{}{newUserTx.Email}})
 	require.NoError(t, dbErr, "Failed to count temp user after rollback")
 	assert.Zero(t, tempUserCount, "Temporary user created in transaction should not exist after rollback")
 }

@@ -74,3 +74,11 @@ func IsZero(v reflect.Value) bool {
 		return reflect.DeepEqual(v.Interface(), zero.Interface())
 	}
 }
+
+// ToPtr returns a pointer to the given value (if not already a pointer)
+func ToPtr[T any](v T) *T {
+	if ptr, ok := any(v).(*T); ok {
+		return ptr
+	}
+	return &v
+}

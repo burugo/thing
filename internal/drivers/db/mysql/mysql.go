@@ -12,6 +12,7 @@ import (
 
 	"thing"
 	"thing/common"
+	"thing/internal/schema"
 	"thing/internal/sqlbuilder"
 	"thing/internal/types"
 
@@ -285,7 +286,7 @@ func (a *MySQLAdapter) Exec(ctx context.Context, query string, args ...interface
 }
 
 // GetCount executes a SELECT COUNT(*) query based on the provided parameters.
-func (a *MySQLAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params types.QueryParams) (int64, error) {
+func (a *MySQLAdapter) GetCount(ctx context.Context, info *schema.ModelInfo, params types.QueryParams) (int64, error) {
 	log.Printf("DB GetCount (MySQL): Info=%+v, Params=%+v", info, params)
 	if a.db == nil {
 		return 0, fmt.Errorf("mysql adapter database is nil")

@@ -16,6 +16,7 @@ import (
 
 	"thing/common" // Added import for common errors/constants
 	"thing/internal/cache"
+	"thing/internal/schema"
 	"thing/internal/types" // Import internal cache package
 	"thing/internal/utils"
 	// "thing/internal/helpers" // Removed import
@@ -110,7 +111,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 		modelVal = modelVal.Elem()
 	}
 	modelType := modelVal.Type()
-	info, err := GetCachedModelInfo(modelType)
+	info, err := schema.GetCachedModelInfo(modelType)
 	if err != nil {
 		log.Printf("ERROR: Failed to get model metadata for cache invalidation: %v", err)
 		return

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"     // For placeholder logging
 	"reflect" // Added for parsing env var
+	"thing/internal/schema"
 	"thing/internal/sqlbuilder"
 )
 
@@ -23,7 +24,7 @@ type Thing[T Model] struct {
 	db      DBAdapter
 	cache   CacheClient
 	ctx     context.Context
-	info    *ModelInfo             // Pre-computed metadata for type T
+	info    *schema.ModelInfo      // Pre-computed metadata for type T
 	builder *sqlbuilder.SQLBuilder // Add builder field
 }
 
@@ -46,7 +47,7 @@ func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 	// Pre-compute model info for T
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
 	log.Printf("DEBUG: New[T] - Getting model info for type: %s", modelType.Name()) // Added log
-	info, err := GetCachedModelInfo(modelType)                                      // Renamed: getCachedModelInfo -> GetCachedModelInfo
+	info, err := schema.GetCachedModelInfo(modelType)
 	if err != nil {
 		log.Printf("DEBUG: New[T] - Error getting model info: %v", err) // Added log
 		return nil, fmt.Errorf("failed to get model info for type %s: %w", modelType.Name(), err)
@@ -101,4 +102,9 @@ func (t *Thing[T]) WithContext(ctx context.Context) *Thing[T] { // Returns *Thin
 // DBAdapter returns the underlying DBAdapter for advanced use cases.
 func (t *Thing[T]) DBAdapter() DBAdapter {
 	return t.db
+}
+
+// GlobalDB returns the global DBAdapter (for internal use, e.g., AutoMigrate)
+func GlobalDB() DBAdapter {
+	return globalDB
 }

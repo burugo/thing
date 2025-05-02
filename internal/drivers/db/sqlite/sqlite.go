@@ -12,7 +12,8 @@ import (
 	"thing/internal/types"
 	"time"
 
-	"thing/common"              // Added import
+	"thing/common" // Added import
+	"thing/internal/schema"
 	"thing/internal/sqlbuilder" // Added import for SQLBuilder
 
 	// "github.com/jmoiron/sqlx" // Removed sqlx import
@@ -267,7 +268,7 @@ func (a *SQLiteAdapter) Exec(ctx context.Context, query string, args ...interfac
 }
 
 // GetCount executes a SELECT COUNT(*) query based on the provided parameters.
-func (a *SQLiteAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params types.QueryParams) (int64, error) {
+func (a *SQLiteAdapter) GetCount(ctx context.Context, info *schema.ModelInfo, params types.QueryParams) (int64, error) {
 	if a.isClosed() {
 		return 0, fmt.Errorf("adapter is closed")
 	}

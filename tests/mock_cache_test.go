@@ -10,6 +10,7 @@ import (
 	"thing"
 	"thing/common"
 	"thing/internal/drivers/db/sqlite"
+	"thing/internal/schema"
 	"thing/internal/types"
 	"time"
 
@@ -493,7 +494,7 @@ func (m *mockDBAdapter) Exec(ctx context.Context, query string, args ...interfac
 	return m.SQLiteAdapter.Exec(ctx, query, args...)
 }
 
-func (m *mockDBAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params types.QueryParams) (int64, error) {
+func (m *mockDBAdapter) GetCount(ctx context.Context, info *schema.ModelInfo, params types.QueryParams) (int64, error) {
 	m.GetCountCalls++
 	return m.SQLiteAdapter.GetCount(ctx, info, params)
 }

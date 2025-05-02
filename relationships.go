@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"thing/common"
+	"thing/internal/schema"
 	"thing/internal/types"
 )
 
@@ -189,7 +190,7 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 	log.Printf("Collected %d unique foreign keys for %s: %v", len(uniqueFkList), field.Name, uniqueFkList)
 
 	// --- Fetch Related Models (Type R) using the internal helper ---
-	relatedInfo, err := GetCachedModelInfo(relatedModelType)
+	relatedInfo, err := schema.GetCachedModelInfo(relatedModelType)
 	if err != nil {
 		return fmt.Errorf("failed to get model info for related type %s: %w", relatedModelType.Name(), err)
 	}
@@ -297,7 +298,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 	log.Printf("Collected %d unique local keys for %s: %v", len(uniqueLkList), field.Name, uniqueLkList)
 
 	// --- Step 1: Get Related Model IDs ---
-	relatedInfo, err := GetCachedModelInfo(relatedModelType)
+	relatedInfo, err := schema.GetCachedModelInfo(relatedModelType)
 	if err != nil {
 		return fmt.Errorf("failed to get model info for related type %s: %w", relatedModelType.Name(), err)
 	}

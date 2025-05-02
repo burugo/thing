@@ -12,6 +12,7 @@ import (
 
 	// Import internal cache package
 	"thing/common"
+	"thing/internal/schema"
 	"thing/internal/utils"
 )
 
@@ -26,7 +27,7 @@ const (
 // handling cache checks, database queries for misses, and caching results.
 // It requires the concrete modelType to instantiate objects and slices correctly.
 // REMOVED TTL arguments
-func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapter, modelInfo *ModelInfo, modelType reflect.Type, ids []int64) (map[int64]reflect.Value, error) {
+func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapter, modelInfo *schema.ModelInfo, modelType reflect.Type, ids []int64) (map[int64]reflect.Value, error) {
 	resultMap := make(map[int64]reflect.Value)
 	if len(ids) == 0 {
 		return resultMap, nil
@@ -302,14 +303,14 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 			// If not found, use a non-nil zero value pointer for original
 			original = utils.NewPtr[T]() // Ensure original is a non-nil pointer
 			setUpdatedAtTimestamp(value, now)
-			changedFields, err = findChangedFieldsSimple(original, value, t.info)
+			changedFields, err = findChangedFieldsSimple[T](&original, utils.ToPtr(value), t.info)
 			if err != nil {
 				return fmt.Errorf("failed to find changed fields: %w", err)
 			}
 			// Proceed with update as if all fields changed (or skip, depending on policy)
 		} else {
 			setUpdatedAtTimestamp(value, now)
-			changedFields, err = findChangedFieldsSimple(original, value, t.info) // Use simple diff, pass T
+			changedFields, err = findChangedFieldsSimple[T](&original, utils.ToPtr(value), t.info)
 			if err != nil {
 				return fmt.Errorf("failed to find changed fields: %w", err)
 			}
