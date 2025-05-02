@@ -1,4 +1,15 @@
-# thing
+# Thing ORM: High-Performance, Developer-Friendly Go ORM
+
+**Thing ORM** is a high-performance, open-source Object-Relational Mapper for Go, designed to provide:
+
+- **Multi-Database Support:** Out-of-the-box compatibility with MySQL, PostgreSQL, and SQLite, with a unified API and automatic SQL dialect adaptation.
+- **Integrated, Configurable Caching:** Built-in support for Redis and in-memory caching to optimize both single-entity and list queries, with robust cache invalidation and monitoring.
+- **Simple, Efficient CRUD and List Queries:** Focused on the most common application patterns—thread-safe Create, Read, Update, Delete, and efficient list retrieval with filtering, ordering, and pagination. 
+- **Explicit Scope:** Intentionally excludes complex SQL features such as JOINs, aggregations, GROUP BY, and HAVING, to keep the API simple and performance predictable.
+- **Elegant, Developer-Friendly API:** Clean, extensible, and idiomatic Go API, with flexible JSON serialization, relationship management, and hooks/events system.
+- **Open Source and Community-Ready:** Well-documented, thoroughly tested, and designed for easy adoption and contribution by the Go community.
+
+> **Thing ORM** is ideal for projects that need fast, reliable, and maintainable data access without the overhead of a full-featured SQL builder. It empowers developers to build scalable applications with minimal boilerplate and maximum control over caching and serialization.
 
 ## Flexible JSON Serialization (Key Feature)
 
@@ -166,6 +177,36 @@ if err != nil {
 
 - 迁移时会自动生成 CREATE TABLE 和 CREATE INDEX/UNIQUE INDEX 语句。
 - 支持多模型批量迁移：`thing.AutoMigrate(&User{}, &Book{})`
+
+## Quick Start: Initialization and Cache Selection
+
+You can initialize a Thing ORM instance with flexible cache options:
+
+### 1. Use Default Local (In-Memory) Cache (No Redis Required)
+```go
+userThing, err := thing.New[*User](db) // Uses built-in localCache automatically
+```
+- Suitable for development, testing, or single-node deployments.
+- No external cache dependency.
+
+### 2. Use External Cache (e.g., Redis)
+```go
+userThing, err := thing.New[*User](db, redisCache)
+```
+- Pass any implementation of `thing.CacheClient` (e.g., Redis, Memcached).
+- Recommended for production/distributed deployments.
+
+### 3. Multiple Caches (Future: Load Balancing/Failover)
+```go
+userThing, err := thing.New[*User](db, cache1, cache2)
+```
+- Currently, only the first cache is used.
+- Future versions may support load balancing or failover across multiple caches.
+
+> **Tip:** You can always pass `nil` as the cache argument to force fallback to localCache:
+> ```go
+> userThing, err := thing.New[*User](db, nil) // Same as omitting cache
+> ```
 
 
 

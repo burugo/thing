@@ -130,7 +130,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   Implement helpers/API for managing database transactions.
     *   Ensure ORM operations can be performed within a transaction.
     *   **Success Criteria:** Can execute multiple ORM operations within a single DB transaction.
-9.  **[ ] Adding Support for More Databases (MySQL, PostgreSQL):** (**Task Type: New Feature**)
+9.  **[*] Adding Support for More Databases (MySQL, PostgreSQL):** (**Task Type: New Feature**)
     *   Implement `DBAdapter` for the remaining target databases.
     *   Refactor SQL generation to handle dialect differences.
     *   Test all features against all supported databases.
@@ -145,9 +145,9 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
         *   [x] 9.8: (Optional) Create SQL builder/helper utils for dialect differences (placeholders, simple statements, specific columns in SELECT).
         *   [x] 9.9: (Optional) Update `thing.Configure` or add functions to select/configure adapters.
         *   [x] 9.10: Set up local/Docker test environments for MySQL & PostgreSQL.
-        *   [ ] 9.11: Run full test suite (`./tests`) against MySQL, fix failures.
-        *   [ ] 9.12: Run full test suite (`./tests`) against PostgreSQL, fix failures.
-        *   [ ] 9.13: Commit
+        *   [*] 9.11: Run full test suite (`./tests`) against MySQL, fix failures.
+        *   [*] 9.12: Run full test suite (`./tests`) against PostgreSQL, fix failures.
+        *   [*] 9.13: Commit
     *   **Success Criteria:** All ORM features work consistently across MySQL, PostgreSQL, and SQLite. All tests in `./tests` pass on all three databases.
     *   [x] Configuration now matches mainstream ORM: user initializes Adapter and CacheClient in main and passes to Thing ORM.
 10. **[ ] Querying Refinements:** (Scope Reduced)
