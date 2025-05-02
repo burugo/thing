@@ -277,11 +277,12 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
         *   **[x] Implement `SQLiteTx.Rollback`
         *   **[x] Refactor `getFieldPointers` for `database/sql`.
         *   **[x] Update tests `TestTransaction_Commit`, `TestTransaction_Rollback`, `TestTransaction_Select` to use standard library types/methods.
-        *   **[~] Debug transaction tests:** `TestTransaction_Commit`, `TestTransaction_Rollback`, `TestTransaction_Select` are failing. Need to investigate why changes within the transaction aren't persisting or rolling back as expected.
+        *   **[x] Debug transaction tests:** `TestTransaction_Commit`, `TestTransaction_Rollback`, `TestTransaction_Select` are failing. Need to investigate why changes within the transaction aren't persisting or rolling back as expected.
             *   Hypothesis 1: Issue with `BeginTx` or `Commit`/`Rollback` implementation in the adapter.
             *   Hypothesis 2: Issue with how the transaction context (`sql.Tx`) is used in `Get`/`Select`/`Exec`.
             *   Hypothesis 3: Issue with test logic itself after refactor.
             *   **Next Step:** Run individual transaction tests with `-v` to get detailed logs.
+            *   **Fixed:** Root cause identified as incorrect parsing of `db` tags (e.g., `"id,pk"`) in `getStructFieldMap`. Corrected the parsing logic.
         *   **Success Criteria:** All adapter methods implemented using `database/sql`. All transaction tests pass. `sqlx` dependency removed.
 19. **[x] Extend `CheckQueryMatch` for Comparison Operators:** *(New Task - Completed)*
     *   **Goal:** Add support for `>`, `<`, `>=`, `<=`, `IN` operators.
