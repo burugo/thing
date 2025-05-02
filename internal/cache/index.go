@@ -28,9 +28,9 @@ type CacheIndex struct {
 	// Example: valueIndex["users"]["user_id"]["42"] = {"list:users:hash1": true, ...}
 	valueIndex map[string]map[string]map[string]map[string]bool
 
-	// fieldIndex maps table -> field -> set of cache keys (for fallback, e.g. range queries)
-	// Example: fieldIndex["users"]["age"] = {"list:users:hash2": true, ...}
-	fieldIndex map[string]map[string]map[string]bool
+	// FieldIndex maps table -> field -> set of cache keys (for fallback, e.g. range queries)
+	// Example: FieldIndex["users"]["age"] = {"list:users:hash2": true, ...}
+	FieldIndex map[string]map[string]map[string]bool
 
 	mu sync.RWMutex // Protects access to all maps
 }
@@ -41,7 +41,7 @@ func NewCacheIndex() *CacheIndex {
 		tableToQueries: make(map[string]map[string]bool),
 		keyToParams:    make(map[string]QueryParams),
 		valueIndex:     make(map[string]map[string]map[string]map[string]bool),
-		fieldIndex:     make(map[string]map[string]map[string]bool),
+		FieldIndex:     make(map[string]map[string]map[string]bool),
 	}
 }
 
@@ -87,13 +87,13 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params QueryPar
 	// --- 新增: 注册字段级索引 ---
 	fields := extractAllWhereFields(params)
 	for _, field := range fields {
-		if _, ok := idx.fieldIndex[tableName]; !ok {
-			idx.fieldIndex[tableName] = make(map[string]map[string]bool)
+		if _, ok := idx.FieldIndex[tableName]; !ok {
+			idx.FieldIndex[tableName] = make(map[string]map[string]bool)
 		}
-		if _, ok := idx.fieldIndex[tableName][field]; !ok {
-			idx.fieldIndex[tableName][field] = make(map[string]bool)
+		if _, ok := idx.FieldIndex[tableName][field]; !ok {
+			idx.FieldIndex[tableName][field] = make(map[string]bool)
 		}
-		idx.fieldIndex[tableName][field][cacheKey] = true
+		idx.FieldIndex[tableName][field][cacheKey] = true
 	}
 }
 

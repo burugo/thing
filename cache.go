@@ -21,7 +21,7 @@ import (
 
 // --- Cache Constants ---
 const (
-	// Represents a non-existent entry in the cache, similar to PHP's NoneResult
+	// Represents a non-existent entry in the cache
 	NoneResult = "NoneResult"
 	// Lock duration
 	LockDuration   = 5 * time.Second
@@ -105,8 +105,55 @@ func (t *Thing[T]) updateAffectedQueryCaches(ctx context.Context, model T, origi
 	}
 	tableName := t.info.TableName
 
-	// 1. Get potentially affected query keys from the index
-	queryCacheKeys := cache.GlobalCacheIndex.GetPotentiallyAffectedQueries(tableName)
+	// --- New: Use valueIndex/fieldIndex for more precise cache invalidation ---
+	modelVal := reflect.ValueOf(model)
+	if modelVal.Kind() == reflect.Ptr {
+		modelVal = modelVal.Elem()
+	}
+	modelType := modelVal.Type()
+	info, err := GetCachedModelInfo(modelType)
+	if err != nil {
+		log.Printf("ERROR: Failed to get model metadata for cache invalidation: %v", err)
+		return
+	}
+
+	// Collect all field values for this model
+	fieldValues := make(map[string]interface{})
+	for _, f := range info.CompareFields {
+		v := modelVal.FieldByIndex(f.Index)
+		fieldValues[f.DBColumn] = v.Interface()
+	}
+
+	// Use valueIndex for exact match fields
+	cacheKeySet := make(map[string]struct{})
+	for col, val := range fieldValues {
+		keys := cache.GlobalCacheIndex.GetKeysByValue(tableName, col, val)
+		for _, k := range keys {
+			cacheKeySet[k] = struct{}{}
+		}
+	}
+	// Use fieldIndex for range/other queries
+	if cache.GlobalCacheIndex != nil && cache.GlobalCacheIndex.FieldIndex != nil {
+		for col := range fieldValues {
+			if fieldMap, ok := cache.GlobalCacheIndex.FieldIndex[tableName]; ok {
+				if keyMap, ok := fieldMap[col]; ok {
+					for k := range keyMap {
+						cacheKeySet[k] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+	// Fallback: union with GetPotentiallyAffectedQueries
+	for _, k := range cache.GlobalCacheIndex.GetPotentiallyAffectedQueries(tableName) {
+		cacheKeySet[k] = struct{}{}
+	}
+	// Convert set to slice
+	queryCacheKeys := make([]string, 0, len(cacheKeySet))
+	for k := range cacheKeySet {
+		queryCacheKeys = append(queryCacheKeys, k)
+	}
+
 	if len(queryCacheKeys) == 0 {
 		log.Printf("DEBUG: No query caches registered for table '%s', skipping incremental update for ID %d", tableName, id)
 		return
@@ -400,8 +447,55 @@ func (t *Thing[T]) handleDeleteInQueryCaches(ctx context.Context, model T) {
 	}
 	tableName := t.info.TableName
 
-	// 1. Get potentially affected query keys from the index
-	queryCacheKeys := cache.GlobalCacheIndex.GetPotentiallyAffectedQueries(tableName)
+	// --- New: Use valueIndex/fieldIndex for more precise cache invalidation ---
+	modelVal := reflect.ValueOf(model)
+	if modelVal.Kind() == reflect.Ptr {
+		modelVal = modelVal.Elem()
+	}
+	modelType := modelVal.Type()
+	info, err := GetCachedModelInfo(modelType)
+	if err != nil {
+		log.Printf("ERROR: Failed to get model metadata for cache invalidation: %v", err)
+		return
+	}
+
+	// Collect all field values for this model
+	fieldValues := make(map[string]interface{})
+	for _, f := range info.CompareFields {
+		v := modelVal.FieldByIndex(f.Index)
+		fieldValues[f.DBColumn] = v.Interface()
+	}
+
+	// Use valueIndex for exact match fields
+	cacheKeySet := make(map[string]struct{})
+	for col, val := range fieldValues {
+		keys := cache.GlobalCacheIndex.GetKeysByValue(tableName, col, val)
+		for _, k := range keys {
+			cacheKeySet[k] = struct{}{}
+		}
+	}
+	// Use fieldIndex for range/other queries
+	if cache.GlobalCacheIndex != nil && cache.GlobalCacheIndex.FieldIndex != nil {
+		for col := range fieldValues {
+			if fieldMap, ok := cache.GlobalCacheIndex.FieldIndex[tableName]; ok {
+				if keyMap, ok := fieldMap[col]; ok {
+					for k := range keyMap {
+						cacheKeySet[k] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+	// Fallback: union with GetPotentiallyAffectedQueries
+	for _, k := range cache.GlobalCacheIndex.GetPotentiallyAffectedQueries(tableName) {
+		cacheKeySet[k] = struct{}{}
+	}
+	// Convert set to slice
+	queryCacheKeys := make([]string, 0, len(cacheKeySet))
+	for k := range cacheKeySet {
+		queryCacheKeys = append(queryCacheKeys, k)
+	}
+
 	if len(queryCacheKeys) == 0 {
 		log.Printf("DEBUG: No query caches registered for table '%s', skipping incremental delete update for ID %d", tableName, id)
 		return
