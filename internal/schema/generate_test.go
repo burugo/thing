@@ -65,3 +65,71 @@ func TestGenerateAlterTableSQL(t *testing.T) {
 		t.Error("expected unique index for 'email'")
 	}
 }
+
+func TestGenerateAlterTableSQL_MySQL(t *testing.T) {
+	modelInfo := mockModelInfo()
+	tableInfo := mockTableInfo()
+
+	sqls, err := GenerateAlterTableSQL(modelInfo, tableInfo, "mysql")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundAdd := false
+	foundDrop := false
+	foundUnique := false
+	for _, sql := range sqls {
+		if sql == "ALTER TABLE users ADD COLUMN name VARCHAR(255)" {
+			foundAdd = true
+		}
+		if sql == "ALTER TABLE users DROP COLUMN username" {
+			foundDrop = true
+		}
+		if sql == "CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email ON users (email)" {
+			foundUnique = true
+		}
+	}
+	if !foundAdd {
+		t.Error("expected add column for 'name' (MySQL)")
+	}
+	if !foundDrop {
+		t.Error("expected drop column for 'username' (MySQL)")
+	}
+	if !foundUnique {
+		t.Error("expected unique index for 'email' (MySQL)")
+	}
+}
+
+func TestGenerateAlterTableSQL_Postgres(t *testing.T) {
+	modelInfo := mockModelInfo()
+	tableInfo := mockTableInfo()
+
+	sqls, err := GenerateAlterTableSQL(modelInfo, tableInfo, "postgres")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	foundAdd := false
+	foundDrop := false
+	foundUnique := false
+	for _, sql := range sqls {
+		if sql == "ALTER TABLE users ADD COLUMN name VARCHAR(255)" {
+			foundAdd = true
+		}
+		if sql == "ALTER TABLE users DROP COLUMN username" {
+			foundDrop = true
+		}
+		if sql == "CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email ON users (email)" {
+			foundUnique = true
+		}
+	}
+	if !foundAdd {
+		t.Error("expected add column for 'name' (Postgres)")
+	}
+	if !foundDrop {
+		t.Error("expected drop column for 'username' (Postgres)")
+	}
+	if !foundUnique {
+		t.Error("expected unique index for 'email' (Postgres)")
+	}
+}
