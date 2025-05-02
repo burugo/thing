@@ -3,6 +3,7 @@ package sql
 import (
 	"fmt"
 	"log"
+	"reflect"
 	"strings"
 	"thing/internal/cache"
 )
@@ -45,8 +46,12 @@ func BuildSelectIDsSQL(tableName string, pkName string, params cache.QueryParams
 	}
 
 	if whereClause != "" {
+		// Expand IN (?) with slice args to IN (?, ?, ...)
+		expandedWhere, expandedArgs := expandInClauses(whereClause, params.Args)
 		query.WriteString(" WHERE ")
-		query.WriteString(whereClause)
+		query.WriteString(expandedWhere)
+		args = append(args, expandedArgs...)
+	} else {
 		args = append(args, params.Args...)
 	}
 
@@ -55,4 +60,70 @@ func BuildSelectIDsSQL(tableName string, pkName string, params cache.QueryParams
 		query.WriteString(params.Order)
 	}
 	return query.String(), args
+}
+
+// expandInClauses replaces IN (?) with the correct number of placeholders and flattens slice args.
+func expandInClauses(where string, args []interface{}) (string, []interface{}) {
+	var newWhere strings.Builder
+	newArgs := make([]interface{}, 0, len(args))
+	argIdx := 0
+	conditions := strings.Split(where, " AND ")
+	for i, cond := range conditions {
+		if i > 0 {
+			newWhere.WriteString(" AND ")
+		}
+		cond = strings.TrimSpace(cond)
+		// Preserve parentheses around the condition
+		openParen := strings.HasPrefix(cond, "(")
+		closeParen := strings.HasSuffix(cond, ")")
+		coreCond := cond
+		if openParen {
+			coreCond = coreCond[1:]
+		}
+		if closeParen && len(coreCond) > 0 {
+			coreCond = coreCond[:len(coreCond)-1]
+		}
+		if strings.Contains(coreCond, "IN (?)") && argIdx < len(args) {
+			prefix := coreCond[:strings.Index(coreCond, "IN (?)")+2] // up to 'IN'
+			arg := args[argIdx]
+			sliceVal := reflect.ValueOf(arg)
+			if sliceVal.Kind() == reflect.Slice || sliceVal.Kind() == reflect.Array {
+				n := sliceVal.Len()
+				if n == 0 {
+					// IN () is invalid SQL, but we can use IN (NULL) to ensure no match
+					coreCond = prefix + "(NULL)"
+				} else {
+					placeholders := make([]string, n)
+					for j := 0; j < n; j++ {
+						placeholders[j] = "?"
+						newArgs = append(newArgs, sliceVal.Index(j).Interface())
+					}
+					coreCond = prefix + "(" + strings.Join(placeholders, ", ") + ")"
+				}
+				argIdx++
+				// Re-wrap with parentheses if needed
+				if openParen {
+					coreCond = "(" + coreCond
+				}
+				if closeParen {
+					coreCond = coreCond + ")"
+				}
+				newWhere.WriteString(coreCond)
+				continue
+			}
+		}
+		// Not an IN clause, or not a slice arg
+		if openParen {
+			coreCond = "(" + coreCond
+		}
+		if closeParen {
+			coreCond = coreCond + ")"
+		}
+		newWhere.WriteString(coreCond)
+		if argIdx < len(args) {
+			newArgs = append(newArgs, args[argIdx])
+			argIdx++
+		}
+	}
+	return newWhere.String(), newArgs
 }
