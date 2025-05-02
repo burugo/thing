@@ -22,7 +22,16 @@ type CacheIndex struct {
 	// This is needed to evaluate if a changed model matches the query conditions.
 	keyToParams map[string]QueryParams
 
-	mu sync.RWMutex // Protects access to both maps
+	// valueIndex maps table -> field -> value (as string) -> set of cache keys.
+	// Only for exact match ("=", "IN") queries. Used for高效失效定位。
+	// Example: valueIndex["users"]["user_id"]["42"] = {"list:users:hash1": true, ...}
+	valueIndex map[string]map[string]map[string]map[string]bool
+
+	// fieldIndex maps table -> field -> set of cache keys (for fallback, e.g. range queries)
+	// Example: fieldIndex["users"]["age"] = {"list:users:hash2": true, ...}
+	fieldIndex map[string]map[string]map[string]bool
+
+	mu sync.RWMutex // Protects access to all maps
 }
 
 // NewCacheIndex creates and initializes a new CacheIndex.
@@ -30,6 +39,8 @@ func NewCacheIndex() *CacheIndex {
 	return &CacheIndex{
 		tableToQueries: make(map[string]map[string]bool),
 		keyToParams:    make(map[string]QueryParams),
+		valueIndex:     make(map[string]map[string]map[string]map[string]bool),
+		fieldIndex:     make(map[string]map[string]map[string]bool),
 	}
 }
 

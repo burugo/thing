@@ -50,6 +50,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - **Method-based virtual property support:** Needed to ensure struct fields take precedence over methods if both exist for a given name.
 - **Snake_case to CamelCase mapping:** Required robust mapping from DSL/Include field names (snake_case) to Go method names (CamelCase).
 - **TDD:** TDD: Tests must cover all combinations (field only, method only, both, omitted, etc.).
+- **Cache Invalidation Strategy:** Balancing invalidation precision (avoiding unnecessary deletions) with efficiency (avoiding complex checks like `checkModelMatchAgainstQuery`) and correctness (handling create/delete/update). Current discussion focuses on optimizing `GlobalCacheIndex` with field/value-based indexing versus external tag-based systems.
 
 ## Design Philosophy and API Goals
 
@@ -307,6 +308,23 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 21. **[*] Task: Implement JSON Serialization Features**
     *   **Goal:** Add comprehensive JSON serialization capabilities to the ORM, similar to Mongoose's capabilities, following the user-defined rule for field inclusion/exclusion and nested relationships.
     *   **Success Criteria:** Thing ORM models can be easily serialized to JSON with flexible control over the output format, similar to Mongoose's capabilities, and following the user-defined rule.
+22. **[ ] Task: 优化 GlobalCacheIndex 以支持值级别索引**
+    *   **Task Type:** Refactoring (Structural & Functional)
+    *   **Goal:** Enhance `GlobalCacheIndex` to support indexing query cache keys not only by table and field name, but also by the specific *value* used in exact match conditions (`=` / `IN`), significantly speeding up cache invalidation lookups for relevant scenarios.
+    *   **Sub-tasks:**
+        *   **[ ] Design new `GlobalCacheIndex` structure:** Define data structure for mixed field/value indexing (e.g., `fieldIndex`, `valueIndex`, `keyToParams`). SC: Structure defined.
+        *   **[ ] Implement `QueryParams` exact value parser:** Create function to parse `WHERE`/`Args` for `=` / `IN` conditions, extracting field names and concrete values. SC: Parser implemented and tested.
+        *   **[ ] Update `GlobalCacheIndex.RegisterQuery`:** Modify registration to populate both field-level and value-level indexes using the parser. SC: Registration updated.
+        *   **[ ] Implement `GlobalCacheIndex.GetKeysByValue`:** Add method to retrieve keys associated with a specific field value. SC: Method implemented and tested.
+        *   **[ ] Modify cache invalidation logic (`updateAffected...`, `handleDelete...`):**
+            *   Prioritize using `GetKeysByValue` based on old/new values of changed fields.
+            *   Fallback to field-level index (`GetKeysByField`) for non-exact matches or other dependencies.
+            *   Combine/deduplicate keys.
+            *   Action for Delete: Decrement Count, Delete List.
+            *   Action for Create/Update: Delete List, Delete Count.
+            *   SC: Invalidation logic updated, significantly reduces/eliminates `CheckQueryMatch` calls in this path, handles keys correctly.
+        *   **[ ] Add/Update Tests:** Unit tests for index/parser. Integration tests verifying improved invalidation efficiency and correctness. SC: Tests added and passing.
+    *   **Success Criteria:** `GlobalCacheIndex` supports value-based lookup, invalidation logic leverages it effectively, performance improved for relevant scenarios, tests pass.
 
 ## JSON Serialization Rule (User-Defined)
 
@@ -335,11 +353,16 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - [x] Basic CRUD Operations (Create, Read, Update, Delete)
 - [x] Relationship Management (BelongsTo, HasMany, Preload)
 - [x] Transaction Management (BeginTx, Commit, Rollback)
+- [ ] Implement Value-Level Indexing for GlobalCacheIndex
 
 ## Executor's Feedback or Assistance Requests
 
 - Executor completed method-based virtual property feature. All tests pass. No further action needed for this task.
 - **Confirmed:** Basic CRUD, Relationship Management (Phase 1), and Transaction Management are implemented and verified by tests.
+
+## Lessons
+
+- **Revised Delete Cache Behavior:** After a successful `Delete()` operation, the corresponding object cache key is now set to `NoneResult` instead of being directly deleted. This provides stronger consistency guarantees against race conditions and aligns with the behavior of `ByID` when a record is not found in the database.
 
 ---
 
