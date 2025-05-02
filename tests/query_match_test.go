@@ -484,24 +484,18 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 	}
 
+	// Run tests
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Convert root ModelInfo to internal ModelInfo for the call
-			infoInternal := &cache.ModelInfo{
-				TableName:        modelInfo.TableName,
-				ColumnToFieldMap: modelInfo.ColumnToFieldMap,
-				// Add other fields if needed by CheckQueryMatch
-			}
-
-			// Call the function from internal/cache directly
-			// Pass model, internal modelInfo, and params
-			match, err := cache.CheckQueryMatch(&model, infoInternal, tt.params)
+			// Pass the model by pointer as CheckQueryMatch expects an interface{} that can be Elem()'d
+			// and pass the required info fields directly
+			result, err := cache.CheckQueryMatch(&model, modelInfo.TableName, modelInfo.ColumnToFieldMap, tt.params)
 
 			if tt.expectError {
-				require.Error(t, err)
+				require.Error(t, err, "Expected an error but got none")
 			} else {
 				require.NoError(t, err)
-				require.Equal(t, tt.expected, match)
+				require.Equal(t, tt.expected, result)
 			}
 		})
 	}

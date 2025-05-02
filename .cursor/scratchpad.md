@@ -510,3 +510,60 @@ GetKeysByValue 方法已实现，测试全部通过，已提交。
     *   **Final Verification:** Always use the required command: `go test -v ./tests | grep FAIL`.
 *   **Automatic Testing, Fixing, and Committing Workflow:**
     1.  Execute Step.
+
+# Refactoring CheckQueryMatch Signature
+
+## Background and Motivation
+
+The user wants to change the signature of the `CheckQueryMatch` function in `internal/cache/query_match.go`. Instead of passing a `*ModelInfo` struct, the user prefers to pass the `tableName` (string) and `columnToFieldMap` (map[string]string) directly as arguments. This aims to simplify the function's dependencies for callers who might already have this information readily available without needing the full `ModelInfo` struct.
+
+## Key Challenges and Analysis
+
+*   **Signature Change:** Modifying the function definition requires updating all internal references to the `info` parameter.
+*   **Information Access:** Access to `ColumnToFieldMap` needs to be switched from `info.ColumnToFieldMap` to the new parameter.
+*   **Table Name Usage:** The function currently uses `modelVal.Type().Name()` in some error messages. We need to decide whether to keep this or use the new `tableName` parameter for consistency. Using the `tableName` parameter seems more appropriate for context related to database operations.
+*   **Logic Preservation:** As this is structural refactoring, the core query matching logic must remain unchanged.
+
+## High-level Task Breakdown
+
+1.  **(Executor)** Modify the `CheckQueryMatch` function signature in `internal/cache/query_match.go` to accept `tableName string` and `columnToFieldMap map[string]string` instead of `info *ModelInfo`.
+    *   **Task Type:** `Refactoring (Structural)`
+    *   **Success Criteria:** The function signature is updated correctly.
+2.  **(Executor)** Update the function body to use the new `tableName` and `columnToFieldMap` parameters.
+    *   Replace all occurrences of `info.ColumnToFieldMap` with `columnToFieldMap`.
+    *   Replace occurrences of `modelVal.Type().Name()` in error/log messages (related to identifying the model/table context) with the `tableName` parameter.
+    *   **Task Type:** `Refactoring (Structural)`
+    *   **Success Criteria:** All internal references are updated correctly. The core matching logic remains unchanged.
+3.  **(Executor)** Find call sites of `cache.CheckQueryMatch` and update them to pass the correct arguments (`tableName` and `columnToFieldMap`). The compiler output indicates errors in `internal/cache/cache.go`.
+    *   **Task Type:** `Refactoring (Structural)`
+    *   **Success Criteria:** All call sites are updated, and the code compiles.
+4.  **(Executor)** Update call sites of `cache.CheckQueryMatch` in the test file `tests/query_match_test.go`.
+    *   **Task Type:** `Refactoring (Structural)`
+    *   **Success Criteria:** Test file call sites are updated, and the code compiles.
+5.  **(Executor)** Run tests again to ensure no regressions.
+    *   **Task Type:** `Refactoring (Structural)`
+    *   **Success Criteria:** The command `go test -v ./tests|grep FAIL` returns no output.
+6.  **(Executor)** Commit the changes.
+    *   **Task Type:** `Refactoring (Structural)`
+    *   **Success Criteria:** Changes to `internal/cache/query_match.go`, `internal/cache/cache.go`, `tests/query_match_test.go`, and `.cursor/scratchpad.md` are committed.
+7.  **(Planner)** Wait for user verification after executor reports completion.
+
+## Project Status Board
+
+*   [x] Modify `CheckQueryMatch` function signature.
+*   [x] Update function body to use new parameters.
+*   [x] Update call sites of `CheckQueryMatch` (in `cache.go`).
+*   [ ] Update call sites of `CheckQueryMatch` (in `tests/query_match_test.go`).
+*   [ ] Run tests again.
+*   [ ] Commit changes.
+*   [ ] **WAIT for user verification.**
+
+## Executor's Feedback or Assistance Requests
+
+*   Initial refactoring of `CheckQueryMatch` completed.
+*   Fixed call sites in `cache.go`.
+*   Tests still fail, need to fix call sites in `tests/query_match_test.go`.
+
+## Lessons
+
+*(None yet)*

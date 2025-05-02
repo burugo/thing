@@ -190,14 +190,9 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			Preloads: paramsInternal.Preloads,
 		}
 
-		infoInternal := &cache.ModelInfo{
-			TableName:        t.info.TableName,
-			ColumnToFieldMap: t.info.ColumnToFieldMap,
-		}
-
 		if isDelete {
 			// Only check if the model would have matched before deletion
-			matches, err := cache.CheckQueryMatch(model, infoInternal, paramsRoot)
+			matches, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, paramsRoot)
 			if err != nil {
 				log.Printf("WARN: Error checking query match for deleted model (key: %s): %v. Skipping.", cacheKey, err)
 				continue
@@ -217,7 +212,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			}
 		} else {
 			// Save/Update: check both current and original model
-			matchesCurrent, err := cache.CheckQueryMatch(model, infoInternal, paramsRoot)
+			matchesCurrent, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, paramsRoot)
 			if err != nil {
 				log.Printf("ERROR CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
@@ -227,7 +222,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			}
 			matchesOriginal := false
 			if !isCreate && !reflect.ValueOf(originalModel).IsNil() {
-				matchesOriginal, err = cache.CheckQueryMatch(originalModel, infoInternal, paramsRoot)
+				matchesOriginal, err = cache.CheckQueryMatch(originalModel, t.info.TableName, t.info.ColumnToFieldMap, paramsRoot)
 				if err != nil {
 					log.Printf("ERROR CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 					if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {

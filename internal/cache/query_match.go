@@ -33,12 +33,15 @@ func isArgNil(argValue interface{}) bool {
 //
 // Supports =, LIKE, >, <, >=, <=, IN, !=, <>, NOT LIKE, NOT IN operators joined by AND.
 // Support for OR clauses or complex LIKE patterns is NOT yet implemented.
-func CheckQueryMatch(model interface{}, info *ModelInfo, params QueryParams) (bool, error) {
+func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[string]string, params QueryParams) (bool, error) {
 	if model == nil {
 		return false, errors.New("model cannot be nil")
 	}
-	if info == nil {
-		return false, errors.New("model info cannot be nil")
+	if tableName == "" {
+		return false, errors.New("tableName cannot be empty")
+	}
+	if columnToFieldMap == nil {
+		return false, errors.New("columnToFieldMap cannot be nil")
 	}
 
 	whereClause := strings.TrimSpace(params.Where)
@@ -129,21 +132,21 @@ func CheckQueryMatch(model interface{}, info *ModelInfo, params QueryParams) (bo
 		currentArgIndex++
 
 		// Find the Go field name corresponding to the DB column name
-		goFieldName, ok := info.ColumnToFieldMap[colName]
+		goFieldName, ok := columnToFieldMap[colName]
 		if !ok {
 			// Maybe the WHERE clause uses the Go field name directly? Check that.
 			if _, directFieldOK := modelVal.Type().FieldByName(colName); directFieldOK {
 				goFieldName = colName
 				ok = true
 			} else {
-				return false, fmt.Errorf("column '%s' from WHERE clause not found in model %s info", colName, modelVal.Type().Name())
+				return false, fmt.Errorf("column '%s' from WHERE clause not found in map for table '%s'", colName, tableName)
 			}
 		}
 
 		// Get the model's field value
 		fieldVal := modelVal.FieldByName(goFieldName)
 		if !fieldVal.IsValid() {
-			return false, fmt.Errorf("field '%s' (for column '%s') not valid on model %s", goFieldName, colName, modelVal.Type().Name())
+			return false, fmt.Errorf("field '%s' (for column '%s') not valid on model for table '%s'", goFieldName, colName, tableName)
 		}
 
 		modelFieldValue := fieldVal.Interface()
