@@ -1,0 +1,193 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"log"
+	"os"
+
+	"thing"
+	"thing/examples/models"              // Assuming models are defined here
+	"thing/internal/drivers/cache/redis" // Corrected import path usage
+	"thing/internal/drivers/db/sqlite"
+
+	redis_driver "github.com/redis/go-redis/v9"
+)
+
+func main() {
+	ctx := context.Background()
+	log.Println("--- Starting Hooks Example ---")
+
+	// --- Database Setup (SQLite) ---
+	dbFile := "hooks_example.db"
+	os.Remove(dbFile) // Clean start
+	dbAdapter, err := sqlite.NewSQLiteAdapter(dbFile)
+	if err != nil {
+		log.Fatalf("Failed to initialize database: %v", err)
+	}
+	defer dbAdapter.Close()
+
+	// Auto-create schema (assuming models.User exists)
+	_, err = dbAdapter.Exec(ctx, models.User{}.CreateTableSQL(), nil)
+	if err != nil {
+		log.Fatalf("Failed to create user table: %v", err)
+	}
+	log.Println("Database initialized and schema created.")
+
+	// --- Cache Setup (Redis) ---
+	// Note: Requires a running Redis instance on localhost:6379
+	redisAddr := "localhost:6379"
+	redisClient := redis_driver.NewClient(&redis_driver.Options{Addr: redisAddr})
+	if _, err := redisClient.Ping(ctx).Result(); err != nil {
+		log.Printf("WARN: Failed to connect to Redis at %s: %v. Cache operations will likely fail.", redisAddr, err)
+		// Decide if you want to continue without cache or fail hard
+		// For this example, we might proceed but expect cache errors/misses.
+		// return
+	}
+	// cacheClient := redis.NewRedisCache(redisClient)
+	// Corrected constructor call using options and handling cleanup
+	cacheClient, cacheCleanup, err := redis.NewClient(redis.Options{Addr: redisAddr})
+	if err != nil {
+		log.Fatalf("Failed to create redis cache client: %v", err)
+	}
+	defer cacheCleanup() // Ensure cache client resources are released
+	log.Println("Cache client initialized (Redis).")
+
+	// --- Thing ORM Initialization ---
+	thingOrm, err := thing.New[models.User](dbAdapter, cacheClient, nil) // Pass nil for GlobalCacheIndex for now
+	if err != nil {
+		log.Fatalf("Failed to initialize Thing ORM: %v", err)
+	}
+	log.Println("Thing ORM initialized for User model.")
+
+	// --- Register Hooks ---
+	log.Println("Registering event listeners...")
+
+	// BeforeCreate: Log and potentially modify
+	thing.RegisterListener(thing.EventTypeBeforeCreate, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+		user, ok := model.(*models.User)
+		if !ok {
+			return nil
+		} // Should not happen
+		log.Printf("[HOOK - %s] User ID: %d, Name: %s, Email: %s", eventType, user.ID, user.Name, user.Email)
+		if user.Email == "invalid@example.com" {
+			log.Printf("[HOOK - %s] Modifying email from 'invalid@example.com' to 'valid_hook@example.com'", eventType)
+			user.Email = "valid_hook@example.com" // Modify data before creation
+		}
+		return nil
+	})
+
+	// AfterCreate: Log the assigned ID
+	thing.RegisterListener(thing.EventTypeAfterCreate, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+		user, ok := model.(*models.User)
+		if !ok {
+			return nil
+		}
+		log.Printf("[HOOK - %s] User ID: %d assigned! Name: %s", eventType, user.ID, user.Name)
+		return nil
+	})
+
+	// BeforeSave: Log before any save (create or update)
+	thing.RegisterListener(thing.EventTypeBeforeSave, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+		user, ok := model.(*models.User)
+		if !ok {
+			return nil
+		}
+		log.Printf("[HOOK - %s] User ID: %d, Name: %s, Email: %s. IsNew: %t", eventType, user.ID, user.Name, user.Email, user.IsNewRecord())
+		if user.Name == "AbortMe" {
+			log.Printf("[HOOK - %s] Aborting save because name is 'AbortMe'", eventType)
+			return errors.New("save aborted by BeforeSave hook")
+		}
+		return nil
+	})
+
+	// AfterSave: Log changed fields on update
+	thing.RegisterListener(thing.EventTypeAfterSave, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+		user, ok := model.(*models.User)
+		if !ok {
+			return nil
+		}
+		changedFields, _ := eventData.(map[string]interface{}) // Can be nil on create
+		log.Printf("[HOOK - %s] User ID: %d saved. Changed fields: %v", eventType, user.ID, changedFields)
+		return nil
+	})
+
+	// BeforeDelete: Log before deletion
+	thing.RegisterListener(thing.EventTypeBeforeDelete, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+		user, ok := model.(*models.User)
+		if !ok {
+			return nil
+		}
+		log.Printf("[HOOK - %s] Preparing to delete User ID: %d, Name: %s", eventType, user.ID, user.Name)
+		return nil
+	})
+
+	// AfterDelete: Log after deletion
+	thing.RegisterListener(thing.EventTypeAfterDelete, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+		user, ok := model.(*models.User)
+		if !ok {
+			return nil
+		}
+		log.Printf("[HOOK - %s] Successfully deleted User ID: %d, Name: %s", eventType, user.ID, user.Name)
+		return nil
+	})
+
+	log.Println("Listeners registered.")
+
+	// --- Demonstrate Hooks ---
+
+	// 1. Create a user (triggers BeforeSave, BeforeCreate, AfterCreate, AfterSave)
+	log.Println("--- Creating User 'Alice' ---")
+	alice := &models.User{Name: "Alice", Email: "alice@example.com"}
+	err = thingOrm.Save(alice)
+	if err != nil {
+		log.Printf("Error saving Alice: %v", err)
+	} else {
+		log.Printf("Alice saved successfully. ID: %d", alice.ID)
+	}
+
+	// 2. Create a user with email modification hook
+	log.Println("--- Creating User 'Bob' with invalid email ---")
+	bob := &models.User{Name: "Bob", Email: "invalid@example.com"}
+	err = thingOrm.Save(bob)
+	if err != nil {
+		log.Printf("Error saving Bob: %v", err)
+	} else {
+		log.Printf("Bob saved successfully. ID: %d, Email: %s", bob.ID, bob.Email) // Email should be modified
+	}
+
+	// 3. Attempt to create user that triggers abort hook
+	log.Println("--- Attempting to create User 'AbortMe' ---")
+	abortUser := &models.User{Name: "AbortMe", Email: "abort@example.com"}
+	err = thingOrm.Save(abortUser)
+	if err != nil {
+		log.Printf("Expected error saving AbortMe: %v", err) // Error expected here
+	} else {
+		log.Printf("AbortMe saved unexpectedly! ID: %d", abortUser.ID)
+	}
+
+	// 4. Update Alice (triggers BeforeSave, AfterSave)
+	if alice.ID > 0 {
+		log.Println("--- Updating User 'Alice' ---")
+		alice.Email = "alice_updated@example.com"
+		err = thingOrm.Save(alice)
+		if err != nil {
+			log.Printf("Error updating Alice: %v", err)
+		} else {
+			log.Printf("Alice updated successfully.")
+		}
+	}
+
+	// 5. Delete Bob (triggers BeforeDelete, AfterDelete)
+	if bob.ID > 0 {
+		log.Println("--- Deleting User 'Bob' ---")
+		err = thingOrm.Delete(bob)
+		if err != nil {
+			log.Printf("Error deleting Bob: %v", err)
+		} else {
+			log.Printf("Bob deleted successfully.")
+		}
+	}
+
+	log.Println("--- Hooks Example Finished ---")
+}
