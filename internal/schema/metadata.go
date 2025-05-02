@@ -1,6 +1,7 @@
 package schema
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"reflect"
@@ -24,7 +25,7 @@ type ComparableFieldInfo struct {
 	IgnoreInDiff bool                       // Whether to ignore this field during diffing (e.g., tags like db:"-")
 }
 
-// IndexInfo holds metadata for a single index
+// IndexInfo holds metadata for a single index (normal or unique).
 type IndexInfo struct {
 	Name    string   // Index name
 	Columns []string // Column names
@@ -318,4 +319,28 @@ func ToSnakeCase(str string) string {
 	snake := matchFirstCap.ReplaceAllString(str, "${1}_${2}")
 	snake = matchAllCap.ReplaceAllString(snake, "${1}_${2}")
 	return strings.ToLower(snake)
+}
+
+// TableInfo holds the actual schema info introspected from the database.
+type TableInfo struct {
+	Name       string       // Table name
+	Columns    []ColumnInfo // All columns
+	Indexes    []IndexInfo  // All indexes (including unique)
+	PrimaryKey string       // Primary key column name (if any)
+}
+
+// ColumnInfo holds metadata for a single column in a table.
+type ColumnInfo struct {
+	Name       string  // Column name
+	DataType   string  // Database type (e.g., INT, VARCHAR(255))
+	IsNullable bool    // Whether the column is nullable
+	IsPrimary  bool    // Whether this column is the primary key
+	IsUnique   bool    // Whether this column has a unique constraint
+	Default    *string // Default value (if any)
+}
+
+// Introspector defines the interface for database schema introspection.
+type Introspector interface {
+	// GetTableInfo introspects the given table and returns its schema info.
+	GetTableInfo(ctx context.Context, tableName string) (*TableInfo, error)
 }
