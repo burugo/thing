@@ -7,12 +7,14 @@ import (
 	"os"
 
 	"thing"
-	"thing/examples/models"              // Assuming models are defined here
+	// "thing/examples/models" // Old import
 	"thing/internal/drivers/cache/redis" // Corrected import path usage
 	"thing/internal/drivers/db/sqlite"
 
 	redis_driver "github.com/redis/go-redis/v9"
 )
+
+// User definition is now in models.go within the same package
 
 func main() {
 	ctx := context.Background()
@@ -28,7 +30,8 @@ func main() {
 	defer dbAdapter.Close()
 
 	// Auto-create schema (assuming models.User exists)
-	_, err = dbAdapter.Exec(ctx, models.User{}.CreateTableSQL(), nil)
+	// _, err = dbAdapter.Exec(ctx, models.User{}.CreateTableSQL(), nil) // Old way
+	_, err = dbAdapter.Exec(ctx, User{}.CreateTableSQL(), nil) // Use User directly from package main
 	if err != nil {
 		log.Fatalf("Failed to create user table: %v", err)
 	}
@@ -54,7 +57,8 @@ func main() {
 	log.Println("Cache client initialized (Redis).")
 
 	// --- Thing ORM Initialization ---
-	thingOrm, err := thing.New[models.User](dbAdapter, cacheClient, nil) // Pass nil for GlobalCacheIndex for now
+	// thingOrm, err := thing.New[models.User](dbAdapter, cacheClient, nil) // Old call
+	thingOrm, err := thing.New[User](dbAdapter, cacheClient) // Corrected call
 	if err != nil {
 		log.Fatalf("Failed to initialize Thing ORM: %v", err)
 	}
@@ -65,7 +69,7 @@ func main() {
 
 	// BeforeCreate: Log and potentially modify
 	thing.RegisterListener(thing.EventTypeBeforeCreate, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
-		user, ok := model.(*models.User)
+		user, ok := model.(*User) // Use local User type
 		if !ok {
 			return nil
 		} // Should not happen
@@ -79,7 +83,7 @@ func main() {
 
 	// AfterCreate: Log the assigned ID
 	thing.RegisterListener(thing.EventTypeAfterCreate, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
-		user, ok := model.(*models.User)
+		user, ok := model.(*User) // Use local User type
 		if !ok {
 			return nil
 		}
@@ -89,7 +93,7 @@ func main() {
 
 	// BeforeSave: Log before any save (create or update)
 	thing.RegisterListener(thing.EventTypeBeforeSave, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
-		user, ok := model.(*models.User)
+		user, ok := model.(*User) // Use local User type
 		if !ok {
 			return nil
 		}
@@ -103,7 +107,7 @@ func main() {
 
 	// AfterSave: Log changed fields on update
 	thing.RegisterListener(thing.EventTypeAfterSave, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
-		user, ok := model.(*models.User)
+		user, ok := model.(*User) // Use local User type
 		if !ok {
 			return nil
 		}
@@ -114,7 +118,7 @@ func main() {
 
 	// BeforeDelete: Log before deletion
 	thing.RegisterListener(thing.EventTypeBeforeDelete, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
-		user, ok := model.(*models.User)
+		user, ok := model.(*User) // Use local User type
 		if !ok {
 			return nil
 		}
@@ -124,7 +128,7 @@ func main() {
 
 	// AfterDelete: Log after deletion
 	thing.RegisterListener(thing.EventTypeAfterDelete, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
-		user, ok := model.(*models.User)
+		user, ok := model.(*User) // Use local User type
 		if !ok {
 			return nil
 		}
@@ -138,8 +142,8 @@ func main() {
 
 	// 1. Create a user (triggers BeforeSave, BeforeCreate, AfterCreate, AfterSave)
 	log.Println("--- Creating User 'Alice' ---")
-	alice := &models.User{Name: "Alice", Email: "alice@example.com"}
-	err = thingOrm.Save(alice)
+	alice := &User{Name: "Alice", Email: "alice@example.com"} // Use local User type
+	err = thingOrm.Save(*alice)                               // Pass value (dereferenced)
 	if err != nil {
 		log.Printf("Error saving Alice: %v", err)
 	} else {
@@ -148,8 +152,8 @@ func main() {
 
 	// 2. Create a user with email modification hook
 	log.Println("--- Creating User 'Bob' with invalid email ---")
-	bob := &models.User{Name: "Bob", Email: "invalid@example.com"}
-	err = thingOrm.Save(bob)
+	bob := &User{Name: "Bob", Email: "invalid@example.com"} // Use local User type
+	err = thingOrm.Save(*bob)                               // Pass value (dereferenced)
 	if err != nil {
 		log.Printf("Error saving Bob: %v", err)
 	} else {
@@ -158,8 +162,8 @@ func main() {
 
 	// 3. Attempt to create user that triggers abort hook
 	log.Println("--- Attempting to create User 'AbortMe' ---")
-	abortUser := &models.User{Name: "AbortMe", Email: "abort@example.com"}
-	err = thingOrm.Save(abortUser)
+	abortUser := &User{Name: "AbortMe", Email: "abort@example.com"} // Use local User type
+	err = thingOrm.Save(*abortUser)                                 // Pass value (dereferenced)
 	if err != nil {
 		log.Printf("Expected error saving AbortMe: %v", err) // Error expected here
 	} else {
@@ -170,7 +174,7 @@ func main() {
 	if alice.ID > 0 {
 		log.Println("--- Updating User 'Alice' ---")
 		alice.Email = "alice_updated@example.com"
-		err = thingOrm.Save(alice)
+		err = thingOrm.Save(*alice) // Pass value (dereferenced)
 		if err != nil {
 			log.Printf("Error updating Alice: %v", err)
 		} else {
@@ -181,7 +185,7 @@ func main() {
 	// 5. Delete Bob (triggers BeforeDelete, AfterDelete)
 	if bob.ID > 0 {
 		log.Println("--- Deleting User 'Bob' ---")
-		err = thingOrm.Delete(bob)
+		err = thingOrm.Delete(*bob) // Pass value (dereferenced)
 		if err != nil {
 			log.Printf("Error deleting Bob: %v", err)
 		} else {

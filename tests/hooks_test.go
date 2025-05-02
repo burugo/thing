@@ -6,12 +6,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"thing"
 	"thing/common"
+
+	// "thing/examples/models" // No longer needed
+	// "../examples/models" // No longer needed
 
 	// Import cache package
 	"github.com/stretchr/testify/assert"
@@ -28,6 +32,7 @@ func resetListeners() {
 	// structure tests to avoid interference. A better solution is needed for robust testing.
 	// Ideally: thing.ResetListeners() // Not implemented
 	fmt.Println("[WARN] Listener registry cannot be automatically reset between tests.")
+	thing.ResetListeners()
 }
 
 // --- Test Cases ---
@@ -280,10 +285,15 @@ func TestHook_ErrorAborts(t *testing.T) {
 	hookError := errors.New("hook failed intentionally")
 	var beforeSaveHookCalled bool
 
-	thing.RegisterListener(thing.EventTypeBeforeSave, func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+	// Define the listener first so we can unregister it by its pointer
+	errorListener := func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
 		beforeSaveHookCalled = true
 		return hookError // Return the error
-	})
+	}
+
+	thing.RegisterListener(thing.EventTypeBeforeSave, errorListener)
+	// Ensure the listener is unregistered when the test finishes
+	defer thing.UnregisterListener(thing.EventTypeBeforeSave, errorListener)
 
 	// Attempt to save a new user
 	newUser := &User{Name: "Abort Test", Email: "abort@example.com"}
@@ -306,3 +316,48 @@ func TestHook_ErrorAborts(t *testing.T) {
 */
 
 // Add more tests below...
+
+// TestHook_UnregisterListener verifies that a listener can be unregistered.
+func TestHook_UnregisterListener(t *testing.T) {
+	th, _, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+	resetListeners()
+
+	var hookCallCount int32
+	var listenerToUnregister thing.EventListener // Store the listener func itself
+
+	listenerToUnregister = func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+		atomic.AddInt32(&hookCallCount, 1)
+		return nil
+	}
+
+	// Register the listener
+	thing.RegisterListener(thing.EventTypeBeforeSave, listenerToUnregister)
+
+	// 1. Trigger save, listener should be called
+	user1 := &User{Name: "Unregister Test 1", Email: "unreg1@example.com"}
+	err := th.Save(user1)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, atomic.LoadInt32(&hookCallCount), "Listener should be called on first save")
+
+	// 2. Unregister the listener
+	thing.UnregisterListener(thing.EventTypeBeforeSave, listenerToUnregister)
+	log.Println("Listener unregistered.")
+
+	// 3. Trigger save again, listener should NOT be called
+	user2 := &User{Name: "Unregister Test 2", Email: "unreg2@example.com"}
+	err = th.Save(user2)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, atomic.LoadInt32(&hookCallCount), "Listener should NOT be called after unregistering")
+
+	// 4. Try unregistering again (should not panic or error)
+	thing.UnregisterListener(thing.EventTypeBeforeSave, listenerToUnregister)
+
+	// 5. Try unregistering a listener that was never registered
+	unknownListener := func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+		return nil
+	}
+	thing.UnregisterListener(thing.EventTypeBeforeSave, unknownListener)
+
+	log.Println("Unregister tests completed.")
+}

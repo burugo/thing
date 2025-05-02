@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"reflect"
 	"sync"
 )
 
@@ -38,6 +39,45 @@ func RegisterListener(eventType EventType, listener EventListener) {
 	listenerMutex.Lock()
 	defer listenerMutex.Unlock()
 	listenerRegistry[eventType] = append(listenerRegistry[eventType], listener)
+}
+
+// UnregisterListener removes a specific listener function for a specific event type.
+// It compares function pointers to find the listener to remove.
+func UnregisterListener(eventType EventType, listenerToRemove EventListener) {
+	listenerMutex.Lock()
+	defer listenerMutex.Unlock()
+
+	listeners, ok := listenerRegistry[eventType]
+	if !ok || len(listeners) == 0 {
+		return // No listeners for this event type
+	}
+
+	// Find the listener by comparing function pointers
+	foundIndex := -1
+	listenerToRemovePtr := reflect.ValueOf(listenerToRemove).Pointer()
+	for i, listener := range listeners {
+		if reflect.ValueOf(listener).Pointer() == listenerToRemovePtr {
+			foundIndex = i
+			break
+		}
+	}
+
+	// If found, remove it from the slice
+	if foundIndex != -1 {
+		listenerRegistry[eventType] = append(listeners[:foundIndex], listeners[foundIndex+1:]...)
+		log.Printf("DEBUG: Unregistered listener for event %s", eventType)
+	} else {
+		log.Printf("WARN: Listener not found for event %s during unregister attempt.", eventType)
+	}
+}
+
+// ResetListeners clears all registered event listeners. Primarily intended for use in tests.
+func ResetListeners() {
+	listenerMutex.Lock()
+	defer listenerMutex.Unlock()
+	// Create a new empty map instead of clearing the old one
+	listenerRegistry = make(map[EventType][]EventListener)
+	log.Println("DEBUG: All event listeners have been reset.")
 }
 
 // triggerEvent executes all registered listeners for a given event type.
