@@ -315,6 +315,19 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   **[x] 22.4 GetKeysByValue 方法实现。**
     *   **[x] 22.5 缓存失效逻辑修改。**
     *   **[ ] 22.6 新增/更新测试。**
+23. **[ ] Monitoring/metrics for cache hit/miss rates**
+    *   **Goal:** 通过 RedisClient/CacheClient 提供一个方法（如 GetCacheStats），可直接查询当前 hit/miss 统计信息。
+    *   **Sub-tasks:**
+        1. 在 RedisClient（和 mockCacheClient，如适用）结构体中增加用于统计 hit/miss 的字段（如 map 或 struct）。
+        2. 提供一个方法（如 GetCacheStats()），返回当前的 hit/miss 统计信息（可按类型细分）。
+        3. 在 Get/Set/Delete 等方法中，命中/未命中时分别递增对应计数。
+        4. 在测试用例中调用 GetCacheStats，验证 hit/miss 计数与实际操作一致。
+        5. 在新方法和相关字段处补充注释，说明用法和统计范围。
+    *   **Success Criteria:**
+        - 可通过 RedisClient/CacheClient 的 GetCacheStats 方法获取当前 hit/miss 统计信息。
+        - 统计覆盖对象、列表、计数等主要缓存类型。
+        - 统计准确，测试覆盖。
+        - 相关注释完善。
 
 ## JSON Serialization Rule (User-Defined)
 
@@ -407,3 +420,10 @@ GetKeysByValue 方法已实现，测试全部通过，已提交。
     - Goal: Add a two-level cache system, with a fast in-memory (L1) cache for each process and a distributed (L2) cache such as Redis.
     - Approach: Implement a process-wide in-memory cache (e.g., map or LRU) for hot objects/queries, falling back to Redis on miss. Ensure consistency and invalidation across both layers.
     - Status: Not currently implemented; to be planned and scheduled as needed.
+
+- [ ] Configurable TTLs for different cache types (object, list, count)
+    - [ ] Design configuration structure for per-type TTLs
+    - [ ] Refactor cache set logic to use per-type TTLs
+    - [ ] Add tests for TTL configuration and expiration
+    - [ ] Update documentation/comments
+    - [ ] Verify all tests pass and commit
