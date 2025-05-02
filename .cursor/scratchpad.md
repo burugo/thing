@@ -311,7 +311,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 22. **[x] Design new `GlobalCacheIndex` structure:** Define data structure for mixed field/value indexing (e.g., `fieldIndex`, `valueIndex`, `keyToParams`). SC: Structure defined.
     *   **[x] 22.2 实现 QueryParams 解析器，提取 =/IN 字段和值。**
     *   **[x] 22.3 RegisterQuery 注册逻辑更新。**
-    *   **[ ] 22.4 GetKeysByValue 方法实现。**
+    *   **[x] 22.4 GetKeysByValue 方法实现。**
     *   **[ ] 22.5 缓存失效逻辑修改。**
     *   **[ ] 22.6 新增/更新测试。**
 
@@ -345,7 +345,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - [x] 22.1 结构设计：GlobalCacheIndex 支持值级别和字段级别索引字段，已提交。
 - [x] 22.2 实现 QueryParams 解析器，提取 =/IN 字段和值。
 - [x] 22.3 RegisterQuery 注册逻辑更新。
-- [ ] 22.4 GetKeysByValue 方法实现。
+- [x] 22.4 GetKeysByValue 方法实现。
 - [ ] 22.5 缓存失效逻辑修改。
 - [ ] 22.6 新增/更新测试。
 
@@ -376,3 +376,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 RegisterQuery 注册逻辑已实现，valueIndex/fieldIndex 自动填充，测试全部通过，已提交。
 
 下一步将实现 GetKeysByValue 方法。
+
+GetKeysByValue 方法已实现，测试全部通过，已提交。
+
+下一步将进入缓存失效逻辑修改，优先用值级/字段级索引。
