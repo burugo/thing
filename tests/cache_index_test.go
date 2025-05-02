@@ -220,3 +220,46 @@ func TestParseExactMatchFields(t *testing.T) {
 		})
 	}
 }
+
+func TestCacheIndex_GetKeysByValue(t *testing.T) {
+	cache.ResetGlobalCacheIndex()
+	idx := cache.GlobalCacheIndex
+
+	table := "users"
+	key1 := "list:users:by_user_id_1"
+	key2 := "list:users:by_user_id_2"
+	key3 := "list:users:by_status_active"
+	key4 := "list:users:by_status_inactive"
+	params1 := cache.QueryParams{Where: "user_id = ?", Args: []interface{}{1}}
+	params2 := cache.QueryParams{Where: "user_id = ?", Args: []interface{}{2}}
+	params3 := cache.QueryParams{Where: "status = ?", Args: []interface{}{"active"}}
+	params4 := cache.QueryParams{Where: "status = ?", Args: []interface{}{"inactive"}}
+
+	idx.RegisterQuery(table, key1, params1)
+	idx.RegisterQuery(table, key2, params2)
+	idx.RegisterQuery(table, key3, params3)
+	idx.RegisterQuery(table, key4, params4)
+
+	t.Run("single value hit", func(t *testing.T) {
+		keys := idx.GetKeysByValue(table, "user_id", 1)
+		assert.ElementsMatch(t, []string{key1}, keys)
+	})
+	t.Run("single value miss", func(t *testing.T) {
+		keys := idx.GetKeysByValue(table, "user_id", 99)
+		assert.Empty(t, keys)
+	})
+	t.Run("multiple values", func(t *testing.T) {
+		keys := idx.GetKeysByValue(table, "status", "active")
+		assert.ElementsMatch(t, []string{key3}, keys)
+		keys2 := idx.GetKeysByValue(table, "status", "inactive")
+		assert.ElementsMatch(t, []string{key4}, keys2)
+	})
+	t.Run("different field", func(t *testing.T) {
+		keys := idx.GetKeysByValue(table, "nonexistent", "x")
+		assert.Empty(t, keys)
+	})
+	// 跨表测试
+	idx.RegisterQuery("posts", "list:posts:by_user_id_1", cache.QueryParams{Where: "user_id = ?", Args: []interface{}{1}})
+	keys := idx.GetKeysByValue("posts", "user_id", 1)
+	assert.ElementsMatch(t, []string{"list:posts:by_user_id_1"}, keys)
+}

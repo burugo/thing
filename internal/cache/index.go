@@ -294,3 +294,34 @@ func trimSpace(s string) string {
 	}
 	return s[start:end]
 }
+
+// GetKeysByValue returns all cache keys registered for a given table, field, and value (as interface{}).
+// If no keys are found, returns an empty slice.
+func (idx *CacheIndex) GetKeysByValue(table, field string, value interface{}) []string {
+	if table == "" || field == "" {
+		return nil
+	}
+	valStr := toIndexValueString(value)
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	var keys []string
+	if idx.valueIndex == nil {
+		return keys
+	}
+	tbl, ok := idx.valueIndex[table]
+	if !ok {
+		return keys
+	}
+	fld, ok := tbl[field]
+	if !ok {
+		return keys
+	}
+	valMap, ok := fld[valStr]
+	if !ok {
+		return keys
+	}
+	for k := range valMap {
+		keys = append(keys, k)
+	}
+	return keys
+}

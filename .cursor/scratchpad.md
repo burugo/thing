@@ -310,7 +310,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   **Success Criteria:** Thing ORM models can be easily serialized to JSON with flexible control over the output format, similar to Mongoose's capabilities, and following the user-defined rule.
 22. **[x] Design new `GlobalCacheIndex` structure:** Define data structure for mixed field/value indexing (e.g., `fieldIndex`, `valueIndex`, `keyToParams`). SC: Structure defined.
     *   **[x] 22.2 实现 QueryParams 解析器，提取 =/IN 字段和值。**
-    *   **[ ] 22.3 RegisterQuery 注册逻辑更新。**
+    *   **[x] 22.3 RegisterQuery 注册逻辑更新。**
     *   **[ ] 22.4 GetKeysByValue 方法实现。**
     *   **[ ] 22.5 缓存失效逻辑修改。**
     *   **[ ] 22.6 新增/更新测试。**
@@ -344,7 +344,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - [x] Transaction Management (BeginTx, Commit, Rollback)
 - [x] 22.1 结构设计：GlobalCacheIndex 支持值级别和字段级别索引字段，已提交。
 - [x] 22.2 实现 QueryParams 解析器，提取 =/IN 字段和值。
-- [ ] 22.3 RegisterQuery 注册逻辑更新。
+- [x] 22.3 RegisterQuery 注册逻辑更新。
 - [ ] 22.4 GetKeysByValue 方法实现。
 - [ ] 22.5 缓存失效逻辑修改。
 - [ ] 22.6 新增/更新测试。
@@ -372,3 +372,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - **文档与示例完善 (Documentation & Examples):** 补充 README, API 文档, 中文文档和核心用例示例。
 
 如需推进其中某一项，请指定优先级或直接说明需求！
+
+RegisterQuery 注册逻辑已实现，valueIndex/fieldIndex 自动填充，测试全部通过，已提交。
+
+下一步将实现 GetKeysByValue 方法。
