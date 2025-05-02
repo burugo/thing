@@ -161,3 +161,67 @@ func TestCacheIndex_GetKeysByValue(t *testing.T) {
 	keys := idx.GetKeysByValue("posts", "user_id", 1)
 	assert.ElementsMatch(t, []string{"list:posts:by_user_id_1"}, keys)
 }
+
+// Test Full-Table List Keys registration and retrieval
+func TestCacheIndex_FullTableListKeys(t *testing.T) {
+	cache.ResetGlobalCacheIndex()
+	idx := cache.GlobalCacheIndex
+
+	table := "users"
+	listKey1 := "list:users:all1"
+	listKey2 := "list:users:all2"
+	countKey := "count:users:all"
+	// Register full-table list keys
+	idx.RegisterQuery(table, listKey1, cache.QueryParams{Where: "", Args: nil})
+	idx.RegisterQuery(table, listKey2, cache.QueryParams{Where: "", Args: nil})
+	// Register count key and filtered list key to ensure they are not included
+	idx.RegisterQuery(table, countKey, cache.QueryParams{Where: "", Args: nil})
+	idx.RegisterQuery(table, "list:users:filtered", cache.QueryParams{Where: "id = ?", Args: []interface{}{1}})
+
+	keys := idx.GetFullTableListKeys(table)
+	assert.ElementsMatch(t, []string{listKey1, listKey2}, keys)
+}
+
+// Test FieldIndex and valueIndex behaviors for mixed exact and non-exact conditions
+func TestCacheIndex_FieldIndexAndValueIndex(t *testing.T) {
+	cache.ResetGlobalCacheIndex()
+	idx := cache.GlobalCacheIndex
+
+	table := "items"
+	key := "list:items:by_id_and_age"
+	params := cache.QueryParams{Where: "id = ? AND age > ?", Args: []interface{}{5, 30}}
+	idx.RegisterQuery(table, key, params)
+
+	// valueIndex should index only 'id' for exact match
+	idKeys := idx.GetKeysByValue(table, "id", 5)
+	assert.ElementsMatch(t, []string{key}, idKeys)
+	// 'age' is non-exact operator, so valueIndex should not index it
+	ageKeys := idx.GetKeysByValue(table, "age", 30)
+	assert.Empty(t, ageKeys)
+
+	// FieldIndex should index both 'id' and 'age'
+	fieldMap, ok := idx.FieldIndex[table]
+	assert.True(t, ok, "Expected field index for table")
+	idFieldKeys, ok := fieldMap["id"]
+	assert.True(t, ok, "Expected field index entry for 'id'")
+	assert.Contains(t, idFieldKeys, key)
+	ageFieldKeys, ok := fieldMap["age"]
+	assert.True(t, ok, "Expected field index entry for 'age'")
+	assert.Contains(t, ageFieldKeys, key)
+}
+
+// Test IN clause valueIndex registration for multiple values
+func TestCacheIndex_INValueIndex(t *testing.T) {
+	cache.ResetGlobalCacheIndex()
+	idx := cache.GlobalCacheIndex
+
+	table := "orders"
+	key := "list:orders:by_status_in"
+	params := cache.QueryParams{Where: "status IN (?)", Args: []interface{}{[]string{"pending", "complete"}}}
+	idx.RegisterQuery(table, key, params)
+
+	pendingKeys := idx.GetKeysByValue(table, "status", "pending")
+	completeKeys := idx.GetKeysByValue(table, "status", "complete")
+	assert.ElementsMatch(t, []string{key}, pendingKeys)
+	assert.ElementsMatch(t, []string{key}, completeKeys)
+}

@@ -314,7 +314,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   **[x] 22.3 RegisterQuery 注册逻辑更新。**
     *   **[x] 22.4 GetKeysByValue 方法实现。**
     *   **[x] 22.5 缓存失效逻辑修改。**
-    *   **[ ] 22.6 新增/更新测试。**
+    *   **[x] 22.6 新增/更新测试。**
 23. **[ ] Monitoring/metrics for cache hit/miss rates**
     *   **Goal:** 通过 RedisClient/CacheClient 提供一个方法（如 GetCacheStats），可直接查询当前 hit/miss 统计信息。
     *   **Sub-tasks:**
