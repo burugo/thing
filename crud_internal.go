@@ -8,7 +8,7 @@ import (
 	"log"
 	"reflect"
 	"strings"
-	sqlbuilder "thing/internal/sql"
+	sqlbuilder "thing/internal/sqlbuilder"
 	"time"
 
 	// Import internal cache package
