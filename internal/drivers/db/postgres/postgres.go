@@ -14,6 +14,7 @@ import (
 
 	"thing"
 	"thing/common"
+	"thing/internal/sqlbuilder"
 	"thing/internal/types"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
@@ -269,10 +270,7 @@ func (a *PostgreSQLAdapter) GetCount(ctx context.Context, info *thing.ModelInfo,
 	// --- Basic Query Construction (Placeholder - Needs SQL builder) ---
 	whereClause := params.Where
 	args := params.Args
-	baseQuery := fmt.Sprintf("SELECT COUNT(*) FROM %s", info.TableName)
-	if whereClause != "" {
-		baseQuery = fmt.Sprintf("%s WHERE %s", baseQuery, whereClause)
-	}
+	baseQuery := sqlbuilder.BuildCountSQL(info.TableName, whereClause)
 	reboundQuery := rebind(baseQuery)
 	// --- End Placeholder ---
 

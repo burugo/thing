@@ -286,16 +286,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 			return errors.New("no columns to insert")
 		}
 
-		quotedCols := make([]string, len(colsToInsert))
-		for i, c := range colsToInsert {
-			quotedCols[i] = fmt.Sprintf("\"%s\"", c)
-		}
-
-		query = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-			t.info.TableName,
-			strings.Join(quotedCols, ", "),
-			strings.Join(placeholders, ", "),
-		)
+		query = sqlbuilder.BuildInsertSQL(t.info.TableName, colsToInsert)
 		args = vals
 
 		// Execute the INSERT query
@@ -345,10 +336,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 
 		vals = append(vals, id) // Add ID for WHERE clause
 
-		query = fmt.Sprintf("UPDATE %s SET %s WHERE \"%s\" = ?",
-			t.info.TableName,
-			strings.Join(setClauses, ", "),
-			t.info.PkName) // Use exported PkName
+		query = sqlbuilder.BuildUpdateSQL(t.info.TableName, setClauses, t.info.PkName)
 		args = vals
 
 		// Execute the UPDATE query
@@ -442,7 +430,7 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 
 	err := withLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
 		// --- DB Delete ---
-		query := fmt.Sprintf("DELETE FROM %s WHERE \"%s\" = ?", tableName, t.info.PkName)
+		query := sqlbuilder.BuildDeleteSQL(tableName, t.info.PkName)
 		result, err := t.db.Exec(ctx, query, id)
 		if err != nil {
 			return fmt.Errorf("database delete failed for %s %d: %w", tableName, id, err)

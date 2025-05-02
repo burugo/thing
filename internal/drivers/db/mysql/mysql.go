@@ -12,6 +12,7 @@ import (
 
 	"thing"
 	"thing/common"
+	"thing/internal/sqlbuilder"
 	"thing/internal/types"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
@@ -278,10 +279,7 @@ func (a *MySQLAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, para
 	// This is a placeholder and likely needs a proper SQL builder from Task 9.8
 	whereClause := params.Where // Assuming params.Where is already valid SQL
 	args := params.Args
-	query := fmt.Sprintf("SELECT COUNT(*) FROM %s", info.TableName)
-	if whereClause != "" {
-		query = fmt.Sprintf("%s WHERE %s", query, whereClause)
-	}
+	query := sqlbuilder.BuildCountSQL(info.TableName, whereClause)
 	// --- End Placeholder ---
 
 	log.Printf("DB GetCount (MySQL): %s [%v]", query, args)
