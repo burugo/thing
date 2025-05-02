@@ -3,6 +3,7 @@ package thing
 import (
 	"context"
 	"database/sql"
+	"thing/internal/sqlbuilder"
 	"thing/internal/types"
 	"time"
 )
@@ -75,6 +76,9 @@ type DBAdapter interface {
 
 	// DB returns the underlying *sql.DB for advanced use cases.
 	DB() *sql.DB
+
+	// Builder returns a SQLBuilder for building SQL queries.
+	Builder() *sqlbuilder.SQLBuilder
 
 	// TODO: Add Ping or other health check methods?
 }

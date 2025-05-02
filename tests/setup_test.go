@@ -11,6 +11,7 @@ import (
 
 	"thing"
 	"thing/internal/cache"
+	"thing/internal/drivers/db/mysql"
 	"thing/internal/drivers/db/sqlite"
 )
 
@@ -80,6 +81,54 @@ func setupTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	}
 
 	return mockDB, mockcache, cleanup
+}
+
+// setupMySQLTestDB creates a MySQL database for testing.
+func setupMySQLTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
+	dsn := os.Getenv("MYSQL_TEST_DSN")
+	if dsn == "" {
+		dsn = "root:password@tcp(127.0.0.1:3306)/test_db?parseTime=true"
+	}
+	adapter, err := mysql.NewMySQLAdapter(dsn)
+	require.NoError(tb, err, "Failed to create MySQL adapter")
+
+	// Create test tables (same schema as SQLite)
+	_, err = adapter.Exec(
+		context.Background(),
+		`CREATE TABLE IF NOT EXISTS users (
+			id INT AUTO_INCREMENT PRIMARY KEY,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted BOOLEAN DEFAULT FALSE,
+			name VARCHAR(255),
+			email VARCHAR(255)
+		);`,
+	)
+	require.NoError(tb, err, "Failed to create users table (MySQL)")
+
+	_, err = adapter.Exec(
+		context.Background(),
+		`CREATE TABLE IF NOT EXISTS books (
+			id INT AUTO_INCREMENT PRIMARY KEY,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted BOOLEAN DEFAULT FALSE,
+			title VARCHAR(255),
+			user_id INT,
+			FOREIGN KEY(user_id) REFERENCES users(id)
+		);`,
+	)
+	require.NoError(tb, err, "Failed to create books table (MySQL)")
+
+	mockcache := &mockCacheClient{}
+	cleanup := func() {
+		tb.Logf("--- setupMySQLTestDB: Running cleanup function ---")
+		if adapter != nil {
+			_ = adapter.Close()
+		}
+		tb.Logf("--- setupMySQLTestDB: Cleanup finished ---")
+	}
+	return adapter, mockcache, cleanup
 }
 
 // setupCacheTest creates test setup specifically for cache tests.

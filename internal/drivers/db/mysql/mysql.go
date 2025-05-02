@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"reflect"
-	"regexp"
 	"strings"
 	"time"
 
@@ -19,9 +18,20 @@ import (
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 )
 
+// MySQLDialector implements the sqlbuilder.Dialector interface for MySQL.
+type MySQLDialector struct{}
+
+func (d MySQLDialector) Quote(identifier string) string {
+	return "`" + identifier + "`"
+}
+func (d MySQLDialector) Placeholder(_ int) string {
+	return "?"
+}
+
 // MySQLAdapter implements the DBAdapter interface for MySQL.
 type MySQLAdapter struct {
-	db *sql.DB
+	db      *sql.DB
+	builder *sqlbuilder.SQLBuilder // Added SQLBuilder field
 }
 
 // MySQLTx implements the Tx interface for MySQL.
@@ -55,8 +65,14 @@ func NewMySQLAdapter(dsn string) (thing.DBAdapter, error) {
 	db.SetMaxIdleConns(10)           // Example value
 	db.SetConnMaxLifetime(time.Hour) // Example value
 
+	// Create a SQLBuilder with MySQL dialect
+	builder := sqlbuilder.NewSQLBuilder(MySQLDialector{})
+
 	log.Println("MySQL adapter initialized successfully.")
-	return &MySQLAdapter{db: db}, nil
+	return &MySQLAdapter{
+		db:      db,
+		builder: builder,
+	}, nil
 }
 
 // --- DBAdapter Methods ---
@@ -76,18 +92,10 @@ func (a *MySQLAdapter) Close() error {
 	return errors.New("mysql adapter is nil or already closed")
 }
 
-// rebindMySQLIdentifiers replaces all double-quoted identifiers with backticks for MySQL compatibility.
-var doubleQuoteIdent = regexp.MustCompile(`"([a-zA-Z0-9_]+)"`)
-
-func rebindMySQLIdentifiers(sql string) string {
-	return doubleQuoteIdent.ReplaceAllString(sql, "`$1`")
-}
-
 // Get retrieves a single row and scans it into the destination struct.
 // Uses QueryContext and prepares scan destinations based on returned columns.
 // MySQL uses '\' placeholders, which is the default for database/sql.
 func (a *MySQLAdapter) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	query = rebindMySQLIdentifiers(query)
 	// TODO: Implement using db.QueryRowContext and Scan
 	// TODO: Handle sql.ErrNoRows
 	// IMPORTANT: Use '?' placeholders
@@ -163,7 +171,6 @@ func (a *MySQLAdapter) Get(ctx context.Context, dest interface{}, query string, 
 // Select executes a query and scans the results into a slice.
 // MySQL uses '?' placeholders.
 func (a *MySQLAdapter) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	query = rebindMySQLIdentifiers(query)
 	// TODO: Implement using db.QueryContext and loop through rows.Scan
 	// TODO: Handle slice of structs, slice of pointers, slice of basic types
 	// IMPORTANT: Use '?' placeholders
@@ -260,7 +267,6 @@ func (a *MySQLAdapter) Select(ctx context.Context, dest interface{}, query strin
 // Exec executes a query that doesn't return rows (INSERT, UPDATE, DELETE).
 // MySQL uses '?' placeholders.
 func (a *MySQLAdapter) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	query = rebindMySQLIdentifiers(query)
 	// TODO: Implement using db.ExecContext
 	// IMPORTANT: Use '?' placeholders
 	// return nil, fmt.Errorf("MySQLAdapter.Exec not implemented") // Remove placeholder
@@ -278,36 +284,47 @@ func (a *MySQLAdapter) Exec(ctx context.Context, query string, args ...interface
 	return result, nil
 }
 
-// GetCount executes a SELECT COUNT(*) query.
-// MySQL uses '?' placeholders.
+// GetCount executes a SELECT COUNT(*) query based on the provided parameters.
 func (a *MySQLAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params types.QueryParams) (int64, error) {
-	// TODO: Implement using db.QueryRowContext and Scan for SELECT COUNT(*)
-	// TODO: Construct query using info and params (handle WHERE)
-	// IMPORTANT: Use '?' placeholders
-	// return 0, fmt.Errorf("MySQLAdapter.GetCount not implemented") // Remove placeholder
+	log.Printf("DB GetCount (MySQL): Info=%+v, Params=%+v", info, params)
+	if a.db == nil {
+		return 0, fmt.Errorf("mysql adapter database is nil")
+	}
+	if info == nil || info.TableName == "" {
+		return 0, errors.New("getCount: model info or table name is missing")
+	}
 
-	// --- Basic Query Construction (Needs to be replaced by proper SQL builder later) ---
-	// This is a placeholder and likely needs a proper SQL builder from Task 9.8
-	whereClause := params.Where // Assuming params.Where is already valid SQL
-	args := params.Args
-	query := sqlbuilder.BuildCountSQL(info.TableName, whereClause)
-	// --- End Placeholder ---
+	args := params.Args // Keep a copy of the original args
 
-	query = rebindMySQLIdentifiers(query)
+	// Default to not including soft deleted records
+	whereClause := params.Where
+	if !params.IncludeDeleted {
+		if whereClause != "" {
+			whereClause = fmt.Sprintf("(%s) AND %s = false", whereClause, "deleted") // Use string literal for column name
+		} else {
+			whereClause = fmt.Sprintf("%s = false", "deleted") // Use string literal for column name
+		}
+	}
+
+	// Use the builder to generate the SQL
+	query := a.builder.BuildCountSQL(info.TableName, whereClause)
+
 	log.Printf("DB GetCount (MySQL): %s [%v]", query, args)
 	start := time.Now()
+
 	var count int64
 	err := a.db.QueryRowContext(ctx, query, args...).Scan(&count)
 	duration := time.Since(start)
 
 	if err != nil {
+		// ErrNoRows should NOT happen for COUNT(*), but handle defensively
 		if errors.Is(err, sql.ErrNoRows) {
-			// This shouldn't happen for SELECT COUNT(*), but handle defensively.
-			log.Printf("DB GetCount (No Rows - MySQL): %s [%v] (%s)", query, args, duration)
-			return 0, nil
+			log.Printf("WARN: GetCount query returned no rows unexpectedly for query: %s [%v] (%s)", query, args, duration)
+			// Treat as 0 count in this unlikely case
+			return 0, nil // Return 0 count, not ErrNotFound
 		}
 		log.Printf("DB GetCount Error (MySQL): %s [%v] (%s) - %v", query, args, duration, err)
-		return 0, fmt.Errorf("mysql GetCount query/scan error: %w", err)
+		return 0, fmt.Errorf("mysql GetCount scan error: %w", err)
 	}
 
 	log.Printf("DB GetCount Result (MySQL): %d (%s)", count, duration)
@@ -363,7 +380,6 @@ func (tx *MySQLTx) Rollback() error {
 
 // Get executes a query within the transaction.
 func (tx *MySQLTx) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	query = rebindMySQLIdentifiers(query)
 	// TODO: Implement using tx.tx.QueryRowContext and Scan
 	// IMPORTANT: Use '?' placeholders
 	// return fmt.Errorf("MySQLTx.Get not implemented") // Remove placeholder
@@ -434,7 +450,6 @@ func (tx *MySQLTx) Get(ctx context.Context, dest interface{}, query string, args
 
 // Select executes a query within the transaction.
 func (tx *MySQLTx) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	query = rebindMySQLIdentifiers(query)
 	// TODO: Implement using tx.tx.QueryContext and rows.Scan
 	// IMPORTANT: Use '?' placeholders
 	// return fmt.Errorf("MySQLTx.Select not implemented") // Remove placeholder
@@ -528,7 +543,6 @@ func (tx *MySQLTx) Select(ctx context.Context, dest interface{}, query string, a
 
 // Exec executes a query within the transaction.
 func (tx *MySQLTx) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	query = rebindMySQLIdentifiers(query)
 	// TODO: Implement using tx.tx.ExecContext
 	// IMPORTANT: Use '?' placeholders
 	// return nil, fmt.Errorf("MySQLTx.Exec not implemented") // Remove placeholder
@@ -680,4 +694,8 @@ func isBasicType(t reflect.Type) bool {
 // DB returns the underlying *sql.DB for advanced use cases.
 func (a *MySQLAdapter) DB() *sql.DB {
 	return a.db
+}
+
+func (a *MySQLAdapter) Builder() *sqlbuilder.SQLBuilder {
+	return a.builder
 }

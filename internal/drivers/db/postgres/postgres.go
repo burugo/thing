@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"log"
 	"reflect"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
@@ -20,14 +18,26 @@ import (
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
 
+// PostgresDialector implements the sqlbuilder.Dialector interface for PostgreSQL.
+type PostgresDialector struct{}
+
+func (d PostgresDialector) Quote(identifier string) string {
+	return `"` + identifier + `"`
+}
+func (d PostgresDialector) Placeholder(index int) string {
+	return fmt.Sprintf("$%d", index)
+}
+
 // PostgreSQLAdapter implements the DBAdapter interface for PostgreSQL.
 type PostgreSQLAdapter struct {
-	db *sql.DB
+	db      *sql.DB
+	builder *sqlbuilder.SQLBuilder
 }
 
 // PostgreSQLTx implements the Tx interface for PostgreSQL.
 type PostgreSQLTx struct {
-	tx *sql.Tx
+	tx      *sql.Tx
+	builder *sqlbuilder.SQLBuilder
 }
 
 // Compile-time checks to ensure interfaces are implemented.
@@ -56,8 +66,14 @@ func NewPostgreSQLAdapter(dsn string) (thing.DBAdapter, error) {
 	db.SetMaxIdleConns(10)
 	db.SetConnMaxLifetime(time.Hour)
 
+	// Create a SQLBuilder with PostgreSQL dialect
+	builder := sqlbuilder.NewSQLBuilder(PostgresDialector{})
+
 	log.Println("PostgreSQL adapter initialized successfully.")
-	return &PostgreSQLAdapter{db: db}, nil
+	return &PostgreSQLAdapter{
+		db:      db,
+		builder: builder,
+	}, nil
 }
 
 // --- DBAdapter Methods ---
@@ -84,7 +100,7 @@ func (a *PostgreSQLAdapter) Get(ctx context.Context, dest interface{}, query str
 	// TODO: Handle sql.ErrNoRows
 	// return fmt.Errorf("PostgreSQLAdapter.Get not implemented") // Remove placeholder
 
-	reboundQuery := rebind(query)
+	reboundQuery := a.builder.Rebind(query)
 	log.Printf("DB Get (PostgreSQL): %s [%v] (Original: %s)", reboundQuery, args, query)
 	start := time.Now()
 
@@ -153,7 +169,7 @@ func (a *PostgreSQLAdapter) Get(ctx context.Context, dest interface{}, query str
 func (a *PostgreSQLAdapter) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	// return fmt.Errorf("PostgreSQLAdapter.Select not implemented") // Remove placeholder
 
-	reboundQuery := rebind(query)
+	reboundQuery := a.builder.Rebind(query)
 	log.Printf("DB Select (PostgreSQL): %s [%v] (Original: %s)", reboundQuery, args, query)
 	start := time.Now()
 
@@ -246,7 +262,7 @@ func (a *PostgreSQLAdapter) Select(ctx context.Context, dest interface{}, query 
 func (a *PostgreSQLAdapter) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	// return nil, fmt.Errorf("PostgreSQLAdapter.Exec not implemented") // Remove placeholder
 
-	reboundQuery := rebind(query)
+	reboundQuery := a.builder.Rebind(query)
 	start := time.Now()
 	result, err := a.db.ExecContext(ctx, reboundQuery, args...)
 	duration := time.Since(start)
@@ -270,8 +286,8 @@ func (a *PostgreSQLAdapter) GetCount(ctx context.Context, info *thing.ModelInfo,
 	// --- Basic Query Construction (Placeholder - Needs SQL builder) ---
 	whereClause := params.Where
 	args := params.Args
-	baseQuery := sqlbuilder.BuildCountSQL(info.TableName, whereClause)
-	reboundQuery := rebind(baseQuery)
+	baseQuery := a.builder.BuildCountSQL(info.TableName, whereClause)
+	reboundQuery := a.builder.Rebind(baseQuery)
 	// --- End Placeholder ---
 
 	log.Printf("DB GetCount (PostgreSQL): %s [%v] (Original: %s)", reboundQuery, args, baseQuery)
@@ -303,12 +319,17 @@ func (a *PostgreSQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (t
 		log.Printf("DB BeginTx Error (PostgreSQL): %v", err)
 		return nil, fmt.Errorf("postgres BeginTx error: %w", err)
 	}
-	return &PostgreSQLTx{tx: tx}, nil
+	return &PostgreSQLTx{tx: tx, builder: a.builder}, nil
 }
 
 // DB returns the underlying *sql.DB for advanced use cases.
 func (a *PostgreSQLAdapter) DB() *sql.DB {
 	return a.db
+}
+
+// Builder returns the SQLBuilder associated with the PostgreSQLAdapter.
+func (a *PostgreSQLAdapter) Builder() *sqlbuilder.SQLBuilder {
+	return a.builder
 }
 
 // --- Tx Methods ---
@@ -345,7 +366,7 @@ func (tx *PostgreSQLTx) Rollback() error {
 func (tx *PostgreSQLTx) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	// return fmt.Errorf("PostgreSQLTx.Get not implemented") // Remove placeholder
 
-	reboundQuery := rebind(query)
+	reboundQuery := tx.builder.Rebind(query)
 	log.Printf("DB Tx Get (PostgreSQL): %s [%v] (Original: %s)", reboundQuery, args, query)
 	start := time.Now()
 
@@ -413,7 +434,7 @@ func (tx *PostgreSQLTx) Get(ctx context.Context, dest interface{}, query string,
 func (tx *PostgreSQLTx) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	// return fmt.Errorf("PostgreSQLTx.Select not implemented") // Remove placeholder
 
-	reboundQuery := rebind(query)
+	reboundQuery := tx.builder.Rebind(query)
 	log.Printf("DB Tx Select (PostgreSQL): %s [%v] (Original: %s)", reboundQuery, args, query)
 	start := time.Now()
 
@@ -505,7 +526,7 @@ func (tx *PostgreSQLTx) Select(ctx context.Context, dest interface{}, query stri
 func (tx *PostgreSQLTx) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	// return nil, fmt.Errorf("PostgreSQLTx.Exec not implemented") // Remove placeholder
 
-	reboundQuery := rebind(query)
+	reboundQuery := tx.builder.Rebind(query)
 	start := time.Now()
 	result, err := tx.tx.ExecContext(ctx, reboundQuery, args...)
 	duration := time.Since(start)
@@ -520,19 +541,6 @@ func (tx *PostgreSQLTx) Exec(ctx context.Context, query string, args ...interfac
 }
 
 // --- Placeholder Rebinding Helper ---
-
-// rebind converts a query with '?' placeholders to PostgreSQL '$N' placeholders.
-func rebind(query string) string {
-	re := regexp.MustCompile(`\?`)
-	n := 0
-	return re.ReplaceAllStringFunc(query, func(m string) string {
-		if m == `\\?` { // Handle escaped question marks - Fixed: need double backslash in regex match
-			return "?"
-		}
-		n++
-		return "$" + strconv.Itoa(n)
-	})
-}
 
 // --- Helper Functions (Copied from SQLite adapter - might need consolidation) ---
 

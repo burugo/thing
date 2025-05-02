@@ -12,7 +12,9 @@ import (
 	"thing/internal/types"
 	"time"
 
-	"thing/common" // Added import
+	"thing/common"              // Added import
+	"thing/internal/sqlbuilder" // Added import for SQLBuilder
+
 	// "github.com/jmoiron/sqlx" // Removed sqlx import
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 
@@ -20,12 +22,23 @@ import (
 	thing "thing"
 )
 
+// SQLiteDialector implements the sqlbuilder.Dialector interface for SQLite.
+type SQLiteDialector struct{}
+
+func (d SQLiteDialector) Quote(identifier string) string {
+	return `"` + identifier + `"`
+}
+func (d SQLiteDialector) Placeholder(_ int) string {
+	return "?"
+}
+
 // SQLiteAdapter implements the thing.DBAdapter interface for SQLite.
 type SQLiteAdapter struct {
 	db      *sql.DB // Changed from *sqlx.DB
 	dsn     string
 	closeMx sync.Mutex
 	closed  bool
+	builder *sqlbuilder.SQLBuilder // Added SQLBuilder field
 }
 
 // Ensure SQLiteAdapter implements thing.DBAdapter.
@@ -55,8 +68,15 @@ func NewSQLiteAdapter(dsn string) (thing.DBAdapter, error) { // Return interface
 		return nil, fmt.Errorf("failed to ping sqlite database: %w", err)
 	}
 
+	// Create a SQLBuilder with SQLite dialect
+	builder := sqlbuilder.NewSQLBuilder(SQLiteDialector{})
+
 	log.Println("SQLite adapter initialized successfully.")
-	return &SQLiteAdapter{db: db, dsn: dsn}, nil
+	return &SQLiteAdapter{
+		db:      db,
+		dsn:     dsn,
+		builder: builder,
+	}, nil
 }
 
 // Get retrieves a single row and scans it into the destination struct.
@@ -729,4 +749,8 @@ func isBasicType(t reflect.Type) bool {
 // DB returns the underlying *sql.DB for advanced use cases.
 func (a *SQLiteAdapter) DB() *sql.DB {
 	return a.db
+}
+
+func (a *SQLiteAdapter) Builder() *sqlbuilder.SQLBuilder {
+	return a.builder
 }

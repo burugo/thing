@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"     // For placeholder logging
 	"reflect" // Added for parsing env var
+	"thing/internal/sqlbuilder"
 )
 
 // --- Thing Core Struct ---
@@ -19,10 +20,11 @@ type Model interface {
 // Thing is the central access point for ORM operations, analogous to gorm.DB.
 // It holds database/cache clients and the context for operations.
 type Thing[T Model] struct {
-	db    DBAdapter
-	cache CacheClient
-	ctx   context.Context
-	info  *ModelInfo // Pre-computed metadata for type T
+	db      DBAdapter
+	cache   CacheClient
+	ctx     context.Context
+	info    *ModelInfo             // Pre-computed metadata for type T
+	builder *sqlbuilder.SQLBuilder // Add builder field
 }
 
 // --- Thing Constructors & Accessors ---
@@ -58,10 +60,11 @@ func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 
 	log.Println("DEBUG: New[T] - Creating Thing struct") // Added log
 	t := &Thing[T]{
-		db:    db,
-		cache: cache,
-		ctx:   context.Background(), // Default context
-		info:  info,                 // Store pre-computed info
+		db:      db,
+		cache:   cache,
+		ctx:     context.Background(),
+		info:    info,
+		builder: db.Builder(),
 	}
 	log.Println("DEBUG: New[T] - Returning new Thing instance") // Added log
 	return t, nil

@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"strings"
 	"thing/common"
-	"thing/internal/sqlbuilder"
 	"thing/internal/types"
 )
 
@@ -373,7 +372,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 	// Fetch IDs from DB if cache was not hit (cacheHit is false)
 	if !cacheHit {
 		// Build query to select only the primary key of the related model
-		idQuery := sqlbuilder.BuildSelectSQL(relatedInfo.TableName, []string{relatedInfo.PkName})
+		idQuery := t.builder.BuildSelectSQL(relatedInfo.TableName, []string{relatedInfo.PkName})
 		if relatedIDParams.Where != "" {
 			idQuery = idQuery + " WHERE " + relatedIDParams.Where
 		}
