@@ -130,11 +130,25 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   Implement helpers/API for managing database transactions.
     *   Ensure ORM operations can be performed within a transaction.
     *   **Success Criteria:** Can execute multiple ORM operations within a single DB transaction.
-9.  **[ ] Adding Support for More Databases (MySQL, PostgreSQL/SQLite):**
+9.  **[ ] Adding Support for More Databases (MySQL, PostgreSQL):** (**Task Type: New Feature**)
     *   Implement `DBAdapter` for the remaining target databases.
     *   Refactor SQL generation to handle dialect differences.
     *   Test all features against all supported databases.
-    *   **Success Criteria:** All ORM features work consistently across MySQL, PostgreSQL, and SQLite.
+    *   **Sub-tasks:**
+        *   [ ] 9.1: Add `github.com/go-sql-driver/mysql` and `github.com/lib/pq` to `go.mod`.
+        *   [ ] 9.2: Create `internal/drivers/db/mysql/mysql.go` with `MySQLAdapter`, `MySQLTx` structs.
+        *   [ ] 9.3: Create `internal/drivers/db/postgres/postgres.go` with `PostgreSQLAdapter`, `PostgreSQLTx` structs.
+        *   [ ] 9.4: Implement `mysql.NewMySQLAdapter`.
+        *   [ ] 9.5: Implement `postgres.NewPostgreSQLAdapter`.
+        *   [ ] 9.6: Implement `DBAdapter`/`DBTransaction` for MySQL (using `?` placeholders).
+        *   [ ] 9.7: Implement `DBAdapter`/`DBTransaction` for PostgreSQL (using `$N` placeholders, potentially with rebinding helper).
+        *   [ ] 9.8: (Optional) Create SQL builder/helper utils for dialect differences (placeholders, simple statements, specific columns in SELECT).
+        *   [ ] 9.9: (Optional) Update `thing.Configure` or add functions to select/configure adapters.
+        *   [ ] 9.10: Set up local/Docker test environments for MySQL & PostgreSQL.
+        *   [ ] 9.11: Run full test suite (`./tests`) against MySQL, fix failures.
+        *   [ ] 9.12: Run full test suite (`./tests`) against PostgreSQL, fix failures.
+        *   [ ] 9.13: Commit
+    *   **Success Criteria:** All ORM features work consistently across MySQL, PostgreSQL, and SQLite. All tests in `./tests` pass on all three databases.
 10. **[ ] Querying Refinements:** (Scope Reduced)
     *   Refine the implementation and API for list queries (filtering, ordering, pagination) based on feedback and testing. *(Refactoring covered in Task 16)*
     *   Ensure efficient SQL generation for supported databases for these simple queries, **selecting only the necessary struct fields**.
@@ -355,6 +369,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
             *   [x] 24.4.4: Rerun all tests (`go test -v ./...`).
         *   [x] 24.5: Commit changes.
     *   **Success Criteria:** Listeners can be successfully unregistered. Tests (including previously interfering ones) pass reliably. Hook system testability improved.
+    *   **Planner Review:** Fix accepted. Testability improved, all tests pass. (2025-05-02)
 
 ## JSON Serialization Rule (User-Defined)
 
