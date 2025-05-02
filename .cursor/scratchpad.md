@@ -138,8 +138,8 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
         *   [x] 9.1: Add MySQL and PostgreSQL drivers to go.mod，已提交。
         *   [x] 9.2: Create internal/drivers/db/mysql/mysql.go with MySQLAdapter, MySQLTx structs.
         *   [x] 9.3: Create internal/drivers/db/postgres/postgres.go with PostgreSQLAdapter, PostgreSQLTx structs.
-        *   [ ] 9.4: Implement `mysql.NewMySQLAdapter`.
-        *   [ ] 9.5: Implement `postgres.NewPostgreSQLAdapter`.
+        *   [x] 9.4: Implement mysql.NewMySQLAdapter.
+        *   [x] 9.5: Implement postgres.NewPostgreSQLAdapter.
         *   [ ] 9.6: Implement `DBAdapter`/`DBTransaction` for MySQL (using `?` placeholders).
         *   [ ] 9.7: Implement `DBAdapter`/`DBTransaction` for PostgreSQL (using `$N` placeholders, potentially with rebinding helper).
         *   [ ] 9.8: (Optional) Create SQL builder/helper utils for dialect differences (placeholders, simple statements, specific columns in SELECT).
