@@ -18,7 +18,7 @@
 - An elegant and developer-friendly API designed for ease of use and extensibility.
 - The ultimate objective is to release this ORM as an open-source library for the Go community.
 
-This project builds upon the initial goal of replicating a specific PHP `BaseModel`, enhancing it with multi-DB support and packaging it as a reusable `thing` library, while intentionally keeping the query scope focused.
+This project builds upon the initial goal of replicating a specific `BaseModel`, enhancing it with multi-DB support and packaging it as a reusable `thing` library, while intentionally keeping the query scope focused.
 
 - **Flexible JSON Serialization Rule:** The user has defined a rule for JSON serialization: `user.ToJSON(["name","age",{"book":["-publish_at"]},"teacher"])`. Fields prefixed with `-` are excluded. Objects like `{book:["-publish_at"]}` specify nested serialization (e.g., include `book` list but exclude `publish_at` in each book). Relationship fields (e.g., `book` for hasMany, `teacher` for belongsTo) are supported.
 
@@ -51,6 +51,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - **Snake_case to CamelCase mapping:** Required robust mapping from DSL/Include field names (snake_case) to Go method names (CamelCase).
 - **TDD:** TDD: Tests must cover all combinations (field only, method only, both, omitted, etc.).
 - **Cache Invalidation Strategy:** Balancing invalidation precision (avoiding unnecessary deletions) with efficiency (avoiding complex checks like `checkModelMatchAgainstQuery`) and correctness (handling create/delete/update). Current discussion focuses on optimizing `GlobalCacheIndex` with field/value-based indexing versus external tag-based systems.
+- [x] 精确失效：实现全表 list cache key（where 为空）始终失效，其它 key 只依赖字段/值级索引。
 
 ## Design Philosophy and API Goals
 
@@ -185,7 +186,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   Publish the module.
     *   **Success Criteria:** Project is ready for public release and contributions.
 16. **[x] Refactor `CachedResult` and Querying API:** *(New Task based on user request - Completed)*
-    *   **Goal:** Align `CachedResult` with PHP example, improve caching strategy, and simplify query API.
+    *   **Goal:** Align `CachedResult` improve caching strategy, and simplify query API.
     *   **Sub-tasks:**
         *   **[x] Refactor `QueryParams`:**
             *   Remove `Start` and `Limit` fields from `thing.QueryParams`.
@@ -312,7 +313,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   **[x] 22.2 实现 QueryParams 解析器，提取 =/IN 字段和值。**
     *   **[x] 22.3 RegisterQuery 注册逻辑更新。**
     *   **[x] 22.4 GetKeysByValue 方法实现。**
-    *   **[ ] 22.5 缓存失效逻辑修改。**
+    *   **[x] 22.5 缓存失效逻辑修改。**
     *   **[ ] 22.6 新增/更新测试。**
 
 ## JSON Serialization Rule (User-Defined)
@@ -346,20 +347,34 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - [x] 22.2 实现 QueryParams 解析器，提取 =/IN 字段和值。
 - [x] 22.3 RegisterQuery 注册逻辑更新。
 - [x] 22.4 GetKeysByValue 方法实现。
-- [ ] 22.5 缓存失效逻辑修改。
-- [ ] 22.6 新增/更新测试。
+- [x] 22.5 缓存失效逻辑修改。
+- [x] 精确失效：实现全表 list cache key（where 为空）始终失效，其它 key 只依赖字段/值级索引。
+- [x] Refactoring: Remove table-level index logic and related tests (GetPotentiallyAffectedQueries). Only value/field/full-table indexes remain.
+- [x] Refactoring: Inline and remove checkModelMatchAgainstQuery; use cache.CheckQueryMatch directly for cache invalidation.
+- [x] Refactoring: Merge updateAffectedQueryCaches and handleDeleteInQueryCaches into invalidateAffectedQueryCaches. All call sites updated.
+- [x] 1. Confirm and document the mismatch between test and code for `IN` clause argument style.
+- [x] 2. Update the test to use `IN (?)` with a slice argument.
+- [x] 3. Fix the query builder to expand `IN` clause slices into multiple placeholders and flatten arguments.
+- [x] 4. Update documentation/comments for clarity on `IN` clause usage.
+- [x] 5. Re-run all tests to verify.
 
 ## Executor's Feedback or Assistance Requests
 
-- Executor completed method-based virtual property feature. All tests pass. No further action needed for this task.
-- **Confirmed:** Basic CRUD, Relationship Management (Phase 1), and Transaction Management are implemented and verified by tests.
-- 已完成 GlobalCacheIndex 结构扩展，增加 valueIndex/fieldIndex 字段，未影响现有功能，测试通过，已提交。
-- 已完成 ParseExactMatchFields 解析器实现，TDD 全部通过，已提交。
-- 下一步将更新 RegisterQuery 注册逻辑，填充 valueIndex/fieldIndex。
+- Fixed the SQL builder to expand `IN` clause slices into multiple placeholders and flatten the argument list.
+- Updated the test to use the correct `IN` clause format.
+- All tests now pass (`go test -v ./tests | grep FAIL` returns no failures).
+- Committed the changes with a clear message.
 
 ## Lessons
 
 - **Revised Delete Cache Behavior:** After a successful `Delete()` operation, the corresponding object cache key is now set to `NoneResult` instead of being directly deleted. This provides stronger consistency guarantees against race conditions and aligns with the behavior of `ByID` when a record is not found in the database.
+- **精确缓存失效：优先用 valueIndex（字段=值精确匹配）、FieldIndex（字段级范围/模糊匹配）定位受影响的查询缓存键，最后与 GetPotentiallyAffectedQueries 取并集，确保所有相关缓存都能被正确失效。这样能显著减少无关缓存的无谓失效，提高性能。
+- 精确失效最佳实践：全表缓存 key 需单独索引并始终失效，避免表级 union 造成大范围无谓失效。
+- Table-level cache index is not needed for precise invalidation; value/field/full-table indexes are sufficient.
+- After merging cache invalidation logic, helper wrappers like checkModelMatchAgainstQuery can be removed for clarity.
+- Unifying cache invalidation logic reduces code duplication and makes future maintenance easier.
+- **Always expand slice arguments for `IN` clauses into the correct number of placeholders and flatten the argument list for SQL drivers.**
+- **Preserve parentheses when reconstructing SQL WHERE clauses to avoid syntax errors.**
 
 ---
 
@@ -380,3 +395,15 @@ RegisterQuery 注册逻辑已实现，valueIndex/fieldIndex 自动填充，测�
 GetKeysByValue 方法已实现，测试全部通过，已提交。
 
 下一步将进入缓存失效逻辑修改，优先用值级/字段级索引。
+
+## Future/Optional Enhancements
+
+- [ ] Integrate singleflight for cache stampede protection
+    - Goal: When a cache miss occurs, ensure that only one request for a given key queries the database, while other concurrent requests wait and reuse the result.
+    - Approach: Use golang.org/x/sync/singleflight to wrap DB fetch logic in ByID, Query, Fetch, etc., on cache miss.
+    - Status: Change points and design have been fully analyzed; implementation deferred until needed.
+
+- [ ] L1/L2 cache support (in-memory + Redis)
+    - Goal: Add a two-level cache system, with a fast in-memory (L1) cache for each process and a distributed (L2) cache such as Redis.
+    - Approach: Implement a process-wide in-memory cache (e.g., map or LRU) for hot objects/queries, falling back to Redis on miss. Ensure consistency and invalidation across both layers.
+    - Status: Not currently implemented; to be planned and scheduled as needed.
