@@ -342,18 +342,18 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
         - 可通过 GetCacheStats 获取计数统计结果。
         - 统计准确，测试覆盖。
         - 方法和字段有适当注释说明。
-24. **[ ] Implement UnregisterListener Function** (**Task Type: New Feature**)
+24. **[x] Implement UnregisterListener Function** (**Task Type: New Feature**)
     *   **Goal:** Provide a way to remove registered event listeners to improve testability and flexibility.
     *   **Sub-tasks:**
-        *   [ ] 24.1: Implement `UnregisterListener` in `hooks.go`.
-        *   [ ] 24.2: Add `TestHook_UnregisterListener`.
-        *   [ ] 24.3: Uncomment and fix `TestHook_ErrorAborts`.
-        *   **[!] 24.4: Run all tests (including tagged hook tests) to verify.** (Blocked by build error)
-            *   **[ ] 24.4.1:** Move `examples/models/models.go` to `tests/models.go` (adjust package name).
-            *   **[ ] 24.4.2:** Update imports in `examples/04_hooks/main.go` and `tests/hooks_test.go`.
-            *   **[ ] 24.4.3:** Rerun hook tests (`go test -v -tags=hooks ./tests`).
-            *   **[ ] 24.4.4:** Rerun all tests (`go test -v ./...`).
-        *   [ ] 24.5: Commit changes.
+        *   [x] 24.1: Implement `UnregisterListener(eventType EventType, listener EventListener)` in `hooks.go`, ensuring thread safety with `listenerMutex`.
+        *   [x] 24.2: Add `TestHook_UnregisterListener` test case in `tests/hooks_test.go` (under `hooks` build tag).
+        *   [x] 24.3: Modify `TestHook_ErrorAborts` in `tests/hooks_test.go` to use `defer UnregisterListener` for cleanup and uncomment the test.
+        *   [x] 24.4: Run all tests (including tagged hook tests) to verify.
+            *   [x] 24.4.1: Move `examples/models/models.go` to `tests/models.go` (adjust package name). (Corrected: Created `tests/models.go` and `examples/04_hooks/models.go`)
+            *   [x] 24.4.2: Update imports in `examples/04_hooks/main.go` and `tests/hooks_test.go`.
+            *   [x] 24.4.3: Rerun hook tests (`go test -v -tags=hooks ./tests`).
+            *   [x] 24.4.4: Rerun all tests (`go test -v ./...`).
+        *   [x] 24.5: Commit changes.
     *   **Success Criteria:** Listeners can be successfully unregistered. Tests (including previously interfering ones) pass reliably. Hook system testability improved.
 
 ## JSON Serialization Rule (User-Defined)
@@ -481,3 +481,17 @@ GetKeysByValue 方法已实现，测试全部通过，已提交。
     - [ ] Add tests for TTL configuration and expiration
     - [ ] Update documentation/comments
     - [ ] Verify all tests pass and commit
+
+## Workflow Guidelines
+
+*   **Language Consistency:** All code comments, git commit messages, and content written in `.cursor/scratchpad.md` must be in English. Planner communication with the user can be in Chinese.
+*   **Test-Driven Development (TDD):** Mandatory for `New Feature` tasks. Apply flexibly elsewhere. Final verification command: `go test -v ./tests | grep FAIL`.
+*   **Testing Strategy:**
+    *   **Avoid `go test -v ./...` directly in terminal for debugging:** It produces excessive output, making it hard to find failures.
+    *   **Recommended Alternatives:**
+        *   **Specific Tests:** `go test -v ./tests/...` or `go test -v ./... -run ^TestSpecificFunction$` (Fastest)
+        *   **JSON Output (Go 1.10+):** `go test -json ./... | go tool test2json -t | grep FAIL` (Robust Filtering)
+        *   **Write to File:** `go test -v ./... > test_output.log && grep -E '--- FAIL:|FAIL:|Error:' test_output.log` (Simple & Portable)
+    *   **Final Verification:** Always use the required command: `go test -v ./tests | grep FAIL`.
+*   **Automatic Testing, Fixing, and Committing Workflow:**
+    1.  Execute Step.
