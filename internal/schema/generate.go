@@ -144,3 +144,103 @@ func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 
 	return allSQL, nil
 }
+
+// GenerateAlterTableSQL 生成 ALTER TABLE 语句以将实际表结构迁移为目标 struct 定义
+// modelInfo: 目标模型的 *ModelInfo（Go struct/tag 解析）
+// tableInfo: 实际表结构（数据库 introspection 得到）
+// dialect: "mysql" | "postgres" | "sqlite"
+func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect string) ([]string, error) {
+	typeMap, ok := TypeMapping[dialect]
+	if !ok {
+		return nil, fmt.Errorf("unsupported dialect: %s", dialect)
+	}
+	var sqls []string
+	tableName := modelInfo.TableName
+
+	// 1. 目标列映射
+	targetCols := make(map[string]ComparableFieldInfo)
+	for _, f := range modelInfo.CompareFields {
+		targetCols[f.DBColumn] = f
+	}
+	// 2. 实际列映射
+	dbCols := make(map[string]ColumnInfo)
+	for _, c := range tableInfo.Columns {
+		dbCols[c.Name] = c
+	}
+
+	// 3. 新增列
+	for col, f := range targetCols {
+		if _, ok := dbCols[col]; !ok {
+			// 新增列
+			goType := f.Type.String()
+			sqlType, ok := typeMap[goType]
+			if !ok {
+				sqlType, ok = typeMap[f.Kind.String()]
+				if !ok {
+					sqlType = "TEXT"
+				}
+			}
+			addCol := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", tableName, col, sqlType)
+			if col == modelInfo.PkName {
+				addCol += " PRIMARY KEY"
+			}
+			// 可扩展: NOT NULL, DEFAULT, UNIQUE
+			sqls = append(sqls, addCol)
+		}
+	}
+
+	// 4. 删除列
+	for col := range dbCols {
+		if _, ok := targetCols[col]; !ok {
+			// 删除列（部分数据库不支持，需手动处理）
+			if dialect == "sqlite" {
+				sqls = append(sqls, fmt.Sprintf("-- [manual] DROP COLUMN %s from %s (SQLite needs table rebuild)", col, tableName))
+			} else {
+				sqls = append(sqls, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", tableName, col))
+			}
+		}
+	}
+
+	// 5. 修改列类型/主键/唯一约束（仅检测，实际变更需谨慎）
+	for col, f := range targetCols {
+		if dbCol, ok := dbCols[col]; ok {
+			goType := f.Type.String()
+			sqlType, ok := typeMap[goType]
+			if !ok {
+				sqlType, ok = typeMap[f.Kind.String()]
+				if !ok {
+					sqlType = "TEXT"
+				}
+			}
+			if dbCol.DataType != sqlType {
+				// 类型变更
+				sqls = append(sqls, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", tableName, col, sqlType))
+			}
+			if dbCol.IsPrimary != (col == modelInfo.PkName) {
+				// 主键变更
+				sqls = append(sqls, fmt.Sprintf("-- [manual] PRIMARY KEY change for %s (may require table rebuild)", col))
+			}
+			if dbCol.IsUnique != isUniqueInModel(col, modelInfo) {
+				if isUniqueInModel(col, modelInfo) {
+					sqls = append(sqls, fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS uniq_%s_%s ON %s (%s)", tableName, col, tableName, col))
+				} else {
+					sqls = append(sqls, fmt.Sprintf("DROP INDEX IF EXISTS uniq_%s_%s", tableName, col))
+				}
+			}
+		}
+	}
+
+	// 6. 索引变更（仅简单支持单列索引/唯一索引）
+	// 可扩展: 多列索引、外键等
+	return sqls, nil
+}
+
+// isUniqueInModel 判断列是否在 modelInfo 中声明为唯一索引
+func isUniqueInModel(col string, modelInfo *ModelInfo) bool {
+	for _, idx := range modelInfo.UniqueIndexes {
+		if len(idx.Columns) == 1 && idx.Columns[0] == col {
+			return true
+		}
+	}
+	return false
+}
