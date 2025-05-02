@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"testing"
-	"thing/internal/cache"
 
 	"thing"
 	"thing/common"
+	"thing/internal/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -181,7 +181,7 @@ func TestThing_Query_Cache(t *testing.T) {
 	mockCache.ResetCalls()
 
 	// First query should miss cache - Query for Alice specifically
-	params := cache.QueryParams{
+	params := types.QueryParams{
 		Where: "name = ?",
 		Args:  []interface{}{"Alice Cache"},
 	}
@@ -239,7 +239,7 @@ func TestThing_Query_CacheInvalidation(t *testing.T) {
 	mockCache.Reset()
 
 	// Query to populate cache
-	params := cache.QueryParams{
+	params := types.QueryParams{
 		Where: "name = ?",
 		Args:  []interface{}{"Invalidate User"},
 	}
@@ -263,7 +263,7 @@ func TestThing_Query_CacheInvalidation(t *testing.T) {
 	// The incremental cache update logic in Save should remove the item from relevant list/count caches.
 
 	// Querying for old name should now return no results (cache should be invalidated)
-	oldNameParams := cache.QueryParams{
+	oldNameParams := types.QueryParams{
 		Where: "name = ?",
 		Args:  []interface{}{"Invalidate User"},
 	}
@@ -276,7 +276,7 @@ func TestThing_Query_CacheInvalidation(t *testing.T) {
 	assert.Empty(t, oldNameUsersFetched, "Should find no users with old name")
 
 	// Query with new name
-	newNameParams := cache.QueryParams{
+	newNameParams := types.QueryParams{
 		Where: "name = ?",
 		Args:  []interface{}{"Updated Invalidate User"},
 	}
@@ -404,7 +404,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	defer cleanup()
 
 	// --- Setup: Initial Query & Caching ---
-	params := cache.QueryParams{
+	params := types.QueryParams{
 		Where: "name = ?",
 		Args:  []interface{}{"Test User Incremental"},
 		Order: "id DESC",
@@ -607,7 +607,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	require.NoError(t, thingInstance.Save(user3), "Save user3 failed")
 
 	// Define query params for users named "Alice"
-	queryParams := cache.QueryParams{Where: "name = ?", Args: []interface{}{"Alice"}}
+	queryParams := types.QueryParams{Where: "name = ?", Args: []interface{}{"Alice"}}
 	queryResult, err := thingInstance.Query(queryParams)
 	require.NoError(t, err, "Thing.Query failed")
 
@@ -767,7 +767,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 
 // Helper to generate query cache keys (consistent with internal logic)
 // NOTE: This now calls the shared GenerateCacheKey from thing/cache.go.
-func generateQueryCacheKey(t *testing.T, keyType, tableName string, params cache.QueryParams) string {
+func generateQueryCacheKey(t *testing.T, keyType, tableName string, params types.QueryParams) string {
 	t.Helper()
 	return thing.GenerateCacheKey(keyType, tableName, params)
 }
@@ -778,7 +778,7 @@ func TestThing_Query_IncrementalCacheUpdate_Complex(t *testing.T) {
 	defer cleanup()
 
 	// Initial query: name = 'Bob', email LIKE '%@example.com'
-	params := cache.QueryParams{
+	params := types.QueryParams{
 		Where: "name = ? AND email LIKE ?",
 		Args:  []interface{}{"Bob", "%@example.com"},
 	}
@@ -815,7 +815,7 @@ func TestThing_Query_IncrementalCacheUpdate_IN(t *testing.T) {
 	thingUser, cacheClient, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
-	params := cache.QueryParams{
+	params := types.QueryParams{
 		Where: "name IN (?)",
 		Args:  []interface{}{[]string{"Tom", "Jerry"}},
 	}
@@ -843,7 +843,7 @@ func TestThing_Query_IncrementalCacheUpdate_Range(t *testing.T) {
 	thingUser, cacheClient, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
-	params := cache.QueryParams{
+	params := types.QueryParams{
 		Where: "id > ?",
 		Args:  []interface{}{100},
 	}

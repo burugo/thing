@@ -5,7 +5,7 @@ import (
 	"log"
 	"reflect"
 	"strings"
-	"thing/internal/cache"
+	"thing/internal/types"
 )
 
 // BuildSelectSQL constructs a basic SELECT statement for all columns defined in ModelInfo.
@@ -25,7 +25,7 @@ func BuildSelectSQL(tableName string, columns []string) string {
 
 // BuildSelectIDsSQL constructs a SELECT statement to fetch only primary key IDs.
 // Note: Exported and takes explicit arguments.
-func BuildSelectIDsSQL(tableName string, pkName string, params cache.QueryParams) (string, []interface{}) {
+func BuildSelectIDsSQL(tableName string, pkName string, params types.QueryParams) (string, []interface{}) {
 	var query strings.Builder
 	args := []interface{}{}
 	if tableName == "" || pkName == "" {

@@ -2,9 +2,9 @@ package thing_test
 
 import (
 	"testing"
-	"thing/internal/cache"
 
 	"thing"
+	"thing/internal/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,7 +40,7 @@ func TestThing_Query_Preload_BelongsTo(t *testing.T) {
 	require.NotZero(t, book.ID)
 
 	// Query for the book with preloaded user
-	params := cache.QueryParams{
+	params := types.QueryParams{
 		Where:    "id = ?",
 		Args:     []interface{}{book.ID},
 		Preloads: []string{"User"},
@@ -94,7 +94,7 @@ func TestThing_Query_Preload_HasMany(t *testing.T) {
 	}
 
 	// Query for the user
-	params := cache.QueryParams{
+	params := types.QueryParams{
 		Where:    "id = ?",
 		Args:     []interface{}{user.ID},
 		Preloads: []string{"Books"},

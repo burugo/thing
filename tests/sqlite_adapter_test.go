@@ -10,8 +10,8 @@ import (
 
 	"thing" // For QueryParams used in GetCount test
 	"thing/common"
-	"thing/internal/cache"
 	"thing/internal/drivers/db/sqlite"
+	"thing/internal/types"
 
 	_ "github.com/mattn/go-sqlite3" // Import driver
 	"github.com/stretchr/testify/assert"
@@ -231,20 +231,20 @@ func TestSQLiteAdapter_GetCount(t *testing.T) {
 
 	// Minimal ModelInfo needed for GetCount (TableName)
 	info := &thing.ModelInfo{TableName: "test_items"}
-	params := cache.QueryParams{Where: "name = ?", Args: []interface{}{"CountMe"}}
+	params := types.QueryParams{Where: "name = ?", Args: []interface{}{"CountMe"}}
 
 	count, err := adapter.GetCount(ctx, info, params)
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 
 	// Test zero count
-	paramsZero := cache.QueryParams{Where: "name = ?", Args: []interface{}{"NoSuchName"}}
+	paramsZero := types.QueryParams{Where: "name = ?", Args: []interface{}{"NoSuchName"}}
 	countZero, err := adapter.GetCount(ctx, info, paramsZero)
 	require.NoError(t, err)
 	assert.EqualValues(t, 0, countZero)
 
 	// Test count all
-	paramsAll := cache.QueryParams{}
+	paramsAll := types.QueryParams{}
 	countAll, err := adapter.GetCount(ctx, info, paramsAll)
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, countAll)

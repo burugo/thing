@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"thing/common"
-	"thing/internal/cache"
+	"thing/internal/types"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -49,7 +49,7 @@ func TestThing_SoftDelete_Basic(t *testing.T) {
 	assert.Equal(t, user.Name, (*fetchedUser).Name, "Fetched user Name should match") // Verify other fields too
 
 	// 5. Verify standard Query does not find the user
-	params := cache.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
+	params := types.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
 	queryResult, err := th.Query(params)
 	require.NoError(t, err)
 
@@ -78,7 +78,7 @@ func TestThing_Query_WithDeleted(t *testing.T) {
 	require.NoError(t, err)
 
 	// 3. Standard Query should not find the user
-	params := cache.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
+	params := types.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
 	stdQueryResult, err := th.Query(params)
 	require.NoError(t, err)
 
@@ -126,7 +126,7 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	require.True(t, mockCache.Exists(modelKey), "Model should be in cache before soft delete")
 
 	// Query to populate list/count cache
-	params := cache.QueryParams{Where: "name = ?", Args: []interface{}{"Soft Delete Cache"}}
+	params := types.QueryParams{Where: "name = ?", Args: []interface{}{"Soft Delete Cache"}}
 	listCacheKey := generateQueryCacheKey(t, "list", user.TableName(), params)
 	countCacheKey := generateQueryCacheKey(t, "count", user.TableName(), params)
 
@@ -221,7 +221,7 @@ func TestThing_WithDeleted_Immutability(t *testing.T) {
 	require.NoError(t, th.SoftDelete(user))
 
 	// Original query
-	params := cache.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
+	params := types.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
 	originalQuery, err := th.Query(params)
 	require.NoError(t, err)
 

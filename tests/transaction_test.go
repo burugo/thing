@@ -3,7 +3,7 @@ package thing_test
 import (
 	"context"
 	"testing"
-	"thing/internal/cache"
+	"thing/internal/types"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -128,7 +128,7 @@ func TestTransaction_Rollback(t *testing.T) {
 		// Columns might not be strictly needed if GetCount only uses TableName and Where
 		// Columns: []string{"id", "name", "email", "created_at", "updated_at"},
 	}
-	tempUserCount, dbErr := dbAdapter.GetCount(ctx, userInfo, cache.QueryParams{Where: "email = ?", Args: []interface{}{newUserTx.Email}})
+	tempUserCount, dbErr := dbAdapter.GetCount(ctx, userInfo, types.QueryParams{Where: "email = ?", Args: []interface{}{newUserTx.Email}})
 	require.NoError(t, dbErr, "Failed to count temp user after rollback")
 	assert.Zero(t, tempUserCount, "Temporary user created in transaction should not exist after rollback")
 }

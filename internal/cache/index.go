@@ -5,6 +5,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"thing/internal/types"
 )
 
 // Global instance of the cache index.
@@ -18,7 +19,7 @@ var GlobalCacheIndex = NewCacheIndex()
 type CacheIndex struct {
 	// keyToParams maps a query cache key (string) back to the QueryParams used to generate it.
 	// This is needed to evaluate if a changed model matches the query conditions.
-	keyToParams map[string]QueryParams
+	keyToParams map[string]types.QueryParams
 
 	// valueIndex maps table -> field -> value (as string) -> set of cache keys.
 	// Only for exact match ("=", "IN") queries. Used for efficient invalidation location.
@@ -38,7 +39,7 @@ type CacheIndex struct {
 // NewCacheIndex creates and initializes a new CacheIndex.
 func NewCacheIndex() *CacheIndex {
 	return &CacheIndex{
-		keyToParams:              make(map[string]QueryParams),
+		keyToParams:              make(map[string]types.QueryParams),
 		valueIndex:               make(map[string]map[string]map[string]map[string]bool),
 		FieldIndex:               make(map[string]map[string]map[string]bool),
 		TableToFullTableListKeys: make(map[string]map[string]bool),
@@ -49,7 +50,7 @@ func NewCacheIndex() *CacheIndex {
 // associated with a specific table.
 // This should be called when a query result (list or count) is cached.
 // It is safe for concurrent use.
-func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params QueryParams) {
+func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params types.QueryParams) {
 	if tableName == "" || cacheKey == "" {
 		return // Ignore invalid input
 	}
@@ -118,7 +119,7 @@ func toIndexValueString(v interface{}) string {
 }
 
 // extractAllWhereFields extracts all field names from the WHERE clause
-func extractAllWhereFields(params QueryParams) []string {
+func extractAllWhereFields(params types.QueryParams) []string {
 	var fields []string
 	where := params.Where
 	if where == "" {
@@ -141,9 +142,9 @@ func extractAllWhereFields(params QueryParams) []string {
 // GetQueryParamsForKey returns the QueryParams associated with a given cache key.
 // It returns the QueryParams and true if the key was found, otherwise zero QueryParams and false.
 // It is safe for concurrent use.
-func (idx *CacheIndex) GetQueryParamsForKey(cacheKey string) (QueryParams, bool) {
+func (idx *CacheIndex) GetQueryParamsForKey(cacheKey string) (types.QueryParams, bool) {
 	if cacheKey == "" {
-		return QueryParams{}, false
+		return types.QueryParams{}, false
 	}
 
 	idx.mu.RLock()
@@ -166,7 +167,7 @@ func ResetGlobalCacheIndex() {
 
 // ParseExactMatchFields parses QueryParams and returns a map of field name to value slice for all exact match (=, IN) conditions.
 // Only supports simple conditions connected by AND.
-func ParseExactMatchFields(params QueryParams) map[string][]interface{} {
+func ParseExactMatchFields(params types.QueryParams) map[string][]interface{} {
 	result := make(map[string][]interface{})
 	where := params.Where
 	args := params.Args

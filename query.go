@@ -9,6 +9,7 @@ import (
 	"thing/common"
 	"thing/internal/cache"
 	"thing/internal/sql"
+	"thing/internal/types"
 )
 
 const (
@@ -20,7 +21,7 @@ const (
 // It allows for efficient querying with pagination and caching.
 type CachedResult[T Model] struct {
 	thing          *Thing[T]
-	params         cache.QueryParams
+	params         types.QueryParams
 	cachedIDs      []int64
 	cachedCount    int64
 	hasLoadedIDs   bool
@@ -35,7 +36,7 @@ type CachedResult[T Model] struct {
 // The actual database query happens when Count() or Fetch() is called on the result.
 // It returns the CachedResult instance and a nil error, assuming basic validation passed.
 // Error handling for query execution is done within CachedResult methods.
-func (t *Thing[T]) Query(params cache.QueryParams) (*CachedResult[T], error) {
+func (t *Thing[T]) Query(params types.QueryParams) (*CachedResult[T], error) {
 	// TODO: Add validation for params if necessary?
 	return &CachedResult[T]{
 		thing:  t,

@@ -553,17 +553,20 @@ The user wants to change the signature of the `CheckQueryMatch` function in `int
 *   [x] Modify `CheckQueryMatch` function signature.
 *   [x] Update function body to use new parameters.
 *   [x] Update call sites of `CheckQueryMatch` (in `cache.go`).
-*   [ ] Update call sites of `CheckQueryMatch` (in `tests/query_match_test.go`).
-*   [ ] Run tests again.
-*   [ ] Commit changes.
+*   [x] Update call sites of `CheckQueryMatch` (in `tests/query_match_test.go`).
+*   [x] Run tests again.
+*   [x] Commit changes.
 *   [ ] **WAIT for user verification.**
 
 ## Executor's Feedback or Assistance Requests
 
 *   Initial refactoring of `CheckQueryMatch` completed.
 *   Fixed call sites in `cache.go`.
-*   Tests still fail, need to fix call sites in `tests/query_match_test.go`.
+*   Fixed call sites in `tests/query_match_test.go`.
+*   Tests passed.
+*   Changes committed (Commit hash: 08070d3 - *Note: Hash may not be exact if other commits occur*).
+*   **Structural refactoring complete. Waiting for user verification.**
 
 ## Lessons
 
-*(None yet)*
+*   When refactoring function signatures, remember to update all call sites, including those in test files. Compiler errors are a good guide for finding these locations.

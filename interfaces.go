@@ -3,7 +3,7 @@ package thing
 import (
 	"context"
 	"database/sql"
-	"thing/internal/cache"
+	"thing/internal/types"
 	"time"
 )
 
@@ -65,7 +65,7 @@ type DBAdapter interface {
 	Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
 
 	// GetCount executes a SELECT COUNT(*) query based on the provided parameters.
-	GetCount(ctx context.Context, info *ModelInfo, params cache.QueryParams) (int64, error)
+	GetCount(ctx context.Context, info *ModelInfo, params types.QueryParams) (int64, error)
 
 	// BeginTx starts a transaction.
 	BeginTx(ctx context.Context, opts *sql.TxOptions) (Tx, error)

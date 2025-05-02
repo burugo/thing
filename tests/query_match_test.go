@@ -3,13 +3,14 @@ package thing_test
 import (
 	"reflect"
 	"testing"
+	"thing/internal/cache"
+	"thing/internal/types"
 
 	"github.com/stretchr/testify/require"
 
 	// Import the package we are testing
 	// Adjust the import path if your module structure is different
 	"thing"
-	"thing/internal/cache" // Import internal cache
 )
 
 // Use a model defined within the main thing package or define one here if needed.
@@ -50,13 +51,13 @@ func TestCheckQueryMatch(t *testing.T) {
 	// Define test cases
 	tests := []struct {
 		name        string
-		params      cache.QueryParams // Use internal type
+		params      types.QueryParams // Use internal type
 		expected    bool
 		expectError bool
 	}{
 		{
 			name: "Simple Equality Match",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status = ?",
 				Args:  []interface{}{1},
 			},
@@ -64,7 +65,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Simple Equality Mismatch",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status = ?",
 				Args:  []interface{}{2},
 			},
@@ -72,7 +73,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Equality Match String",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name = ?",
 				Args:  []interface{}{"Test Name"},
 			},
@@ -80,7 +81,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Equality Mismatch String",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name = ?",
 				Args:  []interface{}{"Wrong Name"},
 			},
@@ -88,7 +89,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Multiple AND Conditions Match",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status = ? AND name = ?",
 				Args:  []interface{}{1, "Test Name"},
 			},
@@ -96,7 +97,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Multiple AND Conditions Mismatch (First)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status = ? AND name = ?",
 				Args:  []interface{}{0, "Test Name"},
 			},
@@ -104,7 +105,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Multiple AND Conditions Mismatch (Second)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status = ? AND name = ?",
 				Args:  []interface{}{1, "Wrong Name"},
 			},
@@ -112,7 +113,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "LIKE Match End Wildcard",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name LIKE ?",
 				Args:  []interface{}{"Test %"},
 			},
@@ -120,7 +121,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "LIKE Match Start Wildcard",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name LIKE ?",
 				Args:  []interface{}{"% Name"},
 			},
@@ -128,7 +129,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "LIKE Match Both Wildcards",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name LIKE ?",
 				Args:  []interface{}{"% Na%"},
 			},
@@ -136,7 +137,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "LIKE Match No Wildcards (Exact)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name LIKE ?",
 				Args:  []interface{}{"Test Name"},
 			},
@@ -144,7 +145,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "LIKE Mismatch",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name LIKE ?",
 				Args:  []interface{}{"Non%"},
 			},
@@ -152,7 +153,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "LIKE Case Sensitive Mismatch",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name LIKE ?",
 				Args:  []interface{}{"test %"},
 			},
@@ -160,7 +161,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "LIKE With Non-String Field (Error)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status LIKE ?",
 				Args:  []interface{}{"1%"},
 			},
@@ -169,7 +170,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Greater Than Match",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "count > ?",
 				Args:  []interface{}{50},
 			},
@@ -177,7 +178,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Greater Than Mismatch (Equal)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "count > ?",
 				Args:  []interface{}{100},
 			},
@@ -185,7 +186,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Greater Than Mismatch (Less)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "count > ?",
 				Args:  []interface{}{150},
 			},
@@ -193,7 +194,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Greater Than or Equal Match (Equal)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "count >= ?",
 				Args:  []interface{}{100},
 			},
@@ -201,7 +202,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Greater Than or Equal Match (Greater)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "count >= ?",
 				Args:  []interface{}{99},
 			},
@@ -209,7 +210,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Greater Than or Equal Mismatch",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "count >= ?",
 				Args:  []interface{}{101},
 			},
@@ -217,7 +218,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Less Than Match",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "amount < ?",
 				Args:  []interface{}{100.0},
 			},
@@ -225,7 +226,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Less Than Mismatch (Equal)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "amount < ?",
 				Args:  []interface{}{99.99},
 			},
@@ -233,7 +234,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Less Than or Equal Match",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "amount <= ?",
 				Args:  []interface{}{99.99},
 			},
@@ -241,7 +242,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "IN Match Integer",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status IN (?)",
 				Args:  []interface{}{[]int{1, 2, 3}},
 			},
@@ -249,7 +250,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "IN Match String",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name IN (?)",
 				Args:  []interface{}{[]string{"Another Name", "Test Name"}},
 			},
@@ -257,7 +258,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "IN Mismatch",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status IN (?)",
 				Args:  []interface{}{[]int{5, 6, 7}},
 			},
@@ -265,7 +266,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "IN Empty Slice Mismatch",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status IN (?)",
 				Args:  []interface{}{[]int{}},
 			},
@@ -273,7 +274,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "IN Invalid Arg Type (Error)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status IN (?)",
 				Args:  []interface{}{123},
 			},
@@ -282,7 +283,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "IN Incompatible Slice Type (Error)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status IN (?)",
 				Args:  []interface{}{[]string{"a", "b"}},
 			},
@@ -291,7 +292,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Unsupported Operator (Error)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status BETWEEN ? AND ?",
 				Args:  []interface{}{0, 5},
 			},
@@ -300,7 +301,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Pointer Field Equality Match",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "code = ?",
 				Args:  []interface{}{"ABC"},
 			},
@@ -308,7 +309,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Pointer Field Equality Mismatch",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "code = ?",
 				Args:  []interface{}{"DEF"},
 			},
@@ -316,7 +317,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Pointer Field Equality Match (Nil Arg)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "code = ?",
 				Args:  []interface{}{nil},
 			},
@@ -325,7 +326,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		// --- Add tests for !=, <>, NOT LIKE, NOT IN ---
 		{
 			name: "Not Equal (!=) Match",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status != ?",
 				Args:  []interface{}{2},
 			},
@@ -333,7 +334,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Not Equal (!=) Mismatch",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status != ?",
 				Args:  []interface{}{1},
 			},
@@ -341,7 +342,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Not Equal (<>) Match String",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name <> ?",
 				Args:  []interface{}{"Wrong Name"},
 			},
@@ -349,7 +350,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Not Equal (<>) Mismatch String",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name <> ?",
 				Args:  []interface{}{"Test Name"},
 			},
@@ -357,7 +358,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT LIKE Match",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name NOT LIKE ?",
 				Args:  []interface{}{"Non%"},
 			},
@@ -365,7 +366,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT LIKE Mismatch (End Wildcard)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name NOT LIKE ?",
 				Args:  []interface{}{"Test %"},
 			},
@@ -373,7 +374,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT LIKE Mismatch (Exact)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name NOT LIKE ?",
 				Args:  []interface{}{"Test Name"},
 			},
@@ -381,7 +382,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT LIKE With Non-String Field (Error)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status NOT LIKE ?",
 				Args:  []interface{}{"1%"},
 			},
@@ -390,7 +391,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT IN Match Integer",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status NOT IN (?)",
 				Args:  []interface{}{[]int{5, 6, 7}},
 			},
@@ -398,7 +399,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT IN Match String",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "name NOT IN (?)",
 				Args:  []interface{}{[]string{"Another Name", "Wrong Name"}},
 			},
@@ -406,7 +407,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT IN Mismatch",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status NOT IN (?)",
 				Args:  []interface{}{[]int{1, 2, 3}},
 			},
@@ -414,7 +415,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT IN Empty Slice Match", // Value is not in empty slice
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status NOT IN (?)",
 				Args:  []interface{}{[]int{}},
 			},
@@ -422,7 +423,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT IN Invalid Arg Type (Error)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status NOT IN (?)",
 				Args:  []interface{}{123},
 			},
@@ -431,7 +432,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "NOT IN Incompatible Slice Type (Error)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status NOT IN (?)",
 				Args:  []interface{}{[]string{"a", "b"}},
 			},
@@ -440,7 +441,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Unsupported Operator (!~)",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status !~ ?",
 				Args:  []interface{}{5},
 			},
@@ -449,7 +450,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Invalid WHERE Clause Format",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status = 1", // No placeholder
 				Args:  []interface{}{},
 			},
@@ -458,7 +459,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Mismatched Args/Placeholders",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "status = ? AND name = ?",
 				Args:  []interface{}{1}, // Only one arg
 			},
@@ -467,7 +468,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Column Not Found",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "nonexistent_col = ?",
 				Args:  []interface{}{1},
 			},
@@ -476,7 +477,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		},
 		{
 			name: "Empty WHERE Clause",
-			params: cache.QueryParams{
+			params: types.QueryParams{
 				Where: "",
 				Args:  []interface{}{},
 			},

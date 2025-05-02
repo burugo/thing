@@ -7,6 +7,7 @@ import (
 
 	// Import the package we are testing
 	"thing/internal/cache"
+	"thing/internal/types"
 )
 
 func TestCacheIndex_RegisterAndGet(t *testing.T) {
@@ -15,9 +16,9 @@ func TestCacheIndex_RegisterAndGet(t *testing.T) {
 
 	index := cache.GlobalCacheIndex // Use exported global
 
-	params1 := cache.QueryParams{Where: "id = ?", Args: []interface{}{1}}        // Use internal type
-	params2 := cache.QueryParams{Where: "name = ?", Args: []interface{}{"test"}} // Use internal type
-	params3 := cache.QueryParams{Where: "status = ?", Args: []interface{}{1}}
+	params1 := types.QueryParams{Where: "id = ?", Args: []interface{}{1}}        // Use internal type
+	params2 := types.QueryParams{Where: "name = ?", Args: []interface{}{"test"}} // Use internal type
+	params3 := types.QueryParams{Where: "status = ?", Args: []interface{}{1}}
 
 	table1 := "users"
 	table2 := "posts"
@@ -60,53 +61,53 @@ func TestCacheIndex_GetQueryParamsForKey_NotFound(t *testing.T) {
 
 	params, found := index.GetQueryParamsForKey("nonexistent_key")
 	assert.False(t, found)
-	assert.Equal(t, cache.QueryParams{}, params) // Use internal type
+	assert.Equal(t, types.QueryParams{}, params) // Use internal type
 }
 
 func TestParseExactMatchFields(t *testing.T) {
 	testCases := []struct {
 		name   string
-		params cache.QueryParams
+		params types.QueryParams
 		expect map[string][]interface{}
 	}{
 		{
 			name:   "single =",
-			params: cache.QueryParams{Where: "id = ?", Args: []interface{}{1}},
+			params: types.QueryParams{Where: "id = ?", Args: []interface{}{1}},
 			expect: map[string][]interface{}{"id": {1}},
 		},
 		{
 			name:   "multiple =",
-			params: cache.QueryParams{Where: "id = ? AND status = ?", Args: []interface{}{1, "active"}},
+			params: types.QueryParams{Where: "id = ? AND status = ?", Args: []interface{}{1, "active"}},
 			expect: map[string][]interface{}{"id": {1}, "status": {"active"}},
 		},
 		{
 			name:   "single IN",
-			params: cache.QueryParams{Where: "user_id IN (?)", Args: []interface{}{[]int{1, 2, 3}}},
+			params: types.QueryParams{Where: "user_id IN (?)", Args: []interface{}{[]int{1, 2, 3}}},
 			expect: map[string][]interface{}{"user_id": {1, 2, 3}},
 		},
 		{
 			name:   "mixed = and IN",
-			params: cache.QueryParams{Where: "user_id IN (?) AND status = ?", Args: []interface{}{[]int{1, 2}, "active"}},
+			params: types.QueryParams{Where: "user_id IN (?) AND status = ?", Args: []interface{}{[]int{1, 2}, "active"}},
 			expect: map[string][]interface{}{"user_id": {1, 2}, "status": {"active"}},
 		},
 		{
 			name:   "non-exact operator ignored",
-			params: cache.QueryParams{Where: "age > ? AND id = ?", Args: []interface{}{18, 2}},
+			params: types.QueryParams{Where: "age > ? AND id = ?", Args: []interface{}{18, 2}},
 			expect: map[string][]interface{}{"id": {2}},
 		},
 		{
 			name:   "empty where",
-			params: cache.QueryParams{Where: "", Args: nil},
+			params: types.QueryParams{Where: "", Args: nil},
 			expect: map[string][]interface{}{},
 		},
 		{
 			name:   "IN with string slice",
-			params: cache.QueryParams{Where: "name IN (?)", Args: []interface{}{[]string{"a", "b"}}},
+			params: types.QueryParams{Where: "name IN (?)", Args: []interface{}{[]string{"a", "b"}}},
 			expect: map[string][]interface{}{"name": {"a", "b"}},
 		},
 		{
 			name:   "IN with interface{} slice",
-			params: cache.QueryParams{Where: "tag IN (?)", Args: []interface{}{[]interface{}{1, "x"}}},
+			params: types.QueryParams{Where: "tag IN (?)", Args: []interface{}{[]interface{}{1, "x"}}},
 			expect: map[string][]interface{}{"tag": {1, "x"}},
 		},
 	}
@@ -128,10 +129,10 @@ func TestCacheIndex_GetKeysByValue(t *testing.T) {
 	key2 := "list:users:by_user_id_2"
 	key3 := "list:users:by_status_active"
 	key4 := "list:users:by_status_inactive"
-	params1 := cache.QueryParams{Where: "user_id = ?", Args: []interface{}{1}}
-	params2 := cache.QueryParams{Where: "user_id = ?", Args: []interface{}{2}}
-	params3 := cache.QueryParams{Where: "status = ?", Args: []interface{}{"active"}}
-	params4 := cache.QueryParams{Where: "status = ?", Args: []interface{}{"inactive"}}
+	params1 := types.QueryParams{Where: "user_id = ?", Args: []interface{}{1}}
+	params2 := types.QueryParams{Where: "user_id = ?", Args: []interface{}{2}}
+	params3 := types.QueryParams{Where: "status = ?", Args: []interface{}{"active"}}
+	params4 := types.QueryParams{Where: "status = ?", Args: []interface{}{"inactive"}}
 
 	idx.RegisterQuery(table, key1, params1)
 	idx.RegisterQuery(table, key2, params2)
@@ -157,7 +158,7 @@ func TestCacheIndex_GetKeysByValue(t *testing.T) {
 		assert.Empty(t, keys)
 	})
 	// 跨表测试
-	idx.RegisterQuery("posts", "list:posts:by_user_id_1", cache.QueryParams{Where: "user_id = ?", Args: []interface{}{1}})
+	idx.RegisterQuery("posts", "list:posts:by_user_id_1", types.QueryParams{Where: "user_id = ?", Args: []interface{}{1}})
 	keys := idx.GetKeysByValue("posts", "user_id", 1)
 	assert.ElementsMatch(t, []string{"list:posts:by_user_id_1"}, keys)
 }
@@ -172,11 +173,11 @@ func TestCacheIndex_FullTableListKeys(t *testing.T) {
 	listKey2 := "list:users:all2"
 	countKey := "count:users:all"
 	// Register full-table list keys
-	idx.RegisterQuery(table, listKey1, cache.QueryParams{Where: "", Args: nil})
-	idx.RegisterQuery(table, listKey2, cache.QueryParams{Where: "", Args: nil})
+	idx.RegisterQuery(table, listKey1, types.QueryParams{Where: "", Args: nil})
+	idx.RegisterQuery(table, listKey2, types.QueryParams{Where: "", Args: nil})
 	// Register count key and filtered list key to ensure they are not included
-	idx.RegisterQuery(table, countKey, cache.QueryParams{Where: "", Args: nil})
-	idx.RegisterQuery(table, "list:users:filtered", cache.QueryParams{Where: "id = ?", Args: []interface{}{1}})
+	idx.RegisterQuery(table, countKey, types.QueryParams{Where: "", Args: nil})
+	idx.RegisterQuery(table, "list:users:filtered", types.QueryParams{Where: "id = ?", Args: []interface{}{1}})
 
 	keys := idx.GetFullTableListKeys(table)
 	assert.ElementsMatch(t, []string{listKey1, listKey2}, keys)
@@ -189,7 +190,7 @@ func TestCacheIndex_FieldIndexAndValueIndex(t *testing.T) {
 
 	table := "items"
 	key := "list:items:by_id_and_age"
-	params := cache.QueryParams{Where: "id = ? AND age > ?", Args: []interface{}{5, 30}}
+	params := types.QueryParams{Where: "id = ? AND age > ?", Args: []interface{}{5, 30}}
 	idx.RegisterQuery(table, key, params)
 
 	// valueIndex should index only 'id' for exact match
@@ -217,7 +218,7 @@ func TestCacheIndex_INValueIndex(t *testing.T) {
 
 	table := "orders"
 	key := "list:orders:by_status_in"
-	params := cache.QueryParams{Where: "status IN (?)", Args: []interface{}{[]string{"pending", "complete"}}}
+	params := types.QueryParams{Where: "status IN (?)", Args: []interface{}{[]string{"pending", "complete"}}}
 	idx.RegisterQuery(table, key, params)
 
 	pendingKeys := idx.GetKeysByValue(table, "status", "pending")

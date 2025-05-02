@@ -14,7 +14,7 @@ import (
 
 	"thing"
 	"thing/common"
-	"thing/internal/cache"
+	"thing/internal/types"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
@@ -263,7 +263,7 @@ func (a *PostgreSQLAdapter) Exec(ctx context.Context, query string, args ...inte
 
 // GetCount executes a SELECT COUNT(*) query.
 // PostgreSQL uses '$N' placeholders.
-func (a *PostgreSQLAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params cache.QueryParams) (int64, error) {
+func (a *PostgreSQLAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params types.QueryParams) (int64, error) {
 	// return 0, fmt.Errorf("PostgreSQLAdapter.GetCount not implemented") // Remove placeholder
 
 	// --- Basic Query Construction (Placeholder - Needs SQL builder) ---

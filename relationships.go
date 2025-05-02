@@ -12,7 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"thing/common"
-	"thing/internal/cache"
+	"thing/internal/types"
 )
 
 // --- Relationship Loading ---
@@ -318,7 +318,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 
 	// Prepare query params for fetching related model IDs
 	placeholders := strings.Repeat("?,", len(uniqueLkList))[:len(uniqueLkList)*2-1]
-	relatedIDParams := cache.QueryParams{
+	relatedIDParams := types.QueryParams{
 		Where: fmt.Sprintf("\"%s\" IN (%s)", relatedFkColName, placeholders), // Ensure FK column is quoted
 		Args:  uniqueLkList,
 		// Potentially add Order from tag later?

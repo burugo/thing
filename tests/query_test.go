@@ -9,7 +9,7 @@ import (
 	"testing"
 	"thing"
 	"thing/common"
-	"thing/internal/cache"
+	"thing/internal/types"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +26,7 @@ func TestCachedResult_Count(t *testing.T) {
 	err = th.Save(&User{Name: "Count User 2"})
 	require.NoError(t, err)
 
-	params := cache.QueryParams{ /* Define params if needed, e.g., WHERE */ }
+	params := types.QueryParams{ /* Define params if needed, e.g., WHERE */ }
 	result, err := th.Query(params)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -49,7 +49,7 @@ func TestCachedResult_Count(t *testing.T) {
 
 	// --- Test Count - Zero Results & NoneResult Caching ---
 	mockCache.Reset() // Clear cache
-	paramsNone := cache.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
+	paramsNone := types.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
 	resultNone, err := th.Query(paramsNone)
 	require.NoError(t, err)
 	require.NotNil(t, resultNone)
@@ -85,7 +85,7 @@ func TestCachedResult_Fetch(t *testing.T) {
 		expectedIDs = append(expectedIDs, u.ID)
 	}
 
-	params := cache.QueryParams{Order: "id ASC"}
+	params := types.QueryParams{Order: "id ASC"}
 	result, err := th.Query(params)
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -118,7 +118,7 @@ func TestCachedResult_Fetch(t *testing.T) {
 
 	// --- Test Fetch - Zero Results & NoneResult Caching ---
 	mockCache.Reset()
-	paramsNone := cache.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
+	paramsNone := types.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
 	resultNone, err := th.Query(paramsNone)
 	require.NoError(t, err)
 	require.NotNil(t, resultNone)
@@ -152,7 +152,7 @@ func TestCachedResult_Fetch(t *testing.T) {
 			require.NoError(t, err)
 			expectedIDs = append(expectedIDs, u.ID)
 		}
-		params := cache.QueryParams{Order: "id ASC"}
+		params := types.QueryParams{Order: "id ASC"}
 		result, err := th.Query(params)
 		require.NoError(t, err)
 		// 预热缓存
@@ -187,7 +187,7 @@ func TestCachedResult_All(t *testing.T) {
 		expectedIDs = append(expectedIDs, u.ID)
 	}
 
-	params := cache.QueryParams{Order: "id ASC"}
+	params := types.QueryParams{Order: "id ASC"}
 	result, err := th.Query(params)
 	require.NoError(t, err)
 
@@ -227,7 +227,7 @@ func TestCachedResult_First(t *testing.T) {
 
 	t.Run("Find First Match", func(t *testing.T) {
 		mockCache.FlushAll(context.Background())
-		params := cache.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id ASC"}
+		params := types.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id ASC"}
 		cr, err := thingInstance.Query(params)
 		require.NoError(t, err)
 		firstUser, err := cr.First()
@@ -239,7 +239,7 @@ func TestCachedResult_First(t *testing.T) {
 
 	t.Run("Find First Match (Different Order)", func(t *testing.T) {
 		mockCache.FlushAll(context.Background())
-		params := cache.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id DESC"}
+		params := types.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id DESC"}
 		cr, err := thingInstance.Query(params)
 		require.NoError(t, err)
 		firstUser, err := cr.First()
@@ -251,7 +251,7 @@ func TestCachedResult_First(t *testing.T) {
 
 	t.Run("Find No Match", func(t *testing.T) {
 		mockCache.FlushAll(context.Background())
-		params := cache.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
+		params := types.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
 		cr, err := thingInstance.Query(params)
 		require.NoError(t, err)
 		_, err = cr.First()
@@ -261,7 +261,7 @@ func TestCachedResult_First(t *testing.T) {
 
 	t.Run("Cache Hit (List Cache -> ByID)", func(t *testing.T) {
 		mockCache.FlushAll(context.Background())
-		params := cache.QueryParams{Where: "name = ?", Args: []interface{}{u1.Name}}
+		params := types.QueryParams{Where: "name = ?", Args: []interface{}{u1.Name}}
 		cacheKey := testGenerateListCacheKey(t, thingInstance, params)
 		countCacheKey := testGenerateCountCacheKey(t, thingInstance, params)
 
@@ -302,7 +302,7 @@ func TestCachedResult_First(t *testing.T) {
 }
 
 // Helper to generate list cache key for testing
-func testGenerateListCacheKey[T thing.Model](t *testing.T, instance *thing.Thing[T], params cache.QueryParams) string {
+func testGenerateListCacheKey[T thing.Model](t *testing.T, instance *thing.Thing[T], params types.QueryParams) string {
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
 	info, err := thing.GetCachedModelInfo(modelType)
 	require.NoError(t, err)
@@ -310,7 +310,7 @@ func testGenerateListCacheKey[T thing.Model](t *testing.T, instance *thing.Thing
 }
 
 // Helper to generate count cache key for testing
-func testGenerateCountCacheKey[T thing.Model](t *testing.T, instance *thing.Thing[T], params cache.QueryParams) string {
+func testGenerateCountCacheKey[T thing.Model](t *testing.T, instance *thing.Thing[T], params types.QueryParams) string {
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
 	info, err := thing.GetCachedModelInfo(modelType)
 	require.NoError(t, err)

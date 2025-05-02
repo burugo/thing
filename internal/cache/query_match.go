@@ -6,6 +6,7 @@ import (
 	"log"
 	"reflect"
 	"strings"
+	"thing/internal/types"
 	// Import regexp for potential future use or complex LIKE
 	// "thing" // REMOVED import of root package
 )
@@ -33,7 +34,7 @@ func isArgNil(argValue interface{}) bool {
 //
 // Supports =, LIKE, >, <, >=, <=, IN, !=, <>, NOT LIKE, NOT IN operators joined by AND.
 // Support for OR clauses or complex LIKE patterns is NOT yet implemented.
-func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[string]string, params QueryParams) (bool, error) {
+func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[string]string, params types.QueryParams) (bool, error) {
 	if model == nil {
 		return false, errors.New("model cannot be nil")
 	}

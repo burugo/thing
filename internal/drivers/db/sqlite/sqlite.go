@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
-	"thing/internal/cache"
+	"thing/internal/types"
 	"time"
 
 	"thing/common" // Added import
@@ -247,7 +247,7 @@ func (a *SQLiteAdapter) Exec(ctx context.Context, query string, args ...interfac
 }
 
 // GetCount executes a SELECT COUNT(*) query based on the provided parameters.
-func (a *SQLiteAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params cache.QueryParams) (int64, error) {
+func (a *SQLiteAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params types.QueryParams) (int64, error) {
 	if a.isClosed() {
 		return 0, fmt.Errorf("adapter is closed")
 	}

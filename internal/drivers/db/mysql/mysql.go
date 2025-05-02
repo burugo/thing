@@ -12,7 +12,7 @@ import (
 
 	"thing"
 	"thing/common"
-	"thing/internal/cache"
+	"thing/internal/types"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 )
@@ -268,7 +268,7 @@ func (a *MySQLAdapter) Exec(ctx context.Context, query string, args ...interface
 
 // GetCount executes a SELECT COUNT(*) query.
 // MySQL uses '?' placeholders.
-func (a *MySQLAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params cache.QueryParams) (int64, error) {
+func (a *MySQLAdapter) GetCount(ctx context.Context, info *thing.ModelInfo, params types.QueryParams) (int64, error) {
 	// TODO: Implement using db.QueryRowContext and Scan for SELECT COUNT(*)
 	// TODO: Construct query using info and params (handle WHERE)
 	// IMPORTANT: Use '?' placeholders

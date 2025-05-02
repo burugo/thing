@@ -14,8 +14,9 @@ import (
 	"sync"
 	"time"
 
-	"thing/common"         // Added import for common errors/constants
-	"thing/internal/cache" // Import internal cache package
+	"thing/common" // Added import for common errors/constants
+	"thing/internal/cache"
+	"thing/internal/types" // Import internal cache package
 	"thing/internal/utils"
 	// "thing/internal/helpers" // Removed import
 )
@@ -162,7 +163,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	// --- Phase 1: Gather Tasks ---
 	type cacheTask struct {
 		cacheKey    string
-		queryParams cache.QueryParams
+		queryParams types.QueryParams
 		isListKey   bool
 		isCountKey  bool
 		needsAdd    bool
@@ -183,7 +184,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			log.Printf("WARN: QueryParams not found for registered cache key '%s'. Cannot perform cache update.", cacheKey)
 			continue
 		}
-		paramsRoot := cache.QueryParams{
+		paramsRoot := types.QueryParams{
 			Where:    paramsInternal.Where,
 			Args:     paramsInternal.Args,
 			Order:    paramsInternal.Order,
@@ -527,7 +528,7 @@ func (m *CacheKeyLockManagerInternal) Unlock(key string) {
 // --- Internal Cache Key Generation ---
 
 // GenerateQueryHash generates a unique hash for a given query.
-func GenerateQueryHash(params cache.QueryParams) string {
+func GenerateQueryHash(params types.QueryParams) string {
 	// Normalize and marshal params to JSON
 	paramsJson, err := json.Marshal(params)
 	if err != nil {
@@ -543,7 +544,7 @@ func GenerateQueryHash(params cache.QueryParams) string {
 
 // GenerateCacheKey generates a cache key for list or count queries with normalized arguments.
 // prefix should be either "list" or "count". This ensures consistent cache key generation across the codebase.
-func GenerateCacheKey(prefix, tableName string, params cache.QueryParams) string {
+func GenerateCacheKey(prefix, tableName string, params types.QueryParams) string {
 	// Normalize args for consistent hashing
 	normalizedParams := params
 	normalizedArgs := make([]interface{}, len(params.Args))
