@@ -414,25 +414,19 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - [x] 4. Update documentation/comments for clarity on `IN` clause usage.
 - [x] 5. Re-run all tests to verify.
 - [x] Task 18: Refactor SQLite Adapter & Fix Tests (Completed & Verified)
-*   [ ] **Task 7: Hooks/Events System**
-    *   [x] 7.1: Create `tests/hooks_test.go`.
-    *   [x] 7.2: Implement Hook Tests (TDD).
-    *   [x] 7.3: Create and implement `examples/04_hooks/main.go`.
-    *   [x] 7.4: Run all tests.
-    *   [x] 7.5: Commit changes.
-*   [ ] **Task 24: Implement UnregisterListener Function**
-    *   [x] 24.1: Implement `UnregisterListener` in `hooks.go`.
-    *   [x] 24.2: Add `TestHook_UnregisterListener`.
-    *   [x] 24.3: Uncomment and fix `TestHook_ErrorAborts`.
-    *   [ ] 24.4: Run tests (Blocked)
-        *   [ ] 24.4.1: Move models.go
-        *   [ ] 24.4.2: Update imports
-        *   [ ] 24.4.3: Rerun hook tests
-        *   [ ] 24.4.4: Rerun all tests
-    *   [ ] 24.5: Commit changes.
+- [x] MySQL Adapter: Add rebindMySQLIdentifiers to support double-quoted identifiers (已完成，已测试，已提交)
+- [ ] Refactor: Move identifier quoting from MySQL Adapter to SQL Builder layer (parameterize quote char)
+    - [x] Revert rebindMySQLIdentifiers logic in MySQL Adapter
+    - [x] Add quoteChar parameter to SQL builder (function signature version, now to be replaced)
+    - [ ] Refactor SQLBuilder as a struct with quoteChar field (GORM-style)
+    - [ ] Update all adapters to use SQLBuilder instance (not passing quoteChar each time)
+    - [ ] Ensure all tests pass
+    - [ ] Commit changes
 
 ## Executor's Feedback or Assistance Requests
 
+- 采纳 GORM 设计：将 quoteChar 封装进 SQLBuilder 结构体，每个 Adapter 拥有自己的 builder 实例，所有 SQL 生成自动用对的包裹符号。
+- 下一步将重构 SQLBuilder 及 Adapter 层，消除 quoteChar 参数传递。
 - Fixed the SQL builder to expand `IN` clause slices into multiple placeholders and flatten the argument list.
 - Updated the test to use the correct `IN` clause format.
 - All tests now pass (`go test -v ./tests | grep FAIL` returns no failures).
@@ -446,6 +440,10 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
 - Uncommented `TestHook_ErrorAborts` and added `defer UnregisterListener`.
 - Encountered build error when running tests (`package thing/examples/models is not in std` or `local import in non-local package`). Root cause seems to be Go toolchain struggling with imports between `thing/tests` and `thing/examples/models` within the same module.
 - **Next Step:** Moving `examples/models/models.go` to `tests/models.go` to resolve import issues. (Sub-task 24.4.1)
+- 已实现 rebindMySQLIdentifiers，MySQL 适配器现在支持 SQL 语句中双引号字段名的自动转换，所有相关测试已通过。
+- 已自动提交更改。
+- 该方案兼容性好，后续如有其他方言需求可继续在 Adapter 层扩展。
+- New task: Move identifier quoting logic from Adapter to Builder layer for better cross-database compatibility and maintainability. Will revert previous adapter-side quoting and implement quoteChar parameterization in the builder.
 
 ## Lessons
 

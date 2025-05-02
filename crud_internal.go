@@ -8,7 +8,6 @@ import (
 	"log"
 	"reflect"
 	"strings"
-	sqlbuilder "thing/internal/sqlbuilder"
 	"time"
 
 	// Import internal cache package
@@ -102,7 +101,7 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 
 		// Build and execute query
 		query := fmt.Sprintf("%s WHERE \"%s\" IN (%s)",
-			sqlbuilder.BuildSelectSQL(modelInfo.TableName, modelInfo.Columns), // Use passed modelInfo
+			db.Builder().BuildSelectSQL(modelInfo.TableName, modelInfo.Columns), // Use db.Builder()
 			modelInfo.PkName,
 			placeholders)
 
@@ -286,7 +285,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 			return errors.New("no columns to insert")
 		}
 
-		query = sqlbuilder.BuildInsertSQL(t.info.TableName, colsToInsert)
+		query = t.builder.BuildInsertSQL(t.info.TableName, colsToInsert)
 		args = vals
 
 		// Execute the INSERT query
@@ -298,12 +297,12 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		// We need the original state to correctly update query caches incrementally.
 		original = utils.NewPtr[T]()
 		// Now original is a non-nil pointer of type T
-		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", sqlbuilder.BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName), id) // Use exported PkName
+		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", t.builder.BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName), id) // Use exported PkName
 		if err != nil {
-			// If not found, use zero value for original
-			var zero T
+			// If not found, use a non-nil zero value pointer for original
+			original = utils.NewPtr[T]() // Ensure original is a non-nil pointer
 			setUpdatedAtTimestamp(value, now)
-			changedFields, err = findChangedFieldsSimple(zero, value, t.info)
+			changedFields, err = findChangedFieldsSimple(original, value, t.info)
 			if err != nil {
 				return fmt.Errorf("failed to find changed fields: %w", err)
 			}
@@ -336,7 +335,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 
 		vals = append(vals, id) // Add ID for WHERE clause
 
-		query = sqlbuilder.BuildUpdateSQL(t.info.TableName, setClauses, t.info.PkName)
+		query = t.builder.BuildUpdateSQL(t.info.TableName, setClauses, t.info.PkName)
 		args = vals
 
 		// Execute the UPDATE query
@@ -430,7 +429,7 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 
 	err := withLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
 		// --- DB Delete ---
-		query := sqlbuilder.BuildDeleteSQL(tableName, t.info.PkName)
+		query := t.builder.BuildDeleteSQL(tableName, t.info.PkName)
 		result, err := t.db.Exec(ctx, query, id)
 		if err != nil {
 			return fmt.Errorf("database delete failed for %s %d: %w", tableName, id, err)
