@@ -139,20 +139,20 @@ This mechanism allows you to monitor cache effectiveness, debug performance issu
 
 **Note:** All counters are thread-safe and represent the state since the cache client was created or last reset.
 
-## Schema/Migrate 工具
+## Schema/Migration Tools
 
-### 用法简介
+### Usage Overview
 
-- 通过 `thing.AutoMigrate` 可一键生成并执行建表 SQL，自动适配当前数据库方言（MySQL/PostgreSQL/SQLite）。
-- 支持通过 struct tag 声明普通索引和唯一索引。
+- Use `thing.AutoMigrate` to automatically generate and execute CREATE TABLE SQL, adapting to the current database dialect (MySQL/PostgreSQL/SQLite).
+- Supports declaring normal and unique indexes via struct tags.
 
-### 索引声明方法
+### Index Declaration
 
-- 普通索引：在 struct 字段加 tag `thing:"index"`
-- 唯一索引：在 struct 字段加 tag `thing:"unique"`
+- Normal index: add tag `thing:"index"` to the struct field
+- Unique index: add tag `thing:"unique"` to the struct field
 
 ```go
-// 示例
+// Example
  type User struct {
      ID    int64  `db:"id,pk"`
      Name  string `db:"name" thing:"index"`
@@ -160,23 +160,23 @@ This mechanism allows you to monitor cache effectiveness, debug performance issu
  }
 ```
 
-### 自动迁移示例
+### Auto Migration Example
 
 ```go
 import "thing"
 
-// 配置数据库适配器
+// Configure the database adapter
 thing.Configure(dbAdapter, cacheClient)
 
-// 自动建表（含索引）
+// Auto create tables (including indexes)
 err := thing.AutoMigrate(&User{})
 if err != nil {
     panic(err)
 }
 ```
 
-- 迁移时会自动生成 CREATE TABLE 和 CREATE INDEX/UNIQUE INDEX 语句。
-- 支持多模型批量迁移：`thing.AutoMigrate(&User{}, &Book{})`
+- During migration, CREATE TABLE and CREATE INDEX/UNIQUE INDEX statements are automatically generated.
+- Supports batch migration of multiple models: `thing.AutoMigrate(&User{}, &Book{})`
 
 ## Quick Start: Initialization and Cache Selection
 
