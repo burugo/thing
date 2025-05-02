@@ -135,7 +135,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
     *   Refactor SQL generation to handle dialect differences.
     *   Test all features against all supported databases.
     *   **Sub-tasks:**
-        *   [ ] 9.1: Add `github.com/go-sql-driver/mysql` and `github.com/lib/pq` to `go.mod`.
+        *   [x] 9.1: Add `github.com/go-sql-driver/mysql` and `github.com/lib/pq` to `go.mod`.
         *   [ ] 9.2: Create `internal/drivers/db/mysql/mysql.go` with `MySQLAdapter`, `MySQLTx` structs.
         *   [ ] 9.3: Create `internal/drivers/db/postgres/postgres.go` with `PostgreSQLAdapter`, `PostgreSQLTx` structs.
         *   [ ] 9.4: Implement `mysql.NewMySQLAdapter`.
@@ -144,7 +144,7 @@ The goal was to support method-based virtual properties in Thing ORM's JSON seri
         *   [ ] 9.7: Implement `DBAdapter`/`DBTransaction` for PostgreSQL (using `$N` placeholders, potentially with rebinding helper).
         *   [ ] 9.8: (Optional) Create SQL builder/helper utils for dialect differences (placeholders, simple statements, specific columns in SELECT).
         *   [ ] 9.9: (Optional) Update `thing.Configure` or add functions to select/configure adapters.
-        *   [ ] 9.10: Set up local/Docker test environments for MySQL & PostgreSQL.
+        *   [x] 9.10: Set up local/Docker test environments for MySQL & PostgreSQL.
         *   [ ] 9.11: Run full test suite (`./tests`) against MySQL, fix failures.
         *   [ ] 9.12: Run full test suite (`./tests`) against PostgreSQL, fix failures.
         *   [ ] 9.13: Commit
