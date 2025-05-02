@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"log"
 	"sync"
 )
@@ -65,7 +66,74 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params QueryPar
 	// Register key -> params mapping
 	idx.keyToParams[cacheKey] = params
 
-	// log.Printf("DEBUG: Registered query cache key '%s' for table '%s' with params: %+v", cacheKey, tableName, params) // Optional debug log
+	// --- 新增: 注册值级索引 ---
+	exactFields := ParseExactMatchFields(params)
+	for field, vals := range exactFields {
+		if _, ok := idx.valueIndex[tableName]; !ok {
+			idx.valueIndex[tableName] = make(map[string]map[string]map[string]bool)
+		}
+		if _, ok := idx.valueIndex[tableName][field]; !ok {
+			idx.valueIndex[tableName][field] = make(map[string]map[string]bool)
+		}
+		for _, v := range vals {
+			valStr := toIndexValueString(v)
+			if _, ok := idx.valueIndex[tableName][field][valStr]; !ok {
+				idx.valueIndex[tableName][field][valStr] = make(map[string]bool)
+			}
+			idx.valueIndex[tableName][field][valStr][cacheKey] = true
+		}
+	}
+
+	// --- 新增: 注册字段级索引 ---
+	fields := extractAllWhereFields(params)
+	for _, field := range fields {
+		if _, ok := idx.fieldIndex[tableName]; !ok {
+			idx.fieldIndex[tableName] = make(map[string]map[string]bool)
+		}
+		if _, ok := idx.fieldIndex[tableName][field]; !ok {
+			idx.fieldIndex[tableName][field] = make(map[string]bool)
+		}
+		idx.fieldIndex[tableName][field][cacheKey] = true
+	}
+}
+
+// toIndexValueString 将索引值转为字符串，便于 map key
+func toIndexValueString(v interface{}) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case int:
+		return fmt.Sprintf("%d", x)
+	case int64:
+		return fmt.Sprintf("%d", x)
+	case float64:
+		return fmt.Sprintf("%g", x)
+	case fmt.Stringer:
+		return x.String()
+	default:
+		return fmt.Sprintf("%v", x)
+	}
+}
+
+// extractAllWhereFields 提取 WHERE 中所有字段名
+func extractAllWhereFields(params QueryParams) []string {
+	var fields []string
+	where := params.Where
+	if where == "" {
+		return fields
+	}
+	conditions := splitAndConditions(where)
+	for _, cond := range conditions {
+		cond = trimSpace(cond)
+		if cond == "" {
+			continue
+		}
+		parts := splitFields(cond)
+		if len(parts) >= 1 {
+			fields = append(fields, parts[0])
+		}
+	}
+	return fields
 }
 
 // GetPotentiallyAffectedQueries returns a slice of all registered query cache keys
