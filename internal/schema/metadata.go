@@ -24,6 +24,13 @@ type ComparableFieldInfo struct {
 	IgnoreInDiff bool                       // Whether to ignore this field during diffing (e.g., tags like db:"-")
 }
 
+// IndexInfo holds metadata for a single index
+type IndexInfo struct {
+	Name    string   // Index name
+	Columns []string // Column names
+	Unique  bool     // Is unique index
+}
+
 // ModelInfo holds pre-computed metadata about a model type T.
 type ModelInfo struct {
 	TableName        string                // Renamed: tableName -> TableName
@@ -33,6 +40,8 @@ type ModelInfo struct {
 	FieldToColumnMap map[string]string     // Map Go field name to its corresponding DB column name (Exported)
 	ColumnToFieldMap map[string]string     // Map DB column name to its corresponding Go field name (Exported)
 	CompareFields    []ComparableFieldInfo // Fields to compare during diff operations (new)
+	Indexes          []IndexInfo           // 普通索引
+	UniqueIndexes    []IndexInfo           // 唯一索引
 }
 
 // modelCache stores ModelInfo structs, keyed by reflect.Type.
@@ -58,6 +67,8 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 		FieldToColumnMap: make(map[string]string),
 		ColumnToFieldMap: make(map[string]string),
 		CompareFields:    make([]ComparableFieldInfo, 0),
+		Indexes:          make([]IndexInfo, 0),
+		UniqueIndexes:    make([]IndexInfo, 0),
 	}
 	pkDbName := ""
 
@@ -71,13 +82,15 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 			field := structType.Field(i)
 			dbTag := field.Tag.Get("db")
 			diffTag := field.Tag.Get("diff")   // Optional diff tag
-			thingTag := field.Tag.Get("thing") // Check for thing tag (used for relations)
+			thingTag := field.Tag.Get("thing") // Check for thing tag (used for relations or index/unique)
 
-			// Skip relationship fields (identified by having a thing tag with rel=...)
-			// More robust check might parse the tag, but checking for non-empty is sufficient for now.
+			// Only skip if thingTag indicates a relationship (hasMany, belongsTo, rel=, model:, fk:)
 			if thingTag != "" {
-				log.Printf("DEBUG GetCachedModelInfo: Skipping field %s with 'thing' tag", field.Name)
-				continue
+				tagLower := strings.ToLower(thingTag)
+				if strings.Contains(tagLower, "hasmany") || strings.Contains(tagLower, "belongsto") || strings.Contains(tagLower, "rel=") || strings.Contains(tagLower, "model:") || strings.Contains(tagLower, "fk:") {
+					log.Printf("DEBUG GetCachedModelInfo: Skipping field %s with relationship 'thing' tag: %s", field.Name, thingTag)
+					continue
+				}
 			}
 
 			// If field is embedded struct, process its fields recursively
@@ -130,6 +143,29 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 						if isPk {
 							pkDbName = columnName
 						}
+
+						// 解析 thing tag
+						thingTag = baseField.Tag.Get("thing")
+						if thingTag != "" {
+							var tags []string
+							tags = strings.Split(thingTag, ",")
+							for _, tag := range tags {
+								tag = strings.TrimSpace(tag)
+								if tag == "index" {
+									info.Indexes = append(info.Indexes, IndexInfo{
+										Name:    "",
+										Columns: []string{columnName},
+										Unique:  false,
+									})
+								} else if tag == "unique" {
+									info.UniqueIndexes = append(info.UniqueIndexes, IndexInfo{
+										Name:    "",
+										Columns: []string{columnName},
+										Unique:  true,
+									})
+								}
+							}
+						}
 					}
 				} else {
 					// Process other embedded structs recursively
@@ -177,6 +213,29 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 			// Check for primary key if not already found in embedded BaseModel
 			if pkDbName == "" && isPk {
 				pkDbName = columnName
+			}
+
+			// 解析 thing tag
+			thingTag = field.Tag.Get("thing")
+			if thingTag != "" {
+				var tags []string
+				tags = strings.Split(thingTag, ",")
+				for _, tag := range tags {
+					tag = strings.TrimSpace(tag)
+					if tag == "index" {
+						info.Indexes = append(info.Indexes, IndexInfo{
+							Name:    "",
+							Columns: []string{columnName},
+							Unique:  false,
+						})
+					} else if tag == "unique" {
+						info.UniqueIndexes = append(info.UniqueIndexes, IndexInfo{
+							Name:    "",
+							Columns: []string{columnName},
+							Unique:  true,
+						})
+					}
+				}
 			}
 		}
 	}

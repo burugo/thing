@@ -6,6 +6,10 @@ import (
 	"thing"
 	"time"
 
+	"strings"
+
+	"thing/internal/drivers/db/sqlite"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,6 +39,52 @@ type Book struct {
 // Change TableName to pointer receiver
 func (b *Book) TableName() string {
 	return "books"
+}
+
+// Index declaration test model
+// TestIndexModel is used to test AutoMigrate index/unique index
+
+type TestIndexModel struct {
+	ID    int64  `db:"id,pk"`
+	Name  string `db:"name" thing:"index"`
+	Email string `db:"email" thing:"unique"`
+}
+
+func (t *TestIndexModel) TableName() string { return "test_index_models" }
+
+func TestAutoMigrate_IndexAndUnique(t *testing.T) {
+	// Use SQLite in-memory database
+	adapter, err := sqlite.NewSQLiteAdapter(":memory:")
+	require.NoError(t, err)
+	// Provide a non-nil cache client (use setupCacheTest or similar if available)
+	_, cache, cleanup := setupTestDB(t)
+	defer cleanup()
+	err = thing.Configure(adapter, cache)
+	require.NoError(t, err)
+	db := adapter.(*sqlite.SQLiteAdapter).DB()
+
+	// Auto migrate
+	err = thing.AutoMigrate(&TestIndexModel{})
+	require.NoError(t, err)
+
+	// Query sqlite_master to verify indexes
+	rows, err := db.Query(`SELECT name, sql FROM sqlite_master WHERE type='index' AND tbl_name='test_index_models'`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	var foundIndex, foundUnique bool
+	for rows.Next() {
+		var name, sql string
+		require.NoError(t, rows.Scan(&name, &sql))
+		if name == "idx_test_index_models_name" && sql != "" {
+			foundIndex = true
+		}
+		if name == "uniq_test_index_models_email" && sql != "" && strings.Contains(sql, "UNIQUE") {
+			foundUnique = true
+		}
+	}
+	require.True(t, foundIndex, "Index was not created")
+	require.True(t, foundUnique, "Unique index was not created")
 }
 
 func TestBaseModel_ToJSONWithOptions(t *testing.T) {
