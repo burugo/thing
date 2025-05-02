@@ -12,18 +12,23 @@ import (
 	"reflect"
 	"strings"
 	"thing/common"
+	"thing/internal/cache"
 	"thing/internal/schema"
 	"thing/internal/types"
+	"time"
 )
 
 // --- Relationship Loading ---
 
 // RelationshipOpts defines the configuration for a relationship based on struct tags.
 type RelationshipOpts struct {
-	RelationType string // "belongsTo", "hasMany"
-	ForeignKey   string // FK field name in the *owning* struct (for belongsTo) or *related* struct (for hasMany)
-	LocalKey     string // PK field name in the *owning* struct (defaults to info.pkName)
-	RelatedModel string // Optional: Specify related model name if different from field type
+	RelationType   string // "belongsTo", "hasMany", "manyToMany"
+	ForeignKey     string // FK field name in the *owning* struct (for belongsTo) or *related* struct (for hasMany)
+	LocalKey       string // PK field name in the *owning* struct (defaults to info.pkName)
+	RelatedModel   string // Optional: Specify related model name if different from field type
+	JoinTable      string // For manyToMany: join table name
+	JoinLocalKey   string // For manyToMany: join table column for local model
+	JoinRelatedKey string // For manyToMany: join table column for related model
 }
 
 // parseThingTag parses the `thing:"..."` struct tag.
@@ -40,7 +45,7 @@ func parseThingTag(tag string) (opts RelationshipOpts, err error) {
 	}
 
 	opts.RelationType = parts[0]
-	if opts.RelationType != "belongsTo" && opts.RelationType != "hasMany" {
+	if opts.RelationType != "belongsTo" && opts.RelationType != "hasMany" && opts.RelationType != "manyToMany" {
 		err = fmt.Errorf("unsupported relation type in thing tag: %s", opts.RelationType)
 		return
 	}
@@ -55,16 +60,22 @@ func parseThingTag(tag string) (opts RelationshipOpts, err error) {
 		value := strings.TrimSpace(keyValue[1])
 
 		switch key {
-		case "fk": // Use 'fk' as the standard key
+		case "fk":
 			opts.ForeignKey = value
-		case "foreignKey": // Allow legacy key for now
+		case "foreignKey":
 			opts.ForeignKey = value
 		case "localKey":
 			opts.LocalKey = value
-		case "model": // Use 'model' as the standard key
+		case "model":
 			opts.RelatedModel = value
-		case "relatedModel": // Allow legacy key for now
+		case "relatedModel":
 			opts.RelatedModel = value
+		case "joinTable":
+			opts.JoinTable = value
+		case "joinLocalKey":
+			opts.JoinLocalKey = value
+		case "joinRelatedKey":
+			opts.JoinRelatedKey = value
 		default:
 			err = fmt.Errorf("unknown key in thing tag: %s", key)
 			return
@@ -75,6 +86,14 @@ func parseThingTag(tag string) (opts RelationshipOpts, err error) {
 	if opts.ForeignKey == "" {
 		err = fmt.Errorf("missing 'fk' (foreignKey) in thing tag for type %s", opts.RelationType)
 		return
+	}
+
+	// For manyToMany, check joinTable, joinLocalKey, joinRelatedKey
+	if opts.RelationType == "manyToMany" {
+		if opts.JoinTable == "" || opts.JoinLocalKey == "" || opts.JoinRelatedKey == "" {
+			err = fmt.Errorf("missing joinTable/joinLocalKey/joinRelatedKey in thing tag for manyToMany relation")
+			return
+		}
 	}
 
 	return
@@ -126,6 +145,8 @@ func (t *Thing[T]) preloadRelations(ctx context.Context, results []T, preloadNam
 		return t.preloadBelongsTo(ctx, resultsVal, field, opts)
 	case "hasMany":
 		return t.preloadHasMany(ctx, resultsVal, field, opts)
+	case "manyToMany":
+		return t.preloadManyToMany(ctx, resultsVal, field, opts)
 	default:
 		return fmt.Errorf("internal error: unsupported relation type %s in preloadRelations", opts.RelationType)
 	}
@@ -233,7 +254,6 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 	return nil
 }
 
-// preloadHasMany handles eager loading for HasMany relationships.
 func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value, field reflect.StructField, opts RelationshipOpts) error {
 	// T = Owning Model (e.g., Post)
 	// R = Related Model (e.g., Comment)
@@ -490,7 +510,198 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 		}
 	}
 
+	// 注册值级别索引（如 user_roles:13）
+	if cache.GlobalCacheIndex != nil {
+		relatedTable := relatedInfo.TableName
+		for lk := range localKeyValues {
+			params := types.QueryParams{
+				Where: fmt.Sprintf("%s = ?", relatedFkColName),
+				Args:  []interface{}{lk},
+			}
+			cacheKey := fmt.Sprintf("%s:%v", relatedTable, lk)
+			cache.GlobalCacheIndex.RegisterQuery(relatedTable, cacheKey, params)
+		}
+	}
+
 	log.Printf("Successfully preloaded HasMany relation '%s'", field.Name)
+	return nil
+}
+
+// preloadManyToMany handles eager loading for ManyToMany relationships.
+func (t *Thing[T]) preloadManyToMany(ctx context.Context, resultsVal reflect.Value, field reflect.StructField, opts RelationshipOpts) error {
+	// 1. 类型检查
+	relatedFieldType := field.Type // e.g., []Role 或 []*Role
+	if relatedFieldType.Kind() != reflect.Slice {
+		return fmt.Errorf("manyToMany field '%s' must be a slice, got %s", field.Name, relatedFieldType.String())
+	}
+	relatedElemType := relatedFieldType.Elem()
+	var relatedModelType reflect.Type
+	var relatedIsSliceOfPtr bool
+	if relatedElemType.Kind() == reflect.Ptr && relatedElemType.Elem().Kind() == reflect.Struct {
+		relatedModelType = relatedElemType.Elem()
+		relatedIsSliceOfPtr = true
+	} else if relatedElemType.Kind() == reflect.Struct {
+		relatedModelType = relatedElemType
+		relatedIsSliceOfPtr = false
+	} else {
+		return fmt.Errorf("manyToMany field '%s' must be a slice of structs or pointers to structs, got slice of %s", field.Name, relatedElemType.String())
+	}
+
+	// 2. 获取本地主键字段名
+	localKeyColName := opts.LocalKey
+	if localKeyColName == "" {
+		localKeyColName = t.info.PkName
+	}
+	localKeyGoFieldName, ok := t.info.ColumnToFieldMap[localKeyColName]
+	if !ok {
+		return fmt.Errorf("local key column '%s' not found in model %s info", localKeyColName, resultsVal.Type().Elem().Elem().Name())
+	}
+
+	// 3. 收集所有本地ID
+	localKeyValues := make([]interface{}, 0, resultsVal.Len())
+	for i := 0; i < resultsVal.Len(); i++ {
+		owningModelElem := resultsVal.Index(i).Elem()
+		lkFieldVal := owningModelElem.FieldByName(localKeyGoFieldName)
+		if lkFieldVal.IsValid() {
+			localKeyValues = append(localKeyValues, lkFieldVal.Interface())
+		}
+	}
+	if len(localKeyValues) == 0 {
+		return nil // 无需加载
+	}
+
+	// 4. 查询中间表，获取本地ID -> 关联ID列表
+	joinTable := opts.JoinTable
+	joinLocalKey := opts.JoinLocalKey
+	joinRelatedKey := opts.JoinRelatedKey
+	if joinTable == "" || joinLocalKey == "" || joinRelatedKey == "" {
+		return fmt.Errorf("manyToMany preload: joinTable/joinLocalKey/joinRelatedKey must be set in tag")
+	}
+
+	// 构造缓存 key 前缀
+	cacheKeyPrefix := fmt.Sprintf("%s:%s:", joinTable, joinLocalKey)
+
+	relatedIDsMap := make(map[interface{}][]interface{}) // localID -> []relatedID
+	allRelatedIDsSet := make(map[interface{}]struct{})
+	for _, localID := range localKeyValues {
+		cacheKey := fmt.Sprintf("%s%v", cacheKeyPrefix, localID)
+		var ids []interface{}
+		cacheHit := false
+		if t.cache != nil {
+			if getter, ok := t.cache.(interface {
+				Get(ctx context.Context, key string) (string, error)
+			}); ok {
+				if val, err := getter.Get(ctx, cacheKey); err == nil {
+					var idList []int64
+					if jsonErr := json.Unmarshal([]byte(val), &idList); jsonErr == nil {
+						for _, id := range idList {
+							ids = append(ids, id)
+						}
+						cacheHit = true
+					}
+				}
+			}
+		}
+		if !cacheHit {
+			// 查 DB
+			query := fmt.Sprintf(`SELECT "%s" FROM "%s" WHERE "%s" = ?`, joinRelatedKey, joinTable, joinLocalKey)
+			rows, err := t.db.DB().QueryContext(ctx, query, localID)
+			if err != nil {
+				return err
+			}
+			var idList []int64
+			for rows.Next() {
+				var rid int64
+				if err := rows.Scan(&rid); err == nil {
+					ids = append(ids, rid)
+					idList = append(idList, rid)
+					allRelatedIDsSet[rid] = struct{}{}
+				}
+			}
+			_ = rows.Close()
+			// 写入缓存
+			if t.cache != nil {
+				if setter, ok := t.cache.(interface {
+					Set(ctx context.Context, key string, value string, expiration time.Duration) error
+				}); ok {
+					if b, err := json.Marshal(idList); err == nil {
+						_ = setter.Set(ctx, cacheKey, string(b), 0)
+					}
+				}
+			}
+		}
+		// 注册值级别索引（如 user_roles:13）
+		if cache.GlobalCacheIndex != nil {
+			params := types.QueryParams{
+				Where: fmt.Sprintf("%s = ?", joinLocalKey),
+				Args:  []interface{}{localID},
+			}
+			cacheKey := fmt.Sprintf("%s:%v", joinTable, localID)
+			cache.GlobalCacheIndex.RegisterQuery(joinTable, cacheKey, params)
+		}
+		relatedIDsMap[localID] = ids
+	}
+
+	// 5. 批量加载关联实体
+	allRelatedIDs := make([]interface{}, 0, len(allRelatedIDsSet))
+	for rid := range allRelatedIDsSet {
+		allRelatedIDs = append(allRelatedIDs, rid)
+	}
+	// 转换为 int64 切片（假设主键为 int64）
+	intIDs := make([]int64, 0, len(allRelatedIDs))
+	for _, v := range allRelatedIDs {
+		if id, ok := v.(int64); ok {
+			intIDs = append(intIDs, id)
+		} else if id, ok := v.(int); ok {
+			intIDs = append(intIDs, int64(id))
+		}
+	}
+	relatedInfo, err := schema.GetCachedModelInfo(relatedModelType)
+	if err != nil {
+		return fmt.Errorf("failed to get model info for related type %s: %w", relatedModelType.Name(), err)
+	}
+	relatedPtrType := relatedModelType
+	if relatedPtrType.Kind() != reflect.Ptr {
+		relatedPtrType = reflect.PtrTo(relatedModelType)
+	}
+	roleMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, relatedInfo, relatedPtrType, intIDs)
+	if err != nil {
+		return fmt.Errorf("failed to fetch related models: %w", err)
+	}
+
+	// 6. 回填到原始对象
+	for i := 0; i < resultsVal.Len(); i++ {
+		owningModelPtr := resultsVal.Index(i)
+		owningModelElem := owningModelPtr.Elem()
+		lkFieldVal := owningModelElem.FieldByName(localKeyGoFieldName)
+		if !lkFieldVal.IsValid() {
+			continue
+		}
+		localID := lkFieldVal.Interface()
+		relatedIDs := relatedIDsMap[localID]
+		finalSlice := reflect.MakeSlice(relatedFieldType, 0, len(relatedIDs))
+		for _, rid := range relatedIDs {
+			var id64 int64
+			if id, ok := rid.(int64); ok {
+				id64 = id
+			} else if id, ok := rid.(int); ok {
+				id64 = int64(id)
+			} else {
+				continue
+			}
+			if roleVal, ok := roleMap[id64]; ok {
+				if relatedIsSliceOfPtr {
+					finalSlice = reflect.Append(finalSlice, roleVal)
+				} else {
+					finalSlice = reflect.Append(finalSlice, roleVal.Elem())
+				}
+			}
+		}
+		relationField := owningModelElem.FieldByName(field.Name)
+		if relationField.IsValid() && relationField.CanSet() {
+			relationField.Set(finalSlice)
+		}
+	}
 	return nil
 }
 
@@ -527,4 +738,30 @@ func (t *Thing[T]) loadInternal(ctx context.Context, model T, relations ...strin
 func (t *Thing[T]) Load(model T, relations ...string) error {
 	// Use the context stored in the Thing instance
 	return t.loadInternal(t.ctx, model, relations...)
+}
+
+// NewThingByType creates a *Thing for a given model type (reflect.Type)
+func NewThingByType(modelType reflect.Type, db DBAdapter, cache CacheClient) (interface{}, error) {
+	if modelType.Kind() == reflect.Ptr {
+		modelType = modelType.Elem()
+	}
+	if modelType.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("NewThingByType: modelType must be struct or *struct, got %s", modelType.Kind())
+	}
+	// 通过 reflect.New 创建 *Thing[Model]，用 interface{} 返回
+	thingType := reflect.TypeOf(Thing[Model]{})
+	thingPtr := reflect.New(thingType)
+	thingVal := thingPtr.Elem()
+	thingVal.FieldByName("db").Set(reflect.ValueOf(db))
+	thingVal.FieldByName("cache").Set(reflect.ValueOf(cache))
+	thingVal.FieldByName("ctx").Set(reflect.ValueOf(context.Background()))
+	info, err := schema.GetCachedModelInfo(modelType)
+	if err != nil {
+		return nil, err
+	}
+	thingVal.FieldByName("info").Set(reflect.ValueOf(info))
+	if db != nil {
+		thingVal.FieldByName("builder").Set(reflect.ValueOf(db.Builder()))
+	}
+	return thingPtr.Interface(), nil
 }
