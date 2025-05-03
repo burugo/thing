@@ -637,3 +637,8 @@ func (m *localCache) ReleaseLock(ctx context.Context, lockKey string) error {
 func (m *localCache) GetCacheStats(ctx context.Context) interfaces.CacheStats {
 	return interfaces.CacheStats{Counters: map[string]int{}}
 }
+
+// CacheStats returns cache operation statistics for monitoring and hit/miss analysis.
+func (t *Thing[T]) CacheStats(ctx context.Context) interfaces.CacheStats {
+	return t.cache.GetCacheStats(ctx)
+}

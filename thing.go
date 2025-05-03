@@ -113,8 +113,3 @@ func GlobalDB() interfaces.DBAdapter {
 func (t *Thing[T]) DB() *sql.DB {
 	return t.db.DB()
 }
-
-// CacheStats returns cache operation statistics for monitoring and hit/miss analysis.
-func (t *Thing[T]) CacheStats(ctx context.Context) interfaces.CacheStats {
-	return t.cache.GetCacheStats(ctx)
-}
