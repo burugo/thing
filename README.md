@@ -19,6 +19,12 @@
 
 > **Thing ORM** is ideal for projects that need fast, reliable, and maintainable data access without the overhead of a full-featured SQL builder. It empowers developers to build scalable applications with minimal boilerplate and maximum control over caching and serialization.
 
+## Installation
+
+```bash
+go get github.com/burugo/thing
+```
+
 ## Basic CRUD Example
 
 Here is a minimal example demonstrating how to use Thing ORM for basic CRUD operations:
