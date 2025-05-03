@@ -299,6 +299,70 @@ func main() {
 
 Thing ORM automatically fetches the related models in an optimized way, utilizing the cache where possible.
 
+## Raw SQL Execution
+
+While Thing ORM focuses on common CRUD and list patterns, you can always drop down to raw SQL for complex queries or operations not directly supported by the ORM API. You can access the underlying `DBAdapter` or even the standard `*sql.DB` connection.
+
+```go
+package main
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log"
+
+	"github.com/burugo/thing"
+	// import your models package
+)
+
+func rawSQLExample() {
+	// Assume thing.Configure() is done and you have a User model
+	userThing, _ := thing.Use[*models.User]()
+
+	// Get the underlying DBAdapter
+	dbAdapter := userThing.DBAdapter()
+	ctx := context.Background() // Or your request context
+
+	// 1. Execute a raw SQL command (e.g., UPDATE)
+	updateQuery := "UPDATE users SET email = ? WHERE id = ?"
+	result, err := dbAdapter.Exec(ctx, updateQuery, "new.raw.email@example.com", 1)
+	if err != nil {
+		log.Fatalf("Raw Exec failed: %v", err)
+	}
+	rowsAffected, _ := result.RowsAffected()
+	fmt.Printf("Raw Exec: Rows affected: %d\n", rowsAffected)
+
+	// 2. Query a single row and scan into a struct (using Adapter.Get)
+	var user models.User
+	selectQuery := "SELECT id, name, email FROM users WHERE id = ?"
+	err = dbAdapter.Get(ctx, &user, selectQuery, 1)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Println("Raw Get: User not found")
+		} else {
+			log.Fatalf("Raw Get failed: %v", err)
+		}
+	} else {
+		fmt.Printf("Raw Get: User found: ID=%d, Name=%s\n", user.ID, user.Name)
+	}
+
+	// 3. Query multiple rows (using Adapter.Select)
+	var names []string
+	selectMultiple := "SELECT name FROM users WHERE email LIKE ? ORDER BY name"
+	err = dbAdapter.Select(ctx, &names, selectMultiple, "%@example.com")
+	if err != nil {
+		log.Fatalf("Raw Select failed: %v", err)
+	}
+	fmt.Printf("Raw Select: Found %d names ending in @example.com: %v\n", len(names), names)
+
+	// 4. Access the standard *sql.DB (for things not covered by adapter)
+	// sqlDB := dbAdapter.DB()
+	// // Use sqlDB for standard database/sql operations if needed
+}
+
+// In main(), call rawSQLExample()
+
 ## Method-based Virtual Properties (Advanced JSON Serialization)
 
 You can define computed (virtual) fields on your model by adding exported, zero-argument, single-return-value methods. These methods will only be included in the JSON output if you explicitly reference their corresponding field name in the DSL string passed to `ToJSON`.
