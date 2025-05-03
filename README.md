@@ -491,28 +491,106 @@ if err != nil {
 - During migration, CREATE TABLE and CREATE INDEX/UNIQUE INDEX statements are automatically generated.
 - Supports batch migration of multiple models: `thing.AutoMigrate(&User{}, &Book{})`
 
-## Quick Start: Initialization and Cache Selection
+## Configuration
 
-You can initialize a Thing ORM instance with flexible cache options:
+Thing ORM is configured by providing a database adapter (`DBAdapter`) and an optional cache client (`CacheClient`) when creating a `Thing` instance using `thing.New`. This allows for flexible setup tailored to your application's needs.
 
-### 1. Use Default Local (In-Memory) Cache (No Redis Required)
+### 1. Choose a Database Adapter
+
+First, create an instance of a database adapter for your chosen database (MySQL, PostgreSQL, or SQLite).
+
 ```go
-userThing, err := thing.New[*User](db,nil) // Uses built-in localCache automatically
-```
-- Suitable for development, testing, or single-node deployments.
-- No external cache dependency.
+import (
+	"github.com/burugo/thing/internal/drivers/db/mysql"
+	"github.com/burugo/thing/internal/drivers/db/postgres"
+	"github.com/burugo/thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing/internal/interfaces"
+)
 
-### 2. Use External Cache (e.g., Redis)
+// Example: SQLite (replace ":memory:" with your file path)
+dbAdapter, err := sqlite.NewSQLiteAdapter(":memory:")
+if err != nil {
+	log.Fatal("Failed to create SQLite adapter:", err)
+}
+
+// Example: MySQL (replace with your actual DSN)
+// mysqlDSN := "user:password@tcp(127.0.0.1:3306)/database?parseTime=true"
+// dbAdapter, err := mysql.NewMySQLAdapter(mysqlDSN)
+// if err != nil {
+// 	log.Fatal("Failed to create MySQL adapter:", err)
+// }
+
+// Example: PostgreSQL (replace with your actual DSN)
+// pgDSN := "host=localhost user=user password=password dbname=database port=5432 sslmode=disable TimeZone=Asia/Shanghai"
+// dbAdapter, err := postgres.NewPostgreSQLAdapter(pgDSN)
+// if err != nil {
+// 	log.Fatal("Failed to create PostgreSQL adapter:", err)
+// }
+```
+
+### 2. Choose a Cache Client (Optional)
+
+Thing ORM includes a built-in in-memory cache, which is used by default if no cache client is provided. For production or distributed systems, using Redis is recommended.
+
 ```go
-userThing, err := thing.New[*User](db, redisCache)
-```
-- Pass any implementation of `thing.CacheClient` (e.g., Redis, Memcached).
-- Recommended for production/distributed deployments.
+import (
+	"github.com/redis/go-redis/v9"
+	redisCache "github.com/burugo/thing/internal/drivers/cache/redis"
+	"github.com/burugo/thing/internal/interfaces"
+)
 
-> **Tip:** You can always pass `nil` as the cache argument to force fallback to localCache:
-> ```go
-> userThing, err := thing.New[*User](db, nil) // Same as omitting cache
-> ```
+// Option A: Use Default In-Memory Cache
+// Simply pass nil as the cache client when calling thing.New
+var cacheClient interfaces.CacheClient = nil
+
+// Option B: Use Redis
+// redisAddr := "localhost:6379"
+// redisPassword := ""
+// redisDB := 0
+// rdb := redis.NewClient(&redis.Options{
+// 	Addr:     redisAddr,
+// 	Password: redisPassword,
+// 	DB:       redisDB,
+// })
+// cacheClient = redisCache.NewClient(rdb) // Create Thing's Redis client wrapper
+
+```
+
+### 3. Create Thing Instance
+
+Use `thing.New` to create an ORM instance for your specific model type, passing the chosen database adapter and cache client.
+
+```go
+import (
+	"github.com/burugo/thing"
+	// import your models package
+)
+
+// Create a Thing instance for the User model
+userThing, err := thing.New[*models.User](dbAdapter, cacheClient)
+if err != nil {
+	log.Fatal("Failed to create Thing instance for User:", err)
+}
+
+// Now you can use userThing for CRUD, queries, etc.
+// userThing.Save(...)
+// userThing.ByID(...)
+// userThing.Query(...)
+```
+
+### Global Configuration (Alternative)
+
+For simpler applications or global setup, you can use `thing.Configure` once at startup and then `thing.Use` to get model-specific instances. **Note:** This uses global variables and is less flexible for managing multiple database/cache connections.
+
+```go
+// At application startup:
+// err := thing.Configure(dbAdapter, cacheClient)
+// if err != nil { ... }
+
+// Later, in your code:
+// userThing, err := thing.Use[*models.User]()
+// if err != nil { ... }
+```
 
 
 
