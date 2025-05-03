@@ -2,6 +2,7 @@ package thing
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"     // For placeholder logging
@@ -111,4 +112,9 @@ func (t *Thing[T]) Cache() interfaces.CacheClient {
 // GlobalDB returns the global DBAdapter (for internal use, e.g., AutoMigrate)
 func GlobalDB() interfaces.DBAdapter {
 	return globalDB
+}
+
+// DB returns the underlying *sql.DB for advanced/raw SQL use cases.
+func (t *Thing[T]) DB() *sql.DB {
+	return t.db.DB()
 }
