@@ -249,11 +249,26 @@ func isUniqueInModel(col string, modelInfo *ModelInfo) bool {
 func GenerateMigrationsTableSQL(dialect string) (string, error) {
 	switch dialect {
 	case "mysql":
-		return `CREATE TABLE IF NOT EXISTS schema_migrations (\n  id INT AUTO_INCREMENT PRIMARY KEY,\n  version VARCHAR(255) NOT NULL UNIQUE,\n  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n  description VARCHAR(255)\n);`, nil
+		return `CREATE TABLE IF NOT EXISTS schema_migrations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  version VARCHAR(255) NOT NULL UNIQUE,
+  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  description VARCHAR(255)
+);`, nil
 	case "postgres":
-		return `CREATE TABLE IF NOT EXISTS schema_migrations (\n  id SERIAL PRIMARY KEY,\n  version VARCHAR(255) NOT NULL UNIQUE,\n  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n  description VARCHAR(255)\n);`, nil
+		return `CREATE TABLE IF NOT EXISTS schema_migrations (
+  id SERIAL PRIMARY KEY,
+  version VARCHAR(255) NOT NULL UNIQUE,
+  applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  description VARCHAR(255)
+);`, nil
 	case "sqlite":
-		return `CREATE TABLE IF NOT EXISTS schema_migrations (\n  id INTEGER PRIMARY KEY AUTOINCREMENT,\n  version TEXT NOT NULL UNIQUE,\n  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,\n  description TEXT\n);`, nil
+		return `CREATE TABLE IF NOT EXISTS schema_migrations (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version TEXT NOT NULL UNIQUE,
+  applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  description TEXT
+);`, nil
 	default:
 		return "", fmt.Errorf("unsupported dialect: %s", dialect)
 	}

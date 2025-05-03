@@ -3,13 +3,14 @@ package schema
 import (
 	"fmt"
 	"strings"
-	"thing"
+
+	"github.com/burugo/thing/internal/schema"
 )
 
 // GenerateCreateTableSQL 生成单表 CREATE TABLE 语句
 // info: 目标模型的 *thing.ModelInfo
 // dialect: "mysql" | "postgres" | "sqlite"
-func GenerateCreateTableSQL(info *thing.ModelInfo, dialect string) (string, error) {
+func GenerateCreateTableSQL(info *schema.ModelInfo, dialect string) (string, error) {
 	typeMap, ok := TypeMapping[dialect]
 	if !ok {
 		return "", fmt.Errorf("unsupported dialect: %s", dialect)

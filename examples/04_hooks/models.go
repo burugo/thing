@@ -1,7 +1,7 @@
 package main
 
 import (
-	"thing"
+	"github.com/burugo/thing"
 )
 
 // User is a simplified model for the hooks example.

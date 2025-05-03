@@ -4,9 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"thing"
-	"thing/internal/drivers/db/sqlite"
-	"thing/internal/types"
+
+	"github.com/burugo/thing"
+	"github.com/burugo/thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing/internal/types"
 )
 
 // User model with HasMany Books and ManyToMany Roles
@@ -64,13 +65,13 @@ func main() {
 	}
 
 	// --- ORM Setup (demonstrate in-memory cache fallback) ---
-	userThing, _ := thing.New[*User](db)
-	bookThing, _ := thing.New[*Book](db)
-	roleThing, _ := thing.New[*Role](db)
-	userRoleThing, _ := thing.New[*UserRole](db)
+	userThing, _ := thing.New[*User](db, nil)
+	bookThing, _ := thing.New[*Book](db, nil)
+	roleThing, _ := thing.New[*Role](db, nil)
+	userRoleThing, _ := thing.New[*UserRole](db, nil)
 
 	// --- Insert sample data ---
-	user := &User{Name: "Alice", Email: "alice@example.com"}
+	user := &User{Name: "Alice"}
 	_ = userThing.Save(user)
 	book1 := &Book{Title: "Go 101", UserID: user.ID}
 	book2 := &Book{Title: "Advanced Go", UserID: user.ID}

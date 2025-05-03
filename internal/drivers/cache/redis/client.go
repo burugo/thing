@@ -10,9 +10,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"thing"
-	"thing/common"
-	// "thing/thing" // Removed if unused
+	"github.com/burugo/thing/common"
+	"github.com/burugo/thing/internal/interfaces"
 )
 
 // client implements thing.CacheClient using Redis.
@@ -24,7 +23,7 @@ type client struct {
 }
 
 // Ensure client implements thing.CacheClient.
-var _ thing.CacheClient = (*client)(nil)
+var _ interfaces.CacheClient = (*client)(nil)
 
 // incrementCounter safely increments a named operation counter.
 func (c *client) incrementCounter(name string) {
@@ -45,7 +44,7 @@ type Options struct {
 
 // NewClient creates a new Redis cache client wrapper.
 // Changed name to NewClient and made it exported.
-func NewClient(opts Options) (thing.CacheClient, func(), error) {
+func NewClient(opts Options) (interfaces.CacheClient, func(), error) {
 	redisOpts := &redis.Options{
 		Addr:     opts.Addr,
 		Password: opts.Password,
@@ -285,92 +284,15 @@ func (c *client) DeleteByPrefix(ctx context.Context, prefix string) error {
 	return nil
 }
 
-/* // InvalidateQueriesContainingID is no longer used
-// InvalidateQueriesContainingID finds and deletes query cache keys matching the prefix
-// whose stored ID list contains the specified idToInvalidate.
-// Uses SCAN for safe iteration.
-func (c *client) InvalidateQueriesContainingID(ctx context.Context, prefix string, idToInvalidate int64) error {
-	var cursor uint64
-	var keysToDelete []string
-	var invalidatedCount int
-	const scanCount = 100 // How many keys to fetch per SCAN iteration
-
-	matchPattern := prefix + "*" // Add wildcard for SCAN
-	log.Printf("REDIS CACHE: Starting SCAN for prefix '%s' to invalidate keys containing ID %d", prefix, idToInvalidate)
-
-	for {
-		var keys []string
-		var err error
-		keys, cursor, err = c.redisClient.Scan(ctx, cursor, matchPattern, scanCount).Result()
-		if err != nil {
-			log.Printf("ERROR: Redis SCAN error during InvalidateQueriesContainingID (prefix: %s): %v", prefix, err)
-			return fmt.Errorf("redis SCAN error for prefix '%s': %w", prefix, err)
-		}
-
-		// For each key found by SCAN, check if its list contains the ID
-		for _, queryKey := range keys {
-			// Get the list of IDs for this specific query cache key
-			// Use the same context as Scan/Delete operations
-			cachedIDs, getErr := c.GetQueryIDs(ctx, queryKey) // Use the existing method
-
-			if getErr != nil {
-				// Log error (e.g., key expired between SCAN and GET, or not an ID list) but continue
-				// If it's ErrNotFound, the key disappeared, which is fine.
-				if !errors.Is(getErr, common.ErrNotFound) {
-					log.Printf("WARN: Failed to get query IDs for key '%s' during invalidation check: %v", queryKey, getErr)
-				}
-				continue
-			}
-
-			// Check if the target model ID is in this list
-			found := false
-			for _, id := range cachedIDs {
-				if id == idToInvalidate {
-					found = true
-					break
-				}
-			}
-
-			// If found, mark this specific query cache key for deletion
-			if found {
-				keysToDelete = append(keysToDelete, queryKey)
-			}
-		}
-
-		// Check if SCAN iteration is complete
-		if cursor == 0 {
-			break
-		}
-	}
-
-	// If keys were marked for deletion, delete them
-	if len(keysToDelete) > 0 {
-		log.Printf("REDIS CACHE: Deleting %d query keys with prefix '%s' containing ID %d", len(keysToDelete), prefix, idToInvalidate)
-		err := c.redisClient.Del(ctx, keysToDelete...).Err()
-		if err != nil && err != redis.Nil {
-			log.Printf("ERROR: Redis DEL error during InvalidateQueriesContainingID (prefix: %s): %v", prefix, err)
-			// Return error, but some keys might have been deleted
-			return fmt.Errorf("redis DEL error for prefix '%s' while invalidating: %w", prefix, err)
-		}
-		invalidatedCount = len(keysToDelete) // Count successfully targeted keys
-	} else {
-		log.Printf("REDIS CACHE: No keys found matching prefix '%s' containing ID %d to invalidate", prefix, idToInvalidate)
-	}
-	log.Printf("REDIS CACHE: Finished invalidation scan for prefix '%s'. Invalidated %d specific query keys containing ID %d.", prefix, invalidatedCount, idToInvalidate)
-
-	return nil
-}
-*/
-
 // GetCacheStats returns a snapshot of cache operation counters for monitoring.
 // The returned map is a copy and safe for concurrent use.
 // Typical keys: "Get", "GetMiss", "GetModel", "GetModelMiss", etc.
-func (c *client) GetCacheStats(ctx context.Context) thing.CacheStats {
+func (c *client) GetCacheStats(ctx context.Context) interfaces.CacheStats {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	stats := make(map[string]int, len(c.counters))
 	for k, v := range c.counters {
 		stats[k] = v
 	}
-	return thing.CacheStats{Counters: stats}
+	return interfaces.CacheStats{Counters: stats}
 }
