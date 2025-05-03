@@ -99,11 +99,6 @@ func (t *Thing[T]) WithContext(ctx context.Context) *Thing[T] { // Returns *Thin
 	return &newThing   // Return pointer to the copy
 }
 
-// DBAdapter returns the underlying DBAdapter for advanced use cases.
-func (t *Thing[T]) DBAdapter() interfaces.DBAdapter {
-	return t.db
-}
-
 // Cache returns the underlying CacheClient associated with this Thing instance.
 func (t *Thing[T]) Cache() interfaces.CacheClient {
 	return t.cache
