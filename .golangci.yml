@@ -1,0 +1,105 @@
+run:
+  # timeout for analysis, e.g. 30s, 5m, default is 1m
+  timeout: 5m
+  # exit code when issues were found, default is 1
+  issues-exit-code: 1
+  # include test files or not, default is true
+  tests: true
+  # list of build tags, all are enabled by default
+  # build-tags:
+  #   - mytag
+
+linters-settings:
+  # govet:
+  #   check-shadowing: true # Deprecated, use 'shadow' linter instead
+  # golint:
+  #   min-confidence: 0.0
+  gocyclo:
+    # minimal code complexity to report, 30 by default (but we recommend 10-20)
+    min-complexity: 15
+  # maligned:
+  #   suggest-new: true
+  dupl:
+    # threshold for code duplication, default is 100
+    threshold: 100
+  goconst:
+    # minimal length of string constant, 3 by default
+    min-len: 3
+    # minimal occurrences count to trigger, 3 by default
+    min-occurrences: 3
+  misspell:
+    # Correct commonly misspelled English words in comments and strings
+    locale: US
+  lll:
+    # max line length, lines longer will be reported. Defaults to 120.
+    line-length: 120
+  # goimports:
+  #   local-prefixes: github.com/burugo/thing
+  # gocritic:
+    # enabled-checks:
+    #   - singleCaseSwitch
+    # disabled-checks:
+    #   - hugeParam
+
+linters:
+  # please, do not use `enable-all`: it's deprecated and will be removed soon.
+  # inverted configuration with `enable-all` and `disable` is not scalable during updates of golangci-lint
+  disable-all: true
+  enable:
+    - bodyclose
+    # - deadcode # Deprecated: use unused
+    - depguard
+    - dogsled
+    - dupl
+    - errcheck
+    # - exportloopref # Deprecated: use copyloopvar or Go 1.22+
+    - exhaustive
+    - funlen
+    - gochecknoinits
+    - goconst
+    - gocritic
+    - gocyclo
+    - gofmt
+    - goimports
+    - revive # Replacement for golint
+    # - gomnd # Deprecated: use mnd
+    - goprintffuncname
+    - gosec
+    - gosimple
+    - govet
+    - ineffassign
+    - lll
+    - misspell
+    - nakedret
+    - noctx
+    - nolintlint
+    - staticcheck
+    # - structcheck # Deprecated: use unused
+    - stylecheck
+    - typecheck
+    - unconvert
+    - unparam
+    - unused # Replaces deadcode, structcheck, varcheck
+    # - varcheck # Deprecated: use unused
+    - whitespace
+    # Added replacements/recommendations:
+    - mnd # Replaces gomnd
+    - copyloopvar # Replaces exportloopref (for Go < 1.22)
+    - shadow # Replaces govet.check-shadowing
+
+issues:
+  # Excluding configuration per-path, per-linter, per-text and per-source
+  exclude-rules:
+    # Exclude some linters from running on tests files.
+    - path: _test\\.go
+      linters:
+        - funlen # Test functions can be long
+        - gocyclo
+        - gosec  # Test files might have less strict security needs
+
+    # Example: Disable Deprecated linters warning
+    # - linters: [deadcode, structcheck, varcheck]
+    #   text: \"is deprecated\"
+
+  max-issues-per-linter: 0
+  max-same-issues: 0 
