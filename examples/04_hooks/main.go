@@ -6,10 +6,10 @@ import (
 	"log"
 	"os"
 
-	"thing"
+	"github.com/burugo/thing"
 	// "thing/examples/models" // Old import
-	"thing/internal/drivers/cache/redis" // Corrected import path usage
-	"thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing/internal/drivers/cache/redis" // Corrected import path usage
+	"github.com/burugo/thing/internal/drivers/db/sqlite"
 
 	redis_driver "github.com/redis/go-redis/v9"
 )
@@ -58,7 +58,7 @@ func main() {
 
 	// --- Thing ORM Initialization ---
 	// thingOrm, err := thing.New[models.User](dbAdapter, cacheClient, nil) // Old call
-	thingOrm, err := thing.New[User](dbAdapter, cacheClient) // Corrected call
+	thingOrm, err := thing.New[*User](dbAdapter, cacheClient) // Corrected call
 	if err != nil {
 		log.Fatalf("Failed to initialize Thing ORM: %v", err)
 	}
@@ -143,7 +143,7 @@ func main() {
 	// 1. Create a user (triggers BeforeSave, BeforeCreate, AfterCreate, AfterSave)
 	log.Println("--- Creating User 'Alice' ---")
 	alice := &User{Name: "Alice", Email: "alice@example.com"} // Use local User type
-	err = thingOrm.Save(*alice)                               // Pass value (dereferenced)
+	err = thingOrm.Save(alice)                                // Pass pointer
 	if err != nil {
 		log.Printf("Error saving Alice: %v", err)
 	} else {
@@ -153,7 +153,7 @@ func main() {
 	// 2. Create a user with email modification hook
 	log.Println("--- Creating User 'Bob' with invalid email ---")
 	bob := &User{Name: "Bob", Email: "invalid@example.com"} // Use local User type
-	err = thingOrm.Save(*bob)                               // Pass value (dereferenced)
+	err = thingOrm.Save(bob)                                // Pass pointer
 	if err != nil {
 		log.Printf("Error saving Bob: %v", err)
 	} else {
@@ -163,7 +163,7 @@ func main() {
 	// 3. Attempt to create user that triggers abort hook
 	log.Println("--- Attempting to create User 'AbortMe' ---")
 	abortUser := &User{Name: "AbortMe", Email: "abort@example.com"} // Use local User type
-	err = thingOrm.Save(*abortUser)                                 // Pass value (dereferenced)
+	err = thingOrm.Save(abortUser)                                  // Pass pointer
 	if err != nil {
 		log.Printf("Expected error saving AbortMe: %v", err) // Error expected here
 	} else {
@@ -174,7 +174,7 @@ func main() {
 	if alice.ID > 0 {
 		log.Println("--- Updating User 'Alice' ---")
 		alice.Email = "alice_updated@example.com"
-		err = thingOrm.Save(*alice) // Pass value (dereferenced)
+		err = thingOrm.Save(alice) // Pass pointer
 		if err != nil {
 			log.Printf("Error updating Alice: %v", err)
 		} else {
@@ -185,7 +185,7 @@ func main() {
 	// 5. Delete Bob (triggers BeforeDelete, AfterDelete)
 	if bob.ID > 0 {
 		log.Println("--- Deleting User 'Bob' ---")
-		err = thingOrm.Delete(*bob) // Pass value (dereferenced)
+		err = thingOrm.Delete(bob) // Pass pointer
 		if err != nil {
 			log.Printf("Error deleting Bob: %v", err)
 		} else {
