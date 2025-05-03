@@ -26,12 +26,12 @@ func (u *SimpleUser) KeepItem() bool { return true }
 func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 	tests := []struct {
 		dsl      string
-		expectFn func(options *thing.JsonOptions) bool
+		expectFn func(options *thing.JSONOptions) bool
 		desc     string
 	}{
 		{
 			dsl: "name,age",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Check inclusion and order - Expect id prepended
 				if len(options.OrderedInclude) != 3 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "name" || options.OrderedInclude[2].Name != "age" {
 					return false
@@ -46,7 +46,7 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		},
 		{
 			dsl: "name,-age",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Check inclusion and order - Expect id prepended
 				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "name" {
 					return false
@@ -61,7 +61,7 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		},
 		{
 			dsl: "name,book{title,-publish_at},-deleted",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Expected: id, name, book (include), deleted (exclude)
 				if len(options.OrderedInclude) != 3 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "name" || options.OrderedInclude[2].Name != "book" {
 					return false
@@ -80,7 +80,7 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		},
 		{
 			dsl: "user{name,profile{avatar}},book{author{name}}",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Expected top level: id, user, book
 				if len(options.OrderedInclude) != 3 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "user" || options.OrderedInclude[2].Name != "book" {
 					return false
@@ -111,7 +111,7 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		},
 		{
 			dsl: "",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Default: only 'id' included
 				if len(options.OrderedInclude) != 1 || options.OrderedInclude[0].Name != "id" {
 					return false
@@ -125,7 +125,7 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		},
 		{
 			dsl: "-deleted,-updated_at",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Default 'id' included, plus specified excludes
 				if len(options.OrderedInclude) != 1 || options.OrderedInclude[0].Name != "id" {
 					return false
@@ -146,7 +146,7 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		},
 		{
 			dsl: "book{title}",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Default 'id' included, plus book nested
 				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "book" {
 					return false
@@ -165,7 +165,7 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		},
 		{
 			dsl: "book{author{profile{email}}}",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Default 'id' included, plus deeply nested
 				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "book" {
 					return false
@@ -191,7 +191,7 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		},
 		{
 			dsl: "   name  ,   -deleted   ",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Default 'id' included, plus name, plus deleted exclude
 				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "name" {
 					return false
@@ -206,7 +206,7 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		},
 		{
 			dsl: "book{title,-publish_at},book{author}",
-			expectFn: func(options *thing.JsonOptions) bool {
+			expectFn: func(options *thing.JSONOptions) bool {
 				// Only the first occurrence of book{} is kept; merging is not supported.
 				bookRule := options.OrderedInclude[1]
 				if bookRule.Nested == nil {

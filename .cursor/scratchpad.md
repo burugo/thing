@@ -852,18 +852,7 @@ if err != nil {
 
 ## Project Status Board
 
-- [x] 12.1: Go struct 到建表 SQL 自动生成（New Feature）
-- [x] 12.2: 多数据库方言类型/语法适配（New Feature）
-- [x] 12.3: 批量建表与依赖顺序处理（New Feature）
-- [x] 12.4: 基础 schema 迁移与 ALTER TABLE 支持（New Feature）
-- [x] 12.5: 迁移版本管理（Migration Versioning）（New Feature）
-    *   [x] 12.5.1: 设计 schema_migrations 版本表
-    *   [x] 12.5.2: 迁移脚本管理与规范
-    *   [x] 12.5.3: 迁移执行引擎
-    *   [x] 12.5.4: 迁移状态查询与管理 API
-    *   [x] 12.5.5: 测试与文档
-- [x] 12.6: API 设计与 dry-run 支持（New Feature）
-- [x] 12.7: 测试与文档（New Feature）
+- [x] Exclude lll (long line) linter for *_test.go files in golangci-lint config
 
 ## Executor's Feedback or Assistance Requests
 

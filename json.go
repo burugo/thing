@@ -35,10 +35,10 @@ func snakeToCamel(s string) string {
 // FieldRule represents a single included field and its potential nested options.
 type FieldRule struct {
 	Name   string
-	Nested *JsonOptions // Nested options for this specific field
+	Nested *JSONOptions // Nested options for this specific field
 }
 
-// JsonOptions holds the options for JSON serialization.
+// JSONOptions holds the options for JSON serialization.
 // It is intentionally not exported as it's an internal detail.
 // Use functional options (e.g., WithFields, Include, Exclude) to configure JSON output.
 // type jsonOptions struct {
@@ -51,26 +51,26 @@ type FieldRule struct {
 // 	ExcludeFields []string
 // }
 
-// JsonOptions holds the options for JSON serialization.
-type JsonOptions struct {
+// JSONOptions holds the options for JSON serialization.
+type JSONOptions struct {
 	OrderedInclude []*FieldRule // Ordered list of fields to include (with possible nested rules)
 	OrderedExclude []string     // Ordered list of fields to exclude
 }
 
-// newJsonOptions creates a default empty options struct.
-func newJsonOptions() *JsonOptions {
-	return &JsonOptions{
+// newJSONOptions creates a default empty options struct.
+func newJSONOptions() *JSONOptions {
+	return &JSONOptions{
 		OrderedInclude: make([]*FieldRule, 0),
 		OrderedExclude: make([]string, 0),
 	}
 }
 
 // JSONOption defines the function signature for JSON serialization options.
-type JSONOption func(*JsonOptions)
+type JSONOption func(*JSONOptions)
 
 // Include specifies fields to include in the JSON output (simple, flat field list; no DSL features).
 func Include(fields ...string) JSONOption {
-	return func(opts *JsonOptions) {
+	return func(opts *JSONOptions) {
 		for _, field := range fields {
 			// Avoid duplicates
 			found := false
@@ -89,7 +89,7 @@ func Include(fields ...string) JSONOption {
 
 // Exclude specifies fields to exclude from the JSON output.
 func Exclude(fields ...string) JSONOption {
-	return func(opts *JsonOptions) {
+	return func(opts *JSONOptions) {
 		for _, field := range fields {
 			// Avoid duplicates
 			if !contains(opts.OrderedExclude, field) {
@@ -107,7 +107,7 @@ func (t *Thing[T]) ToJSON(model T, opts ...JSONOption) ([]byte, error) {
 		return nil, errors.New("cannot serialize nil model")
 	}
 
-	options := newJsonOptions()
+	options := newJSONOptions()
 	for _, opt := range opts {
 		opt(options)
 	}
@@ -119,7 +119,7 @@ func (t *Thing[T]) ToJSON(model T, opts ...JSONOption) ([]byte, error) {
 }
 
 // serializeValue recursively serializes a reflect.Value based on provided jsonOptions and top-level status.
-func (t *Thing[T]) serializeValue(val reflect.Value, options *JsonOptions) interface{} {
+func (t *Thing[T]) serializeValue(val reflect.Value, options *JSONOptions) interface{} {
 	kind := val.Kind()
 
 	if kind == reflect.Ptr {
@@ -309,7 +309,7 @@ func (t *Thing[T]) serializeValue(val reflect.Value, options *JsonOptions) inter
 				// Recursively serialize nested fields using the nested options from the rule
 				nestedOptions := rule.Nested // Pass nested options if they exist in the rule
 				if nestedOptions == nil {
-					nestedOptions = newJsonOptions() // Use default empty options if no specific nested rules
+					nestedOptions = newJSONOptions() // Use default empty options if no specific nested rules
 				}
 
 				// Check if the field is exportable. Unexported fields cannot be accessed via Interface().
@@ -372,13 +372,13 @@ func (t *Thing[T]) serializeValue(val reflect.Value, options *JsonOptions) inter
 // }
 
 // ParseFieldsDSL parses a DSL string and returns populated jsonOptions representing the rules.
-func ParseFieldsDSL(dsl string) (*JsonOptions, error) {
+func ParseFieldsDSL(dsl string) (*JSONOptions, error) {
 	// Enhanced parser: handle top-level and nested include/exclude fields
-	rootOpts := newJsonOptions()
+	rootOpts := newJSONOptions()
 
-	var parse func(input string) (*JsonOptions, error)
-	parse = func(input string) (*JsonOptions, error) {
-		currentOpts := newJsonOptions()
+	var parse func(input string) (*JSONOptions, error)
+	parse = func(input string) (*JSONOptions, error) {
+		currentOpts := newJSONOptions()
 		var i int
 		for i < len(input) {
 			// Skip whitespace and leading comma
@@ -479,9 +479,9 @@ func ParseFieldsDSL(dsl string) (*JsonOptions, error) {
 	}
 	rootOpts = parsedOpts
 
-	// Recursively apply the id default rule to all JsonOptions (including nested)
-	var applyIdDefaultRule func(opts *JsonOptions)
-	applyIdDefaultRule = func(opts *JsonOptions) {
+	// Recursively apply the id default rule to all JSONOptions (including nested)
+	var applyIDDefaultRule func(opts *JSONOptions)
+	applyIDDefaultRule = func(opts *JSONOptions) {
 		if opts == nil {
 			return
 		}
@@ -500,11 +500,11 @@ func ParseFieldsDSL(dsl string) (*JsonOptions, error) {
 		// Recurse into nested options
 		for _, rule := range opts.OrderedInclude {
 			if rule.Nested != nil {
-				applyIdDefaultRule(rule.Nested)
+				applyIDDefaultRule(rule.Nested)
 			}
 		}
 	}
-	applyIdDefaultRule(rootOpts)
+	applyIDDefaultRule(rootOpts)
 
 	return rootOpts, nil
 }
@@ -514,10 +514,10 @@ func containsExclude(slice []string, item string) bool {
 	return contains(slice, item)
 }
 
-// mergeJsonOptions merges src options into dst options recursively.
+// mergeJSONOptions merges src options into dst options recursively.
 // Note: This merge logic might need refinement based on desired behavior for overlapping rules.
 // Current: Appends includes if name doesn't exist, merges nested if name exists. Appends unique excludes.
-func mergeJsonOptions(dst, src *JsonOptions) {
+func mergeJSONOptions(dst, src *JSONOptions) {
 	if dst == nil || src == nil {
 		return
 	}
@@ -559,7 +559,7 @@ func mergeJsonOptions(dst, src *JsonOptions) {
 	}
 	dst.OrderedInclude = newOrdered
 
-	// Recursively apply id default rule to all nested JsonOptions after merge
+	// Recursively apply id default rule to all nested JSONOptions after merge
 	for _, rule := range dst.OrderedInclude {
 		if rule.Nested != nil {
 			idExcluded := containsExclude(rule.Nested.OrderedExclude, "id")
@@ -599,13 +599,13 @@ func WithFields(dsl string) JSONOption {
 
 // withFieldsDSL is the internal implementation for parsing the DSL string.
 func withFieldsDSL(dsl string) JSONOption {
-	return func(opts *JsonOptions) {
+	return func(opts *JSONOptions) {
 		parsedOpts, err := ParseFieldsDSL(dsl)
 		if err != nil {
 			// If DSL is invalid, do nothing (or could panic/log)
 			return
 		}
 		// Merge parsed DSL options into existing options
-		mergeJsonOptions(opts, parsedOpts)
+		mergeJSONOptions(opts, parsedOpts)
 	}
 }
