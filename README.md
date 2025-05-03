@@ -1,8 +1,10 @@
-[![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.18-blue.svg)](https://golang.org/doc/go1.18) \
-[![Go Report Card](https://goreportcard.com/badge/github.com/burugo/thing)](https://goreportcard.com/report/github.com/burugo/thing) \
-[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-
 # Thing ORM: High-Performance Go ORM with Built-in Caching
+
+[![Go Report Card](https://goreportcard.com/badge/github.com/burugo/thing)](https://goreportcard.com/report/github.com/burugo/thing)
+[![Build Status](https://github.com/burugo/thing/actions/workflows/go.yml/badge.svg)](https://github.com/burugo/thing/actions/workflows/go.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/burugo/thing.svg)](https://pkg.go.dev/github.com/burugo/thing)
+[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.18-blue.svg)](https://golang.org/doc/go1.18)
 
 **Thing ORM** is a high-performance, open-source Object-Relational Mapper for Go, designed for modern application needs:
 
@@ -83,6 +85,34 @@ func demonstrateCaching() {
 ```
 
 *See [Caching & Monitoring](#caching--monitoring) for advanced cache statistics and monitoring.*
+
+## Table of Contents
+
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [API Documentation](#api-documentation)
+- [Basic CRUD Example](#basic-crud-example)
+- [Flexible JSON Serialization](#flexible-json-serialization)
+  - [Examples](#examples)
+  - [Method-based Virtual Properties](#method-based-virtual-properties)
+- [Relationship Management](#relationship-management)
+  - [Defining Relationships](#defining-relationships)
+  - [Preloading Related Models](#preloading-related-models)
+- [Hooks & Events](#hooks--events)
+  - [Available Events](#available-events)
+  - [Registering Listeners](#registering-listeners)
+  - [Example](#example)
+- [Caching & Monitoring](#caching--monitoring)
+  - [Cache Monitoring & Hit/Miss Statistics](#cache-monitoring--hitmiss-statistics)
+- [Advanced Usage](#advanced-usage)
+  - [Raw SQL Execution](#raw-sql-execution)
+- [Schema/Migration Tools](#schemamigration-tools)
+  - [Usage Overview](#usage-overview)
+  - [Index Declaration](#index-declaration)
+  - [Auto Migration Example](#auto-migration-example-1)
+- [Contributing](#contributing)
+- [Performance](#performance)
+- [License](#license)
 
 ## Installation
 
@@ -278,98 +308,68 @@ func main() {
 
 ## Flexible JSON Serialization
 
-- **Supports Go struct tag**  
-  Use standard `json:"name,omitempty"`, `json:"-"` tags for default serialization rules, fully compatible with `encoding/json`.
-- **Dynamic field control (DSL/WithFields)**  
-  Specify included/excluded fields, nested relationships, and output order at runtime using a simple DSL string or `WithFields` API.
-- **Clear priority**  
-  **Struct tag rules (e.g., `json:"-"`, `json:"name"`) always take precedence over DSL/WithFields.** If a struct tag excludes a field (e.g., `json:"-"`), it will never be output, even if the DSL includes it. DSL/WithFields dynamic rules control output order and inclusion/exclusion for all fields allowed by struct tags. Struct tags provide the ultimate allow/deny list; DSL/WithFields provides dynamic, ordered, and nested control within those constraints.
-- **Order guaranteed**  
-  Output JSON field order strictly follows the DSL, meeting frontend/API spec requirements.
-- **Recursive nested support**  
-  Control nested objects/relationship fields recursively, including their output order and content.
-- **No struct tag required**  
-  Even without any `json` struct tags, you can serialize to JSON with full field control and ordering. Struct tags are optional and only needed for default rules or special cases.
+Thing ORM provides multiple ways to control JSON output fields, order, and nesting:
 
-### Example
+- **Include(fields ...string):** Specify exactly which top-level fields to output, in order. Best for simple, flat cases.
+- **Exclude(fields ...string):** Specify top-level fields to exclude from output. Can be combined with Include or used alone.
+- **WithFields(dsl string):** Use a powerful DSL string to control inclusion, exclusion, order, and nested fields (e.g. `"name,profile{avatar},-id"`).
 
-// Model definition (with struct tags, optional)
-type User struct {
-    ID   int    `json:"id"`
-    Name string `json:"name,omitempty"`
-    // ...
-}
+> **Note:**
+> - `Include` and `Exclude` only support flat (top-level) fields.
+> - For nested field control, use `WithFields` DSL.
+> - You can combine `Include`, `Exclude`, and `WithFields`, but only `WithFields` supports nested and ordered field selection.
 
-// Model definition (no struct tags)
-type SimpleUser struct {
-    ID   int
-    Name string
-    // ...
-}
+### Examples
 
-// Default serialization follows struct tag (if present)
-json.Marshal(user)
+```go
+// Only include id, name, and full_name (method-based virtual)
+thing.ToJSON(user, thing.Include("id", "name", "full_name"))
 
-// Flexible, ordered, nested output (works with or without struct tags)
-// Note: ToJSON is called on a Thing[*User] or Thing[*SimpleUser] instance (e.g., userThing)
-userThing.ToJSON(WithFieldsDSL("name,profile{avatar},-id"))
-simpleUserThing.ToJSON(WithFieldsDSL("name,-id"))
+// Exclude sensitive fields
+thing.ToJSON(user, thing.Exclude("password", "email"))
+
+// Combine Include and Exclude (still only affects top-level fields)
+thing.ToJSON(user, thing.Include("id", "name", "email"), thing.Exclude("email"))
+
+// Use WithFields DSL for advanced/nested control
+thing.ToJSON(user, thing.WithFields("name,profile{avatar},-id"))
+```
+
+- `WithFields` supports nested fields, exclusion (with `-field`), and output order.
+- `Include`/`Exclude` are Go-idiomatic and best for simple, flat cases.
+- Struct tags (e.g. `json:"-"`) always take precedence.
 
 ### Method-based Virtual Properties
 
-You can define computed (virtual) fields on your model by adding exported, zero-argument, single-return-value methods. These methods will only be included in the JSON output if you explicitly reference their corresponding field name in the DSL string passed to `ToJSON`.
+You can define computed (virtual) fields on your model by adding exported, zero-argument, single-return-value methods. These methods will only be included in the JSON output if you explicitly reference their corresponding field name in the DSL string or Include option.
 
 - **Method Naming:** Use Go's exported method naming (e.g., `FullName`). The field name in the DSL should be the snake_case version (e.g., `full_name`).
 - **How it works:**
-    - If the DSL includes a field name that matches a method (converted to snake_case), the method will be called and its return value included in the output.
-    - If the DSL does not mention the virtual field, it will not be output.
+    - If the DSL or Include includes a field name that matches a method (converted to snake_case), the method will be called and its return value included in the output.
+    - If the DSL/Include does not mention the virtual field, it will not be output.
 
 **Example:**
 
 ```go
-// Model definition
- type User struct {
-     FirstName string
-     LastName  string
- }
+type User struct {
+    FirstName string
+    LastName  string
+}
 
- // Virtual property method
- func (u *User) FullName() string {
-     return u.FirstName + " " + u.LastName
- }
+// Virtual property method
+func (u *User) FullName() string {
+    return u.FirstName + " " + u.LastName
+}
 
- user := &User{FirstName: "Alice", LastName: "Smith"}
- jsonBytes, _ := thing.ToJSON(user, thing.WithFields("first_name,full_name"))
- fmt.Println(string(jsonBytes))
- // Output: {"first_name":"Alice","full_name":"Alice Smith"}
+user := &User{FirstName: "Alice", LastName: "Smith"}
+jsonBytes, _ := thing.ToJSON(user, thing.WithFields("first_name,full_name"))
+fmt.Println(string(jsonBytes))
+// Output: {"first_name":"Alice","full_name":"Alice Smith"}
 ```
 
-- If you omit `full_name` from the DSL, the `FullName()` method will not be called or included in the output.
+- If you omit `full_name` from the DSL or Include, the `FullName()` method will not be called or included in the output.
 
 This approach gives you full control over which computed fields are exposed, and ensures only explicitly requested virtuals are included in the JSON output.
-
-### Simple Field Inclusion: `Include(fields ...string)`
-
-For most use cases, you can use the `Include` function to specify exactly which fields to output, in order, using plain Go string arguments:
-
-```go
-thing.ToJSON(user, thing.Include("id", "name", "full_name"))
-```
-
-- This is equivalent to `WithFields("id,name,full_name")` but is more Go-idiomatic and avoids DSL syntax for simple cases.
-- You can use this to output method-based virtuals as well:
-
-```go
-thing.ToJSON(user, thing.Include("first_name", "full_name"))
-```
-
-- If you need nested, exclude, or advanced DSL features, use `WithFields`:
-
-```go
-thing.ToJSON(user, thing.WithFields("name,profile{avatar},-id"))
-```
-
-- Both `Include` and `WithFields` are fully compatible with struct tags and method-based virtuals as described above.
 
 ## Relationship Management
 
@@ -462,6 +462,99 @@ func main() {
 ```
 
 Thing ORM automatically fetches the related models in an optimized way, utilizing the cache where possible.
+
+## Hooks & Events
+
+Thing ORM provides a hook system that allows you to register functions (listeners) to be executed before or after specific database operations. This is useful for tasks like validation, logging, data modification, or triggering side effects.
+
+### Available Events
+
+- `EventTypeBeforeSave`: Before creating or updating a record.
+- `EventTypeAfterSave`: After successfully creating or updating a record.
+- `EventTypeBeforeCreate`: Before creating a new record (subset of BeforeSave).
+- `EventTypeAfterCreate`: After successfully creating a new record.
+- `EventTypeBeforeDelete`: Before hard deleting a record.
+- `EventTypeAfterDelete`: After successfully hard deleting a record.
+- `EventTypeBeforeSoftDelete`: Before soft deleting a record.
+- `EventTypeAfterSoftDelete`: After successfully soft deleting a record.
+
+### Registering Listeners
+
+Use `thing.RegisterListener` to attach your hook function to an event type. The listener function receives the context, event type, the model instance, and optional event-specific data.
+
+**Listener Signature:**
+
+```go
+func(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error
+```
+
+- **Returning an error** from a `Before*` hook will abort the database operation.
+- `eventData` for `EventTypeAfterSave` contains a `map[string]interface{}` of changed fields.
+
+### Example
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+
+	"github.com/burugo/thing"
+	// Assume User model is defined
+)
+
+// Example Hook: Validate email before saving
+func validateEmailHook(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+	if user, ok := model.(*User); ok { // Type assert to your model
+		log.Printf("[HOOK %s] Checking user: %s, Email: %s", eventType, user.Name, user.Email)
+		if user.Email == "invalid@example.com" {
+			return errors.New("invalid email provided")
+		}
+	}
+	return nil
+}
+
+// Example Hook: Log after creation
+func logAfterCreateHook(ctx context.Context, eventType thing.EventType, model interface{}, eventData interface{}) error {
+	if user, ok := model.(*User); ok {
+		log.Printf("[HOOK %s] User created! ID: %d, Name: %s", eventType, user.ID, user.Name)
+	}
+	return nil
+}
+
+func main() {
+	// Assume thing.Configure() and thing.AutoMigrate(&User{}) are done
+
+	// Register hooks
+	thing.RegisterListener(thing.EventTypeBeforeSave, validateEmailHook)
+	thing.RegisterListener(thing.EventTypeAfterCreate, logAfterCreateHook)
+
+	// Get ORM instance
+	users, _ := thing.Use[*User]()
+
+	// 1. Attempt to save user with invalid email (will be aborted by hook)
+	invalidUser := &User{Name: "Invalid", Email: "invalid@example.com"}
+	err := users.Save(invalidUser)
+	if err != nil {
+		fmt.Printf("Failed to save invalid user (as expected): %v\n", err)
+	}
+
+	// 2. Save a valid user (triggers BeforeSave and AfterCreate hooks)
+	validUser := &User{Name: "Valid Hook User", Email: "valid@example.com"}
+	err = users.Save(validUser)
+	if err != nil {
+		log.Fatalf("Failed to save valid user: %v", err)
+	} else {
+		fmt.Printf("Successfully saved valid user ID: %d\n", validUser.ID)
+	}
+
+	// Unregistering listeners is also possible with thing.UnregisterListener
+}
+
+```
 
 ## Caching & Monitoring
 
