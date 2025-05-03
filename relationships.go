@@ -15,10 +15,9 @@ import (
 
 	"github.com/burugo/thing/common"
 	"github.com/burugo/thing/internal/cache"
+	"github.com/burugo/thing/internal/interfaces"
 	"github.com/burugo/thing/internal/schema"
 	"github.com/burugo/thing/internal/types"
-
-	interfaces "github.com/burugo/thing/internal/interfaces"
 )
 
 // --- Relationship Loading ---
