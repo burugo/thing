@@ -88,6 +88,12 @@ func demonstrateCaching() {
 go get github.com/burugo/thing
 ```
 
+## API Documentation
+
+Full API documentation is available on [pkg.go.dev](https://pkg.go.dev/github.com/burugo/thing).
+
+*(Note: The documentation link will become active after the first official release/tag of the package.)*
+
 ## Basic CRUD Example
 
 Here is a minimal example demonstrating how to use Thing ORM for basic CRUD operations:
