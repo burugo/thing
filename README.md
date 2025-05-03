@@ -592,5 +592,9 @@ For simpler applications or global setup, you can use `thing.Configure` once at 
 // if err != nil { ... }
 ```
 
+## License
+
+Thing ORM is released under the [MIT License](LICENSE).
+
 
 
