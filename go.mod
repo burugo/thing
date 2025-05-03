@@ -1,6 +1,8 @@
 module github.com/burugo/thing
 
-go 1.24.2
+go 1.21.0
+
+toolchain go1.24.2
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.28
@@ -9,7 +11,6 @@ require (
 
 require (
 	github.com/go-sql-driver/mysql v1.9.2
-	github.com/google/wire v0.6.0
 	github.com/lib/pq v1.10.9
 	github.com/stretchr/testify v1.10.0
 )
