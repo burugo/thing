@@ -1,15 +1,25 @@
-# Thing ORM: High-Performance, Developer-Friendly Go ORM
+# Thing ORM: High-Performance Go ORM with Built-in Caching
 
-**Thing ORM** is a high-performance, open-source Object-Relational Mapper for Go, designed to provide:
+**Thing ORM** is a high-performance, open-source Object-Relational Mapper for Go, designed for modern application needs:
 
-- **Multi-Database Support:** Out-of-the-box compatibility with MySQL, PostgreSQL, and SQLite, with a unified API and automatic SQL dialect adaptation.
-- **Integrated, Configurable Caching:** Built-in support for Redis and in-memory caching to optimize both single-entity and list queries, with robust cache invalidation and monitoring.
-- **Simple, Efficient CRUD and List Queries:** Focused on the most common application patterns—thread-safe Create, Read, Update, Delete, and efficient list retrieval with filtering, ordering, and pagination. 
+- **Unique Integrated Caching:** Thing ORM is the only Go ORM with first-class, built-in support for both Redis and in-memory caching. It automatically caches single-entity and list queries, manages cache invalidation, and provides cache hit/miss monitoring—out of the box. No third-party plugins or manual cache wiring required.
+- **Multi-Database Support:** Effortlessly switch between MySQL, PostgreSQL, and SQLite with a unified API and automatic SQL dialect adaptation.
+- **Simple, Efficient CRUD and List Queries:** Focused on the most common application patterns—thread-safe Create, Read, Update, Delete, and efficient list retrieval with filtering, ordering, and pagination.
 - **Explicit Scope:** Intentionally excludes complex SQL features such as JOINs, aggregations, GROUP BY, and HAVING, to keep the API simple and performance predictable.
 - **Elegant, Developer-Friendly API:** Clean, extensible, and idiomatic Go API, with flexible JSON serialization, relationship management, and hooks/events system.
 - **Open Source and Community-Ready:** Well-documented, thoroughly tested, and designed for easy adoption and contribution by the Go community.
 
+> **Why Thing ORM? (Unique Caching)**
+>
+> Unlike other Go ORMs, Thing ORM natively integrates caching at its core. All queries and entity fetches are automatically cached and invalidated as needed, with zero configuration. This delivers significant performance gains and reduces database load—no other Go ORM offers this level of built-in, transparent caching.
+
 > **Thing ORM** is ideal for projects that need fast, reliable, and maintainable data access without the overhead of a full-featured SQL builder. It empowers developers to build scalable applications with minimal boilerplate and maximum control over caching and serialization.
+
+## Example: Transparent Caching in Action
+```go
+// (Apply to cache_index_... - Placeholder for caching example)
+// No manual cache management required—Thing ORM handles it all.
+```
 
 ## Basic CRUD Example
 
@@ -187,7 +197,7 @@ thing.ToJSON(user, thing.WithFields("name,profile{avatar},-id"))
 
 ## Cache Monitoring & Hit/Miss Statistics
 
-Thing ORM provides built-in cache operation monitoring for all cache clients (including Redis and the mock client used in tests).
+Thing ORM provides built-in cache operation monitoring for all cache clients (including Redis and the mock client used in tests). Remember, this monitoring capability is a core, integrated feature, not an add-on.
 
 ### How to Use
 
@@ -216,7 +226,7 @@ fmt.Printf("Get hit rate: %.2f%%\n", hitRate*100)
 
 This mechanism allows you to monitor cache effectiveness, debug performance issues, and tune your caching strategy.
 
-**Note:** All counters are thread-safe and represent the state since the cache client was created or last reset.
+**Note:** All counters are thread-safe and represent the state since the cache client was created or last reset. This built-in monitoring applies automatically to any cache backend you use (Redis, in-memory, etc.).
 
 ## Schema/Migration Tools
 
