@@ -38,8 +38,8 @@ func main() {
 	log.Println("Database initialized and schema created.")
 
 	// --- Cache Setup (Redis) ---
-	// Note: Requires a running Redis instance on localhost:6379
-	redisAddr := "localhost:6379"
+	// Note: Requires a running Redis instance
+	redisAddr := "127.0.0.1:6379" // Use IP address instead of hostname
 	redisClient := redis_driver.NewClient(&redis_driver.Options{Addr: redisAddr})
 	if _, err := redisClient.Ping(ctx).Result(); err != nil {
 		log.Printf("WARN: Failed to connect to Redis at %s: %v. Cache operations will likely fail.", redisAddr, err)
