@@ -198,6 +198,99 @@ json.Marshal(user)
 userThing.ToJSON(WithFieldsDSL("name,profile{avatar},-id"))
 simpleUserThing.ToJSON(WithFieldsDSL("name,-id"))
 
+## Relationship Management (HasMany, BelongsTo)
+
+Thing ORM supports basic relationship management, including preloading related models.
+
+### 1. Define Relationships in Models
+
+Use `thing` struct tags to define relationships. The `db:"-"` tag prevents the ORM from treating the relationship field as a database column.
+
+```go
+package models // assuming models are in a separate package
+
+import "github.com/burugo/thing"
+
+// User has many Books
+type User struct {
+	thing.BaseModel
+	Name  string `db:"name"`
+	Email string `db:"email"`
+	// Define HasMany relationship:
+	// - fk: Foreign key in the 'Book' table (user_id)
+	// - model: Name of the related model struct (Book)
+	Books []*Book `thing:"hasMany;fk:user_id;model:Book" db:"-"`
+}
+
+func (u *User) TableName() string { return "users" }
+
+// Book belongs to a User
+type Book struct {
+	thing.BaseModel
+	Title  string `db:"title"`
+	UserID int64  `db:"user_id"` // Foreign key column
+	// Define BelongsTo relationship:
+	// - fk: Foreign key in the 'Book' table itself (user_id)
+	User *User `thing:"belongsTo;fk:user_id" db:"-"`
+}
+
+func (b *Book) TableName() string { return "books" }
+```
+
+### 2. Preload Relationships in Queries
+
+Use the `Preloads` field in `QueryParams` to specify relationships to eager-load.
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/burugo/thing"
+	"github.com/burugo/thing/internal/types"
+	// import your models package e.g., "yourproject/models"
+)
+
+func main() {
+	// Assume thing.Configure() and AutoMigrate(&models.User{}, &models.Book{}) are done
+	// Assume user and books are created...
+
+	userThing, _ := thing.Use[*models.User]()
+	bookThing, _ := thing.Use[*models.Book]()
+
+	// Example 1: Find a user and preload their books (HasMany)
+	userParams := types.QueryParams{
+		Where:    "id = ?",
+		Args:     []interface{}{1}, // Assuming user with ID 1 exists
+		Preloads: []string{"Books"}, // Specify the relationship field name
+	}
+	userResult, _ := userThing.Query(userParams)
+	fetchedUsers, _ := userResult.Fetch(0, 1)
+	if len(fetchedUsers) > 0 {
+		fmt.Printf("User: %s, Number of Books: %d\n", fetchedUsers[0].Name, len(fetchedUsers[0].Books))
+		// fetchedUsers[0].Books is now populated
+	}
+
+	// Example 2: Find a book and preload its user (BelongsTo)
+	bookParams := types.QueryParams{
+		Where:    "id = ?",
+		Args:     []interface{}{5}, // Assuming book with ID 5 exists
+		Preloads: []string{"User"}, // Specify the relationship field name
+	}
+	bookResult, _ := bookThing.Query(bookParams)
+	fetchedBooks, _ := bookResult.Fetch(0, 1)
+	if len(fetchedBooks) > 0 && fetchedBooks[0].User != nil {
+		fmt.Printf("Book: %s, Owner: %s\n", fetchedBooks[0].Title, fetchedBooks[0].User.Name)
+		// fetchedBooks[0].User is now populated
+	}
+}
+
+```
+
+Thing ORM automatically fetches the related models in an optimized way, utilizing the cache where possible.
+
 ## Method-based Virtual Properties (Advanced JSON Serialization)
 
 You can define computed (virtual) fields on your model by adding exported, zero-argument, single-return-value methods. These methods will only be included in the JSON output if you explicitly reference their corresponding field name in the DSL string passed to `ToJSON`.
