@@ -103,6 +103,11 @@ func (t *Thing[T]) DBAdapter() interfaces.DBAdapter {
 	return t.db
 }
 
+// Cache returns the underlying CacheClient associated with this Thing instance.
+func (t *Thing[T]) Cache() interfaces.CacheClient {
+	return t.cache
+}
+
 // GlobalDB returns the global DBAdapter (for internal use, e.g., AutoMigrate)
 func GlobalDB() interfaces.DBAdapter {
 	return globalDB
