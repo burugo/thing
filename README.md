@@ -1,3 +1,7 @@
+[![Go Version](https://img.shields.io/badge/Go-%3E%3D%201.24-blue.svg)](https://golang.org/doc/go1.24) \
+[![Go Report Card](https://goreportcard.com/badge/github.com/burugo/thing)](https://goreportcard.com/report/github.com/burugo/thing) \
+[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 # Thing ORM: High-Performance Go ORM with Built-in Caching
 
 **Thing ORM** is a high-performance, open-source Object-Relational Mapper for Go, designed for modern application needs:
@@ -14,12 +18,6 @@
 > Unlike other Go ORMs, Thing ORM natively integrates caching at its core. All queries and entity fetches are automatically cached and invalidated as needed, with zero configuration. This delivers significant performance gains and reduces database load—no other Go ORM offers this level of built-in, transparent caching.
 
 > **Thing ORM** is ideal for projects that need fast, reliable, and maintainable data access without the overhead of a full-featured SQL builder. It empowers developers to build scalable applications with minimal boilerplate and maximum control over caching and serialization.
-
-## Example: Transparent Caching in Action
-```go
-// (Apply to cache_index_... - Placeholder for caching example)
-// No manual cache management required—Thing ORM handles it all.
-```
 
 ## Basic CRUD Example
 
