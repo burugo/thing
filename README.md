@@ -25,6 +25,7 @@ Fetching the same entity multiple times automatically utilizes the cache after t
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 
@@ -56,6 +57,10 @@ func demonstrateCaching() {
 	}
 	fmt.Println("First fetch result:", user1.Name)
 	// You can check cache stats here to see a potential miss
+	cacheClient := users.Cache() // Get the cache client
+	stats1 := cacheClient.GetCacheStats(context.Background()) // Use appropriate context
+	fmt.Printf("Stats after first fetch: GetModel=%d, GetModelMiss=%d\n",
+		stats1.Counters["GetModel"], stats1.Counters["GetModelMiss"])
 
 	// 3. Second fetch - should hit the cache (if caching is enabled)
 	fmt.Println("\nFetching user ID 1 for the second time...")
@@ -66,6 +71,9 @@ func demonstrateCaching() {
 	fmt.Println("Second fetch result:", user2.Name)
 	// Cache stats should show a hit here (e.g., GetModel counter increased,
 	// GetModelMiss counter remains the same as after the first fetch).
+	stats2 := cacheClient.GetCacheStats(context.Background())
+	fmt.Printf("Stats after second fetch: GetModel=%d, GetModelMiss=%d\n",
+		stats2.Counters["GetModel"], stats2.Counters["GetModelMiss"])
 
 	// Subsequent fetches for ID 1 will also hit the cache until invalidated.
 }
