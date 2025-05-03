@@ -33,6 +33,11 @@ linters-settings:
   lll:
     # max line length, lines longer will be reported. Defaults to 120.
     line-length: 120
+  mnd:
+    # Comma-separated list of numbers to ignore.
+    ignored-numbers: 0,1,2,3
+    # Optionally, specify checks to run (e.g., argument, case, condition, operation, return, assign)
+    # checks: argument,case,condition,operation,return,assign
   # goimports:
   #   local-prefixes: github.com/burugo/thing
   # gocritic:
@@ -85,7 +90,7 @@ linters:
     # Added replacements/recommendations:
     - mnd # Replaces gomnd
     - copyloopvar # Replaces exportloopref (for Go < 1.22)
-    - shadow # Replaces govet.check-shadowing
+    # - shadow # Replaces govet.check-shadowing (Seems not available/enabled by default in all versions)
 
 issues:
   # Excluding configuration per-path, per-linter, per-text and per-source
@@ -96,6 +101,7 @@ issues:
         - funlen # Test functions can be long
         - gocyclo
         - gosec  # Test files might have less strict security needs
+        - lll    # Ignore long line warnings in test files
 
     # Example: Disable Deprecated linters warning
     # - linters: [deadcode, structcheck, varcheck]
