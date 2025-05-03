@@ -80,6 +80,7 @@ func demonstrateCaching() {
 }
 
 // In main(), call demonstrateCaching() after AutoMigrate
+```
 
 *See [Caching & Monitoring](#caching--monitoring) for advanced cache statistics and monitoring.*
 
