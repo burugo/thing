@@ -5,15 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
 	"github.com/burugo/thing/internal/drivers/db/sqlite"
-	interfaces "github.com/burugo/thing/internal/interfaces"
-	"github.com/burugo/thing/internal/schema"
-	"github.com/burugo/thing/internal/types"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -144,28 +144,19 @@ func (m *mockCacheClient) incrementCounter(name string) {
 // Exists checks if a non-expired key is present in the mock cache store.
 // Note: This doesn't check lock prefixes.
 func (m *mockCacheClient) Exists(key string) bool {
-	// log.Printf("MockCache.Exists: Checking key: %s", key) // DEBUG LOGGING
-	_, exists := m.store.Load(key)
+	val, exists := m.store.Load(key)
+	log.Printf("[MOCKCACHE Exists] key=%s exists=%v type=%T value=%#v", key, exists, val, val)
 	if !exists {
-		// log.Printf("DEBUG Exists: Key %s NOT found in store", key)
 		return false
 	}
-
-	// Check expiry
 	if expiryTime, expiryExists := m.expiryStore.Load(key); expiryExists {
 		if time.Now().After(expiryTime.(time.Time)) {
-			// log.Printf("DEBUG Exists: Key %s IS expired. Deleting.", key)
-			// Expired, treat as non-existent (and delete)
 			m.store.Delete(key)
 			m.expiryStore.Delete(key)
+			log.Printf("[MOCKCACHE Exists] key=%s expired", key)
 			return false
 		}
-		// log.Printf("DEBUG Exists: Key %s NOT expired.", key)
-	} else {
-		// log.Printf("DEBUG Exists: Key %s has NO expiry.", key)
 	}
-	// Exists and not expired (or no expiry set)
-	// log.Printf("DEBUG Exists: Key %s FOUND and valid.", key)
 	return true
 }
 
@@ -239,6 +230,14 @@ func (m *mockCacheClient) Get(ctx context.Context, key string) (string, error) {
 
 // Set stores a raw string value in the mock cache.
 func (m *mockCacheClient) Set(ctx context.Context, key string, value string, expiration time.Duration) error {
+	// NoneResult 写保护：如果已是 NoneResult，不重复 set/计数
+	if value == common.NoneResult {
+		if v, ok := m.store.Load(key); ok {
+			if s, ok := v.([]byte); ok && string(s) == common.NoneResult {
+				return nil
+			}
+		}
+	}
 	m.incrementCounter("Set") // Use helper
 	m.mu.Lock()
 	m.mu.Unlock()
@@ -269,63 +268,42 @@ func (m *mockCacheClient) Delete(ctx context.Context, key string) error {
 }
 
 func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr interface{}) error {
-	m.incrementCounter("GetModel") // Use helper
+	m.incrementCounter("GetModel")
 	m.mu.Lock()
 	m.mu.Unlock()
-
-	// Debug logging to show all keys in the store when GetModel is called
-	// log.Printf("DEBUG GetModel: Current keys in cache for key: %s", key)
-	m.store.Range(func(k, v interface{}) bool {
-		// log.Printf("  - Key: %v", k)
-		return true
-	})
-
-	// Use GetValue helper which includes expiry check
 	storedBytes, ok := m.GetValue(key)
 	if !ok {
 		m.incrementCounter("GetModelMiss")
 		return common.ErrNotFound
 	}
-
-	// Check for NoneResult marker BEFORE trying to unmarshal
 	if string(storedBytes) == common.NoneResult {
 		m.incrementCounter("GetModelMiss")
 		return common.ErrCacheNoneResult
 	}
 	m.incrementCounter("GetModelHit")
-
-	// log.Printf("DEBUG GetModel: Key %s FOUND in cache, unmarshaling...", key)
-	if err := unmarshalFromMock(storedBytes, modelPtr); err != nil {
-		// log.Printf("DEBUG GetModel: Error unmarshaling for key %s: %v", key, err)
-		return fmt.Errorf("mock cache unmarshal error for key '%s': %w", key, err)
-	}
-	// log.Printf("DEBUG GetModel: Successfully unmarshaled data for key %s", key)
-	return nil // Found and successfully unmarshaled
+	return unmarshalFromMock(storedBytes, modelPtr)
 }
 
 func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error {
-	m.incrementCounter("SetModel") // Use helper
-	m.mu.Lock()                    // Lock for counter update
-	m.mu.Unlock()
-
-	// log.Printf("DEBUG SetModel: Setting key: %s with expiration: %v", key, expiration)
 	data, err := marshalForMock(model)
 	if err != nil {
-		// log.Printf("DEBUG SetModel: Error marshaling for key %s: %v", key, err)
 		return fmt.Errorf("mock cache marshal error for key '%s': %w", key, err)
 	}
-	// log.Printf("DEBUG MOCK SETMODEL: Marshaled data for key %s: %s", key, string(data)) // REMOVED LOG
-
-	// Important: Store serialized data
+	if string(data) == common.NoneResult {
+		if v, ok := m.store.Load(key); ok {
+			if s, ok := v.([]byte); ok && string(s) == common.NoneResult {
+				return nil
+			}
+		}
+	}
+	m.incrementCounter("SetModel")
+	m.mu.Lock()
+	m.mu.Unlock()
 	m.store.Store(key, data)
 	if expiration > 0 {
 		expiryTime := time.Now().Add(expiration)
 		m.expiryStore.Store(key, expiryTime)
-		// log.Printf("DEBUG SetModel: Set key %s with expiry at %v", key, expiryTime)
-	} else {
-		// log.Printf("DEBUG SetModel: Set key %s with no expiry", key)
 	}
-
 	return nil
 }
 
@@ -495,12 +473,12 @@ func (m *mockDBAdapter) Exec(ctx context.Context, query string, args ...interfac
 	return m.SQLiteAdapter.Exec(ctx, query, args...)
 }
 
-func (m *mockDBAdapter) GetCount(ctx context.Context, info *schema.ModelInfo, params types.QueryParams) (int64, error) {
+func (m *mockDBAdapter) GetCount(ctx context.Context, tableName string, where string, args []interface{}) (int64, error) {
 	m.GetCountCalls++
-	return m.SQLiteAdapter.GetCount(ctx, info, params)
+	return m.SQLiteAdapter.GetCount(ctx, tableName, where, args)
 }
 
-func (m *mockDBAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (interfaces.Tx, error) {
+func (m *mockDBAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, error) {
 	return m.SQLiteAdapter.BeginTx(ctx, opts)
 }
 
@@ -637,12 +615,21 @@ func (m *mockCacheClient) GetModelCount() int {
 // GetCacheStats returns a snapshot of cache operation counters for the mock client.
 // The returned map is a copy and safe for concurrent use.
 // Typical keys: "Get", "GetMiss", "GetModel", "GetModelMiss", etc.
-func (m *mockCacheClient) GetCacheStats(ctx context.Context) interfaces.CacheStats {
+func (m *mockCacheClient) GetCacheStats(ctx context.Context) thing.CacheStats {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	stats := make(map[string]int, len(m.Counters))
 	for k, v := range m.Counters {
 		stats[k] = v
 	}
-	return interfaces.CacheStats{Counters: stats}
+	return thing.CacheStats{Counters: stats}
+}
+
+func caller() string {
+	pc, file, line, ok := runtime.Caller(2)
+	if !ok {
+		return "?"
+	}
+	fn := runtime.FuncForPC(pc)
+	return fmt.Sprintf("%s:%d %s", file, line, fn.Name())
 }
