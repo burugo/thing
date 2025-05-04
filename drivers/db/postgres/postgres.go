@@ -30,13 +30,13 @@ func (d PostgresDialector) Placeholder(index int) string {
 // PostgreSQLAdapter implements the DBAdapter interface for PostgreSQL.
 type PostgreSQLAdapter struct {
 	db      *sql.DB
-	builder *sqlbuilder.SQLBuilder
+	builder thing.SQLBuilder
 }
 
 // PostgreSQLTx implements the Tx interface for PostgreSQL.
 type PostgreSQLTx struct {
 	tx      *sql.Tx
-	builder *sqlbuilder.SQLBuilder
+	builder thing.SQLBuilder
 }
 
 // Compile-time checks to ensure interfaces are implemented.

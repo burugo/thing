@@ -30,7 +30,7 @@ func (d MySQLDialector) Placeholder(_ int) string {
 // MySQLAdapter implements the DBAdapter interface for MySQL.
 type MySQLAdapter struct {
 	db      *sql.DB
-	builder *sqlbuilder.SQLBuilder // Added SQLBuilder field
+	builder thing.SQLBuilder // Added SQLBuilder field
 }
 
 // MySQLTx implements the Tx interface for MySQL.

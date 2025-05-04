@@ -35,7 +35,7 @@ type SQLiteAdapter struct {
 	dsn     string
 	closeMx sync.Mutex
 	closed  bool
-	builder *sqlbuilder.SQLBuilder // Added SQLBuilder field
+	builder thing.SQLBuilder // Added SQLBuilder field
 }
 
 // NewSQLiteAdapter creates a new SQLite database adapter.
