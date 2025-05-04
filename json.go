@@ -400,7 +400,8 @@ func ParseFieldsDSL(dsl string) (*JSONOptions, error) {
 			}
 
 			// Check for nested
-			if i < len(input) && input[i] == '{' {
+			switch {
+			case i < len(input) && input[i] == '{':
 				// Find matching '}'
 				braceCount := 1
 				nestStart := i + 1
@@ -439,28 +440,26 @@ func ParseFieldsDSL(dsl string) (*JSONOptions, error) {
 
 				i = nestEnd // Move past '}'
 
-			} else if strings.HasPrefix(field, "-") {
-				name := strings.TrimPrefix(field, "-")
-				if name != "" {
-					// Add to ordered exclude list, avoid duplicates
-					if !contains(currentOpts.OrderedExclude, name) {
+			default:
+				if strings.HasPrefix(field, "-") {
+					name := strings.TrimPrefix(field, "-")
+					if name != "" && !contains(currentOpts.OrderedExclude, name) {
 						currentOpts.OrderedExclude = append(currentOpts.OrderedExclude, name)
 					}
-				}
-			} else {
-				// Add to ordered include list, avoid duplicates
-				found := false
-				for _, existingRule := range currentOpts.OrderedInclude {
-					if existingRule.Name == field {
-						found = true
-						break
+				} else {
+					found := false
+					for _, existingRule := range currentOpts.OrderedInclude {
+						if existingRule.Name == field {
+							found = true
+							break
+						}
 					}
-				}
-				if !found {
-					currentOpts.OrderedInclude = append(currentOpts.OrderedInclude, &FieldRule{
-						Name:   field,
-						Nested: nil, // No nested rules for simple fields
-					})
+					if !found {
+						currentOpts.OrderedInclude = append(currentOpts.OrderedInclude, &FieldRule{
+							Name:   field,
+							Nested: nil, // No nested rules for simple fields
+						})
+					}
 				}
 			}
 
