@@ -16,9 +16,8 @@ import (
 
 	"github.com/burugo/thing/common" // Added import for common errors/constants
 	"github.com/burugo/thing/internal/cache"
-	"github.com/burugo/thing/internal/interfaces"
-	"github.com/burugo/thing/internal/schema"
-	"github.com/burugo/thing/internal/types" // Import internal cache package
+	cacheinternal "github.com/burugo/thing/internal/cache"
+	"github.com/burugo/thing/internal/schema" // Import internal cache package
 	"github.com/burugo/thing/internal/utils"
 	// "thing/internal/helpers" // Removed import
 )
@@ -26,19 +25,20 @@ import (
 // --- Cache Constants ---
 // Represents a non-existent entry in the cache - moved to common/errors.go
 // const NoneResult = "NoneResult" // Migrated
-// Lock duration
+
+// Lock duration constants for cache locking
 const LockDuration = 5 * time.Second
 const LockRetryDelay = 50 * time.Millisecond
 const LockMaxRetries = 5
 
 // Global instance of the lock manager for cache keys.
 // Defined here to avoid import cycles.
-var GlobalCacheKeyLocker = NewCacheKeyLockManagerInternal()
+// var GlobalCacheKeyLocker = NewCacheKeyLockManagerInternal()
 
 // --- Cache Helpers ---
 
-// withLock acquires a lock, executes the action, and releases the lock.
-func withLock(ctx context.Context, cache interfaces.CacheClient, lockKey string, action func(ctx context.Context) error) error {
+// WithLock acquires a lock, executes the action, and releases the lock.
+func WithLock(ctx context.Context, cache CacheClient, lockKey string, action func(ctx context.Context) error) error {
 	if cache == nil {
 		log.Printf("Warning: Proceeding without lock for key '%s', cache client is nil", lockKey)
 		return action(ctx)
@@ -74,6 +74,31 @@ func withLock(ctx context.Context, cache interfaces.CacheClient, lockKey string,
 	}()
 	log.Printf("Lock acquired for key '%s'", lockKey)
 	return action(ctx)
+}
+
+// GenerateQueryHash generates a unique hash for a given query.
+func GenerateQueryHash(params QueryParams) string {
+	paramsJson, err := json.Marshal(params)
+	if err != nil {
+		log.Printf("ERROR: Failed to marshal query params for hash: %v", err)
+		return fmt.Sprintf("error_hash_%d", time.Now().UnixNano())
+	}
+	hasher := sha256.New()
+	hasher.Write(paramsJson)
+	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// GenerateCacheKey generates a cache key for list or count queries with normalized arguments.
+func GenerateCacheKey(prefix, tableName string, params QueryParams) string {
+	normalizedParams := params
+	normalizedArgs := make([]interface{}, len(params.Args))
+	for i, arg := range params.Args {
+		normalizedArgs[i] = utils.NormalizeValue(arg)
+	}
+	normalizedParams.Args = normalizedArgs
+
+	hash := GenerateQueryHash(normalizedParams)
+	return fmt.Sprintf("%s:%s:%s", prefix, tableName, hash)
 }
 
 // ClearCacheByID removes the cache entry for a specific model instance by its ID.
@@ -165,7 +190,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	// --- Phase 1: Gather Tasks ---
 	type cacheTask struct {
 		cacheKey    string
-		queryParams types.QueryParams
+		queryParams QueryParams
 		isListKey   bool
 		isCountKey  bool
 		needsAdd    bool
@@ -186,7 +211,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			log.Printf("WARN: QueryParams not found for registered cache key '%s'. Cannot perform cache update.", cacheKey)
 			continue
 		}
-		paramsRoot := types.QueryParams{
+		paramsRoot := QueryParams{
 			Where:    paramsInternal.Where,
 			Args:     paramsInternal.Args,
 			Order:    paramsInternal.Order,
@@ -195,7 +220,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 
 		if isDelete {
 			// Only check if the model would have matched before deletion
-			matches, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, paramsRoot)
+			matches, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 			if err != nil {
 				log.Printf("WARN: Error checking query match for deleted model (key: %s): %v. Skipping.", cacheKey, err)
 				continue
@@ -215,7 +240,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			}
 		} else {
 			// Save/Update: check both current and original model
-			matchesCurrent, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, paramsRoot)
+			matchesCurrent, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 			if err != nil {
 				log.Printf("ERROR CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
@@ -225,7 +250,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			}
 			matchesOriginal := false
 			if !isCreate && !reflect.ValueOf(originalModel).IsNil() {
-				matchesOriginal, err = cache.CheckQueryMatch(originalModel, t.info.TableName, t.info.ColumnToFieldMap, paramsRoot)
+				matchesOriginal, err = cache.CheckQueryMatch(originalModel, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 				if err != nil {
 					log.Printf("ERROR CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 					if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
@@ -395,7 +420,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	}
 
 	log.Printf("DEBUG: Attempting to write %d cache updates for ID %d.", len(writesNeeded), id)
-	locker := GlobalCacheKeyLocker
+	locker := cacheinternal.GlobalCacheKeyLocker
 
 	for key, writeTask := range writesNeeded {
 		log.Printf("DEBUG Write (%s): Acquiring lock...", key)
@@ -527,118 +552,162 @@ func (m *CacheKeyLockManagerInternal) Unlock(key string) {
 	}
 }
 
-// --- Internal Cache Key Generation ---
-
-// GenerateQueryHash generates a unique hash for a given query.
-func GenerateQueryHash(params types.QueryParams) string {
-	// Normalize and marshal params to JSON
-	paramsJson, err := json.Marshal(params)
-	if err != nil {
-		log.Printf("ERROR: Failed to marshal query params for hash: %v", err)
-		return fmt.Sprintf("error_hash_%d", time.Now().UnixNano()) // Fallback
-	}
-
-	// Generate SHA-256 hash
-	hasher := sha256.New()
-	hasher.Write(paramsJson)
-	return hex.EncodeToString(hasher.Sum(nil))
+// CacheStats returns cache operation statistics for monitoring and hit/miss analysis.
+func (t *Thing[T]) CacheStats(ctx context.Context) CacheStats {
+	return t.cache.GetCacheStats(ctx)
 }
 
-// GenerateCacheKey generates a cache key for list or count queries with normalized arguments.
-// prefix should be either "list" or "count". This ensures consistent cache key generation across the codebase.
-func GenerateCacheKey(prefix, tableName string, params types.QueryParams) string {
-	// Normalize args for consistent hashing
-	normalizedParams := params
-	normalizedArgs := make([]interface{}, len(params.Args))
-	for i, arg := range params.Args {
-		normalizedArgs[i] = utils.NormalizeValue(arg)
-	}
-	normalizedParams.Args = normalizedArgs
+// --- Default Local Cache Implementation ---
 
-	hash := GenerateQueryHash(normalizedParams)
-	return fmt.Sprintf("%s:%s:%s", prefix, tableName, hash)
-}
-
+// localCache implements CacheClient using in-memory sync.Map.
 type localCache struct {
-	store sync.Map // map[string]string
-	locks sync.Map // map[string]struct{}
+	store    sync.Map // map[string]string
+	locks    sync.Map // map[string]struct{}
+	counters sync.Map // map[string]int
 }
 
-var defaultLocalCache = &localCache{}
+// DefaultLocalCache is the default in-memory cache client for Thing ORM.
+var DefaultLocalCache CacheClient = &localCache{}
 
 func (m *localCache) Get(ctx context.Context, key string) (string, error) {
+	m.incrCounter("Get")
 	if v, ok := m.store.Load(key); ok {
 		if s, ok := v.(string); ok {
+			m.incrCounter("GetHit")
 			return s, nil
 		}
 	}
-	return "", common.ErrNotFound // Return ErrNotFound when key is missing
+	m.incrCounter("GetMiss")
+	return "", common.ErrNotFound
 }
+
 func (m *localCache) Set(ctx context.Context, key, value string, expiration time.Duration) error {
+	m.incrCounter("Set")
+	if value == common.NoneResult {
+		if v, ok := m.store.Load(key); ok {
+			if s, ok := v.(string); ok && s == common.NoneResult {
+				return nil
+			}
+		}
+		m.incrCounter("SetNoneResult")
+	}
 	m.store.Store(key, value)
 	return nil
 }
+
 func (m *localCache) Delete(ctx context.Context, key string) error {
+	m.incrCounter("Delete")
 	m.store.Delete(key)
 	return nil
 }
+
 func (m *localCache) Exists(key string) bool {
+	m.incrCounter("Exists")
 	_, ok := m.store.Load(key)
 	return ok
 }
+
 func (m *localCache) GetModel(ctx context.Context, key string, dest interface{}) error {
+	m.incrCounter("GetModel")
 	if v, ok := m.store.Load(key); ok {
 		b, ok := v.(string)
 		if !ok {
-			return nil
+			m.incrCounter("GetModelMiss")
+			return common.ErrNotFound
 		}
+		if b == common.NoneResult {
+			m.incrCounter("GetModelMiss")
+			return common.ErrCacheNoneResult
+		}
+		m.incrCounter("GetModelHit")
 		return json.Unmarshal([]byte(b), dest)
 	}
-	return nil
+	m.incrCounter("GetModelMiss")
+	return common.ErrNotFound
 }
+
 func (m *localCache) SetModel(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
+	m.incrCounter("SetModel")
 	b, _ := json.Marshal(value)
+	if string(b) == common.NoneResult {
+		if v, ok := m.store.Load(key); ok {
+			if s, ok := v.(string); ok && s == common.NoneResult {
+				return nil
+			}
+		}
+		m.incrCounter("SetModelNoneResult")
+	}
 	m.store.Store(key, string(b))
 	return nil
 }
+
 func (m *localCache) DeleteModel(ctx context.Context, key string) error {
+	m.incrCounter("DeleteModel")
 	m.store.Delete(key)
 	return nil
 }
+
 func (m *localCache) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
+	m.incrCounter("GetQueryIDs")
 	if v, ok := m.store.Load(queryKey); ok {
 		b, ok := v.(string)
 		if !ok {
-			return nil, nil
+			m.incrCounter("GetQueryIDsMiss")
+			return nil, common.ErrNotFound
+		}
+		if b == common.NoneResult {
+			m.incrCounter("GetQueryIDsMiss")
+			return nil, common.ErrQueryCacheNoneResult
 		}
 		var ids []int64
-		_ = json.Unmarshal([]byte(b), &ids)
+		if err := json.Unmarshal([]byte(b), &ids); err != nil {
+			m.incrCounter("GetQueryIDsMiss")
+			return nil, err
+		}
+		m.incrCounter("GetQueryIDsHit")
 		return ids, nil
 	}
-	return nil, nil
+	m.incrCounter("GetQueryIDsMiss")
+	return nil, common.ErrNotFound
 }
+
 func (m *localCache) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
+	m.incrCounter("SetQueryIDs")
 	b, _ := json.Marshal(ids)
 	m.store.Store(queryKey, string(b))
 	return nil
 }
+
 func (m *localCache) DeleteQueryIDs(ctx context.Context, queryKey string) error {
+	m.incrCounter("DeleteQueryIDs")
 	m.store.Delete(queryKey)
 	return nil
 }
+
 func (m *localCache) AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error) {
+	m.incrCounter("AcquireLock")
 	_, loaded := m.locks.LoadOrStore(lockKey, struct{}{})
 	return !loaded, nil
 }
+
 func (m *localCache) ReleaseLock(ctx context.Context, lockKey string) error {
+	m.incrCounter("ReleaseLock")
 	m.locks.Delete(lockKey)
 	return nil
 }
-func (m *localCache) GetCacheStats(ctx context.Context) interfaces.CacheStats {
-	return interfaces.CacheStats{Counters: map[string]int{}}
+
+func (m *localCache) incrCounter(name string) {
+	val, _ := m.counters.LoadOrStore(name, 0)
+	m.counters.Store(name, val.(int)+1)
 }
 
-// CacheStats returns cache operation statistics for monitoring and hit/miss analysis.
-func (t *Thing[T]) CacheStats(ctx context.Context) interfaces.CacheStats {
-	return t.cache.GetCacheStats(ctx)
+func (m *localCache) GetCacheStats(ctx context.Context) CacheStats {
+	stats := CacheStats{Counters: map[string]int{}}
+	m.counters.Range(func(k, v interface{}) bool {
+		if ks, ok := k.(string); ok {
+			stats.Counters[ks] = v.(int)
+		}
+		return true
+	})
+	return stats
 }
