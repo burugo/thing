@@ -183,11 +183,12 @@ func ParseExactMatchFields(params types.QueryParams) map[string][]interface{} {
 			continue
 		}
 		parts := splitFields(cond)
-		if len(parts) == 3 && parts[1] == "=" && parts[2] == "?" && argIdx < len(args) {
+		switch {
+		case len(parts) == 3 && parts[1] == "=" && parts[2] == "?" && argIdx < len(args):
 			field := parts[0]
 			result[field] = []interface{}{args[argIdx]}
 			argIdx++
-		} else if len(parts) == 3 && parts[1] == "IN" && parts[2] == "(?)" && argIdx < len(args) {
+		case len(parts) == 3 && parts[1] == "IN" && parts[2] == "(?)" && argIdx < len(args):
 			field := parts[0]
 			arg := args[argIdx]
 			var vals []interface{}
@@ -209,7 +210,7 @@ func ParseExactMatchFields(params types.QueryParams) map[string][]interface{} {
 				result[field] = vals
 			}
 			argIdx++
-		} else if argIdx < len(args) {
+		case argIdx < len(args):
 			// 非 =/IN 条件，参数也要递增
 			argIdx++
 		}

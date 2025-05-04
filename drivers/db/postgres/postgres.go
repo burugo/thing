@@ -18,30 +18,30 @@ import (
 )
 
 // PostgresDialector implements the sqlbuilder.Dialector interface for PostgreSQL.
-type PostgresDialector struct{}
+type Dialector struct{}
 
-func (d PostgresDialector) Quote(identifier string) string {
+func (d Dialector) Quote(identifier string) string {
 	return `"` + identifier + `"`
 }
-func (d PostgresDialector) Placeholder(index int) string {
+func (d Dialector) Placeholder(index int) string {
 	return fmt.Sprintf("$%d", index)
 }
 
 // PostgreSQLAdapter implements the DBAdapter interface for PostgreSQL.
-type PostgreSQLAdapter struct {
+type Adapter struct {
 	db      *sql.DB
 	builder thing.SQLBuilder
 }
 
 // PostgreSQLTx implements the Tx interface for PostgreSQL.
-type PostgreSQLTx struct {
+type Tx struct {
 	tx      *sql.Tx
 	builder thing.SQLBuilder
 }
 
 // Compile-time checks to ensure interfaces are implemented.
-var _ thing.DBAdapter = (*PostgreSQLAdapter)(nil)
-var _ thing.Tx = (*PostgreSQLTx)(nil)
+var _ thing.DBAdapter = (*Adapter)(nil)
+var _ thing.Tx = (*Tx)(nil)
 
 // --- Constructor ---
 
@@ -61,15 +61,19 @@ func NewPostgreSQLAdapter(dsn string) (thing.DBAdapter, error) {
 	}
 
 	// Set reasonable default connection pool settings
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(10)
+	const (
+		defaultMaxOpenConns = 25
+		defaultMaxIdleConns = 10
+	)
+	db.SetMaxOpenConns(defaultMaxOpenConns)
+	db.SetMaxIdleConns(defaultMaxIdleConns)
 	db.SetConnMaxLifetime(time.Hour)
 
 	// Create a SQLBuilder with PostgreSQL dialect
-	builder := thing.NewSQLBuilder(PostgresDialector{})
+	builder := thing.NewSQLBuilder(Dialector{})
 
 	log.Println("PostgreSQL adapter initialized successfully.")
-	return &PostgreSQLAdapter{
+	return &Adapter{
 		db:      db,
 		builder: builder,
 	}, nil
@@ -77,7 +81,7 @@ func NewPostgreSQLAdapter(dsn string) (thing.DBAdapter, error) {
 
 // --- DBAdapter Methods ---
 
-func (a *PostgreSQLAdapter) Close() error {
+func (a *Adapter) Close() error {
 	log.Println("PostgreSQL adapter: Closing connection")
 	// return fmt.Errorf("PostgreSQLAdapter.Close not implemented") // Remove placeholder
 	if a.db != nil {
@@ -95,7 +99,7 @@ func (a *PostgreSQLAdapter) Close() error {
 // Get retrieves a single row and scans it into the destination struct.
 // Uses QueryContext and prepares scan destinations based on returned columns.
 // PostgreSQL uses '$N' placeholders.
-func (a *PostgreSQLAdapter) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (a *Adapter) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	// TODO: Handle sql.ErrNoRows
 	// return fmt.Errorf("PostgreSQLAdapter.Get not implemented") // Remove placeholder
 
@@ -165,7 +169,7 @@ func (a *PostgreSQLAdapter) Get(ctx context.Context, dest interface{}, query str
 
 // Select executes a query and scans the results into a slice.
 // PostgreSQL uses '$N' placeholders.
-func (a *PostgreSQLAdapter) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (a *Adapter) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	// return fmt.Errorf("PostgreSQLAdapter.Select not implemented") // Remove placeholder
 
 	reboundQuery := a.builder.Rebind(query)
@@ -258,7 +262,7 @@ func (a *PostgreSQLAdapter) Select(ctx context.Context, dest interface{}, query 
 
 // Exec executes a query that doesn't return rows.
 // PostgreSQL uses '$N' placeholders.
-func (a *PostgreSQLAdapter) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (a *Adapter) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	reboundQuery := a.builder.Rebind(query)
 	start := time.Now()
 
@@ -266,16 +270,16 @@ func (a *PostgreSQLAdapter) Exec(ctx context.Context, query string, args ...inte
 	isInsert := strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "INSERT")
 	if isInsert && !strings.Contains(strings.ToUpper(query), "RETURNING") {
 		reboundQuery += " RETURNING id"
-		var lastInsertId int64
+		var lastInsertID int64
 		row := a.db.QueryRowContext(ctx, reboundQuery, args...)
-		err := row.Scan(&lastInsertId)
+		err := row.Scan(&lastInsertID)
 		duration := time.Since(start)
 		if err != nil {
 			log.Printf("DB Exec Error (PostgreSQL INSERT RETURNING): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
 			return nil, fmt.Errorf("postgres ExecContext error (insert returning): %w", err)
 		}
-		log.Printf("DB Exec (PostgreSQL INSERT RETURNING): %s [%v] (LastInsertId: %d, %s)", reboundQuery, args, lastInsertId, duration)
-		return &pgResult{lastInsertId: lastInsertId, rowsAffected: 1}, nil
+		log.Printf("DB Exec (PostgreSQL INSERT RETURNING): %s [%v] (LastInsertID: %d, %s)", reboundQuery, args, lastInsertID, duration)
+		return &pgResult{lastInsertID: lastInsertID, rowsAffected: 1}, nil
 	}
 
 	result, err := a.db.ExecContext(ctx, reboundQuery, args...)
@@ -291,7 +295,7 @@ func (a *PostgreSQLAdapter) Exec(ctx context.Context, query string, args ...inte
 
 // GetCount executes a SELECT COUNT(*) query.
 // PostgreSQL uses '$N' placeholders.
-func (a *PostgreSQLAdapter) GetCount(ctx context.Context, tableName string, where string, args []interface{}) (int64, error) {
+func (a *Adapter) GetCount(ctx context.Context, tableName string, where string, args []interface{}) (int64, error) {
 	if tableName == "" {
 		return 0, errors.New("getCount: table name is missing")
 	}
@@ -310,7 +314,7 @@ func (a *PostgreSQLAdapter) GetCount(ctx context.Context, tableName string, wher
 }
 
 // BeginTx starts a transaction.
-func (a *PostgreSQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, error) {
+func (a *Adapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, error) {
 	// return nil, fmt.Errorf("PostgreSQLAdapter.BeginTx not implemented") // Remove placeholder
 
 	log.Println("DB Transaction Started (PostgreSQL)")
@@ -319,28 +323,28 @@ func (a *PostgreSQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (t
 		log.Printf("DB BeginTx Error (PostgreSQL): %v", err)
 		return nil, fmt.Errorf("postgres BeginTx error: %w", err)
 	}
-	return &PostgreSQLTx{tx: tx, builder: a.builder}, nil
+	return &Tx{tx: tx, builder: a.builder}, nil
 }
 
 // DB returns the underlying *sql.DB for advanced use cases.
-func (a *PostgreSQLAdapter) DB() *sql.DB {
+func (a *Adapter) DB() *sql.DB {
 	return a.db
 }
 
 // Builder returns the SQLBuilder associated with the PostgreSQLAdapter.
-func (a *PostgreSQLAdapter) Builder() thing.SQLBuilder {
+func (a *Adapter) Builder() thing.SQLBuilder {
 	return a.builder
 }
 
 // DialectName returns the name of the database dialect.
-func (a *PostgreSQLAdapter) DialectName() string {
+func (a *Adapter) DialectName() string {
 	return "postgres"
 }
 
 // --- Tx Methods ---
 
 // Commit commits the transaction.
-func (tx *PostgreSQLTx) Commit() error {
+func (tx *Tx) Commit() error {
 	// return fmt.Errorf("PostgreSQLTx.Commit not implemented") // Remove placeholder
 
 	log.Println("DB Transaction Committing (PostgreSQL)")
@@ -354,7 +358,7 @@ func (tx *PostgreSQLTx) Commit() error {
 }
 
 // Rollback rolls back the transaction.
-func (tx *PostgreSQLTx) Rollback() error {
+func (tx *Tx) Rollback() error {
 	// return fmt.Errorf("PostgreSQLTx.Rollback not implemented") // Remove placeholder
 
 	log.Println("DB Transaction Rolling Back (PostgreSQL)")
@@ -368,7 +372,7 @@ func (tx *PostgreSQLTx) Rollback() error {
 }
 
 // Get executes a query within the transaction.
-func (tx *PostgreSQLTx) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (tx *Tx) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	// return fmt.Errorf("PostgreSQLTx.Get not implemented") // Remove placeholder
 
 	reboundQuery := tx.builder.Rebind(query)
@@ -436,7 +440,7 @@ func (tx *PostgreSQLTx) Get(ctx context.Context, dest interface{}, query string,
 }
 
 // Select executes a query within the transaction.
-func (tx *PostgreSQLTx) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
+func (tx *Tx) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
 	// return fmt.Errorf("PostgreSQLTx.Select not implemented") // Remove placeholder
 
 	reboundQuery := tx.builder.Rebind(query)
@@ -528,23 +532,23 @@ func (tx *PostgreSQLTx) Select(ctx context.Context, dest interface{}, query stri
 }
 
 // Exec executes a query within the transaction.
-func (tx *PostgreSQLTx) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+func (tx *Tx) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
 	reboundQuery := tx.builder.Rebind(query)
 	start := time.Now()
 
 	isInsert := strings.HasPrefix(strings.ToUpper(strings.TrimSpace(query)), "INSERT")
 	if isInsert && !strings.Contains(strings.ToUpper(query), "RETURNING") {
 		reboundQuery += " RETURNING id"
-		var lastInsertId int64
+		var lastInsertID int64
 		row := tx.tx.QueryRowContext(ctx, reboundQuery, args...)
-		err := row.Scan(&lastInsertId)
+		err := row.Scan(&lastInsertID)
 		duration := time.Since(start)
 		if err != nil {
 			log.Printf("DB Tx Exec Error (PostgreSQL INSERT RETURNING): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
 			return nil, fmt.Errorf("postgres Tx ExecContext error (insert returning): %w", err)
 		}
-		log.Printf("DB Tx Exec (PostgreSQL INSERT RETURNING): %s [%v] (LastInsertId: %d, %s)", reboundQuery, args, lastInsertId, duration)
-		return &pgResult{lastInsertId: lastInsertId, rowsAffected: 1}, nil
+		log.Printf("DB Tx Exec (PostgreSQL INSERT RETURNING): %s [%v] (LastInsertID: %d, %s)", reboundQuery, args, lastInsertID, duration)
+		return &pgResult{lastInsertID: lastInsertID, rowsAffected: 1}, nil
 	}
 
 	result, err := tx.tx.ExecContext(ctx, reboundQuery, args...)
@@ -675,13 +679,15 @@ func isBasicType(t reflect.Type) bool {
 }
 
 // pgResult implements sql.Result for PostgreSQL INSERT RETURNING id
-// to support LastInsertId in ORM logic.
+// to support LastInsertID in ORM logic.
 type pgResult struct {
-	lastInsertId int64
+	lastInsertID int64
 	rowsAffected int64
 }
 
-func (r *pgResult) LastInsertId() (int64, error) { return r.lastInsertId, nil }
+// Implement both LastInsertId (for sql.Result) and LastInsertID (for custom usage)
+func (r *pgResult) LastInsertId() (int64, error) { return r.lastInsertID, nil }
+func (r *pgResult) LastInsertID() (int64, error) { return r.lastInsertID, nil }
 func (r *pgResult) RowsAffected() (int64, error) { return r.rowsAffected, nil }
 
 // Register the PostgreSQL introspector factory at init time to avoid import cycles.

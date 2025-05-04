@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"reflect"
 	"strings"
 
@@ -139,7 +140,6 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 			// Maybe the WHERE clause uses the Go field name directly? Check that.
 			if _, directFieldOK := modelVal.Type().FieldByName(colName); directFieldOK {
 				goFieldName = colName
-				ok = true
 			} else {
 				return false, fmt.Errorf("column '%s' from WHERE clause not found in map for table '%s'", colName, tableName)
 			}
@@ -569,7 +569,12 @@ func convertToInt64(v reflect.Value) (int64, bool) {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return v.Int(), true
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return int64(v.Uint()), true // Potential overflow ignored
+		u := v.Uint()
+		if u > uint64(math.MaxInt64) {
+			// Overflow, return max int64
+			return math.MaxInt64, false
+		}
+		return int64(u), true
 	case reflect.Float32, reflect.Float64:
 		return int64(v.Float()), true // Truncates
 	default:
@@ -620,19 +625,20 @@ func matchLike(s, pattern string) (bool, error) {
 
 	pattern = strings.TrimSpace(pattern) // Basic cleanup
 
-	if strings.HasPrefix(pattern, "%") && strings.HasSuffix(pattern, "%") {
+	switch {
+	case strings.HasPrefix(pattern, "%") && strings.HasSuffix(pattern, "%"):
 		// Case: %value%
 		searchTerm := strings.Trim(pattern, "%")
 		return strings.Contains(s, searchTerm), nil
-	} else if strings.HasPrefix(pattern, "%") {
+	case strings.HasPrefix(pattern, "%"):
 		// Case: %value
 		searchTerm := strings.TrimPrefix(pattern, "%")
 		return strings.HasSuffix(s, searchTerm), nil
-	} else if strings.HasSuffix(pattern, "%") {
+	case strings.HasSuffix(pattern, "%"):
 		// Case: value%
 		searchTerm := strings.TrimSuffix(pattern, "%")
 		return strings.HasPrefix(s, searchTerm), nil
-	} else {
+	default:
 		// Case: value (no wildcards) - Treat as exact match
 		return s == pattern, nil
 	}

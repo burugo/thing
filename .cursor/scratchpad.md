@@ -41,6 +41,8 @@ This project builds upon the initial goal of replicating a specific `BaseModel`,
 - For large projects, it is recommended to address style and complexity issues in phases, prioritizing functional and interface consistency.
 - The number of fields returned by SHOW INDEX may differ between MySQL versions/drivers. It is recommended to use information_schema.statistics for accurate retrieval.
 - For multi-database testing, it is recommended to start the services locally first. In CI, use docker-compose to ensure a consistent environment.
+- mnd.ignored-numbers in golangci-lint config must be an array of strings, not numbers.
+- depguard.ignore-internal is not a supported option in golangci-lint v1.64.8; remove it to avoid schema errors.
 
 # User Specified Lessons
 
@@ -66,3 +68,26 @@ This project builds upon the initial goal of replicating a specific `BaseModel`,
     - [ ] Add tests for TTL configuration and expiration
     - [ ] Update documentation/comments
     - [ ] Verify all tests pass and commit
+
+## Project Status Board
+
+- [x] Fix golangci-lint config errors (mnd.ignored-numbers as string array, remove depguard.ignore-internal)
+- [x] Ignore funlen and gocyclo (complexity) for all test files in golangci-lint config
+- [x] Ignore errcheck (unchecked error returns) for all test files in golangci-lint config
+- [x] Ignore lll (long line linter) for all test files in golangci-lint config
+- [x] 修复 JSON DSL 解析器，移除无用 [] 分支，恢复 -field 排除逻辑，所有相关测试通过
+- [x] Remove ineffectual assignment to fkFieldFound in preloadBelongsTo and preloadHasMany (relationships.go)
+
+## Executor's Feedback or Assistance Requests
+
+- Fixed golangci-lint config: changed mnd.ignored-numbers to a string array ['0', '1', '2', '3'] and removed unsupported depguard.ignore-internal option. Verified with golangci-lint config verify (exit code 0). Committed and pushed to github_main branch. Ready for CI re-run.
+- Updated golangci-lint config to ignore funlen and gocyclo for all test files (both _test.go and tests/ directory). Committed and pushed to github_main. Linter now ignores test complexity as expected.
+- Updated golangci-lint config to ignore errcheck for all test files (both _test.go and tests/ directory). Committed and pushed to github_main. Linter now ignores unchecked error returns in tests as expected.
+- Updated golangci-lint config to ignore lll (long line linter) for all test files (both _test.go and tests/ directory). Committed and pushed to github_main. Linter now ignores long lines in tests as expected.
+- 已根据用户需求，移除 DSL 解析器中无用的 [] 分支，并恢复了对 -field 排除字段的正确处理逻辑。
+- 相关 DSL 解析和 ToJSON 测试全部通过，主流程无回归。
+- 已提交 commit: 3b5fcb7
+- Fixed the linter warning for ineffectual assignment to fkFieldFound in both preloadBelongsTo and preloadHasMany.
+- All tests passed and the linter warning is resolved.
+- Committed the change as: fix: remove ineffectual assignment to fkFieldFound in preloadBelongsTo and preloadHasMany
+- No logic was changed; only the unnecessary assignment was removed as per linter guidance.

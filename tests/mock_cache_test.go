@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -210,8 +209,6 @@ func unmarshalFromMock(stored []byte, dest interface{}) error {
 // Get retrieves a raw string value from the mock cache.
 func (m *mockCacheClient) Get(ctx context.Context, key string) (string, error) {
 	m.incrementCounter("Get") // Use helper (total calls)
-	m.mu.Lock()
-	m.mu.Unlock()
 
 	// log.Printf("DEBUG Get: Checking key: %s", key)
 	// Use GetValue helper which includes expiry check
@@ -239,8 +236,6 @@ func (m *mockCacheClient) Set(ctx context.Context, key string, value string, exp
 		}
 	}
 	m.incrementCounter("Set") // Use helper
-	m.mu.Lock()
-	m.mu.Unlock()
 
 	// log.Printf("DEBUG Set: Setting key: %s with value: '%s', expiration: %v", key, value, expiration)
 	// Store as bytes to be consistent with GetValue helper
@@ -258,8 +253,6 @@ func (m *mockCacheClient) Set(ctx context.Context, key string, value string, exp
 // Delete removes a key from the mock cache.
 func (m *mockCacheClient) Delete(ctx context.Context, key string) error {
 	m.incrementCounter("Delete") // Use helper
-	m.mu.Lock()
-	m.mu.Unlock()
 
 	// log.Printf("DEBUG Delete: Deleting key: %s", key)
 	m.store.Delete(key)
@@ -269,8 +262,6 @@ func (m *mockCacheClient) Delete(ctx context.Context, key string) error {
 
 func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr interface{}) error {
 	m.incrementCounter("GetModel")
-	m.mu.Lock()
-	m.mu.Unlock()
 	storedBytes, ok := m.GetValue(key)
 	if !ok {
 		m.incrementCounter("GetModelMiss")
@@ -297,8 +288,6 @@ func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interf
 		}
 	}
 	m.incrementCounter("SetModel")
-	m.mu.Lock()
-	m.mu.Unlock()
 	m.store.Store(key, data)
 	if expiration > 0 {
 		expiryTime := time.Now().Add(expiration)
@@ -309,8 +298,6 @@ func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interf
 
 func (m *mockCacheClient) DeleteModel(ctx context.Context, key string) error {
 	m.incrementCounter("DeleteModel") // Use helper
-	m.mu.Lock()
-	m.mu.Unlock()
 
 	// log.Printf("DEBUG DeleteModel: Deleting key: %s", key)
 	m.store.Delete(key)
@@ -322,9 +309,6 @@ func (m *mockCacheClient) DeleteModel(ctx context.Context, key string) error {
 // It now checks for the NoneResult marker and returns ErrQueryCacheNoneResult if found.
 func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
 	m.incrementCounter("GetQueryIDs") // Use helper
-	m.mu.Lock()
-	m.mu.Unlock()
-
 	// log.Printf("DEBUG GetQueryIDs: Looking up query key: %s", queryKey)
 
 	// Use GetValue helper which includes expiry check
@@ -349,8 +333,6 @@ func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]i
 
 func (m *mockCacheClient) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
 	m.incrementCounter("SetQueryIDs") // Use helper
-	m.mu.Lock()
-	m.mu.Unlock()
 
 	// log.Printf("DEBUG SetQueryIDs: Setting query key: %s with %d IDs, expiration: %v", queryKey, len(ids), expiration)
 	if len(ids) > 0 {
@@ -377,8 +359,6 @@ func (m *mockCacheClient) SetQueryIDs(ctx context.Context, queryKey string, ids 
 
 func (m *mockCacheClient) DeleteQueryIDs(ctx context.Context, queryKey string) error {
 	m.incrementCounter("DeleteQueryIDs") // Use helper
-	m.mu.Lock()
-	m.mu.Unlock()
 
 	// log.Printf("DEBUG DeleteQueryIDs: Deleting query key: %s", queryKey)
 	m.store.Delete(queryKey)
@@ -419,8 +399,6 @@ func (m *mockCacheClient) AcquireLock(ctx context.Context, key string, expiratio
 
 func (m *mockCacheClient) ReleaseLock(ctx context.Context, lockKey string) error {
 	m.incrementCounter("ReleaseLock") // Use helper
-	m.mu.Lock()
-	m.mu.Unlock()
 
 	// log.Printf("DEBUG ReleaseLock: Releasing lock: %s", lockKey)
 	m.store.Delete(lockKey)
@@ -494,16 +472,16 @@ func (m *mockDBAdapter) ResetCounts() {
 
 // --- Mock SQL Result ---
 
-type mockSqlResult struct {
+type mockSQLResult struct {
 	rowsAffected int64
-	lastInsertId int64
+	lastInsertID int64
 }
 
-func (r mockSqlResult) LastInsertId() (int64, error) {
-	return r.lastInsertId, nil
+func (r mockSQLResult) LastInsertId() (int64, error) {
+	return r.lastInsertID, nil
 }
 
-func (r mockSqlResult) RowsAffected() (int64, error) {
+func (r mockSQLResult) RowsAffected() (int64, error) {
 	return r.rowsAffected, nil
 }
 
@@ -522,7 +500,7 @@ func (tx *mockTx) Select(ctx context.Context, dest interface{}, query string, ar
 }
 
 func (tx *mockTx) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
-	return mockSqlResult{rowsAffected: 1, lastInsertId: 0}, nil
+	return mockSQLResult{rowsAffected: 1, lastInsertID: 0}, nil
 }
 
 func (tx *mockTx) Commit() error {
@@ -531,37 +509,6 @@ func (tx *mockTx) Commit() error {
 
 func (tx *mockTx) Rollback() error {
 	return nil
-}
-
-// assertMockCacheCounts helper
-func assertMockCacheCounts(t *testing.T, mockCache *mockCacheClient, expected map[string]int) {
-	t.Helper()
-	// Fetch the actual counts from the mock cache's Counters map
-	actual := mockCache.Counters // Use the map
-
-	// Provide a more informative default message
-	defaultMsg := fmt.Sprintf("Mock cache call counts mismatch.\nExpected: %v\nActual:   %v", expected, actual)
-
-	// Check if maps are equal
-	assert.Equal(t, expected, actual, defaultMsg)
-
-	/* // Keep old implementation commented out for reference
-	actual := map[string]int{
-		"Get":            mockCache.GetCalls,
-		"Set":            mockCache.SetCalls,
-		"Delete":         mockCache.DeleteCalls,
-		"GetModel":       mockCache.GetModelCalls,
-		"SetModel":       mockCache.SetModelCalls,
-		"DeleteModel":    mockCache.DeleteModelCalls,
-		"GetQueryIDs":    mockCache.GetQueryIDsCalls,
-		"SetQueryIDs":    mockCache.SetQueryIDsCalls,
-		"DeleteQueryIDs": mockCache.DeleteQueryIDsCalls,
-		"AcquireLock":    mockCache.AcquireLockCalls,
-		"ReleaseLock":    mockCache.ReleaseLockCalls,
-		"DeleteByPrefix": mockCache.DeleteByPrefixCalls,
-	}
-	assert.Equal(t, expected, actual, "Mock cache call counts mismatch")
-	*/
 }
 
 // FlushAll simulates flushing the cache (clears store and expiry).
@@ -623,13 +570,4 @@ func (m *mockCacheClient) GetCacheStats(ctx context.Context) thing.CacheStats {
 		stats[k] = v
 	}
 	return thing.CacheStats{Counters: stats}
-}
-
-func caller() string {
-	pc, file, line, ok := runtime.Caller(2)
-	if !ok {
-		return "?"
-	}
-	fn := runtime.FuncForPC(pc)
-	return fmt.Sprintf("%s:%d %s", file, line, fn.Name())
 }

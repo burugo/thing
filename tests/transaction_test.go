@@ -65,10 +65,10 @@ func TestTransaction_Commit(t *testing.T) {
 	assert.Equal(t, newName, finalUserPtr.Name, "User name should be updated after commit (checked via ByID)")
 
 	// 5b. Verify using raw DBAdapter.Get to bypass cache
-	finalUserDb := new(User)
-	dbErr := dbAdapter.Get(ctx, finalUserDb, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", originalUser.ID)
+	finalUserDB := new(User)
+	dbErr := dbAdapter.Get(ctx, finalUserDB, "SELECT id, created_at, updated_at, deleted, name, email FROM users WHERE id = ?", originalUser.ID)
 	require.NoError(t, dbErr, "Failed raw DB get after commit")
-	assert.Equal(t, newName, finalUserDb.Name, "User name should be updated in DB after commit")
+	assert.Equal(t, newName, finalUserDB.Name, "User name should be updated in DB after commit")
 }
 
 // TestTransaction_Rollback verifies that operations within a rolled-back transaction do not persist.

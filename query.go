@@ -412,7 +412,8 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 		var fetchSource string
 
 		// --- get items from cache or DB ---
-		if nextFetchOffset < len(cr.cachedIDs) {
+		switch {
+		case nextFetchOffset < len(cr.cachedIDs):
 			// Get slice from cached IDs
 			fetchSource = "Cache"
 
@@ -428,7 +429,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 			log.Printf("Fetch Iteration: Using %d cached IDs [%d:%d], need %d more results (source: %s)",
 				len(idsToCheck), nextFetchOffset, endOffset, remainingNeeded, fetchSource)
 
-		} else if int64(nextFetchOffset) < totalCount {
+		case int64(nextFetchOffset) < totalCount:
 			// Still have more data in the database according to total count
 			fetchSource = "Database"
 
@@ -448,7 +449,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 			log.Printf("Fetch Iteration: Fetched %d IDs from database, need %d more results (source: %s)",
 				len(idsToCheck), remainingNeeded, fetchSource)
 
-		} else {
+		default:
 			// Reached the end of total records
 			log.Printf("Fetch Iteration: Reached end of all results (%d total)", totalCount)
 			break

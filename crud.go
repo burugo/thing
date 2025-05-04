@@ -49,19 +49,20 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 			instancePtr := instanceVal.Addr().Interface()         // *User
 			err := cache.GetModel(ctx, cacheKey, instancePtr)
 
-			if err == nil {
+			switch {
+			case err == nil:
 				// Found in cache
 				setNewRecordFlagIfBaseModel(instancePtr, false)
 				resultMap[id] = reflect.ValueOf(instancePtr)   // Store the pointer
 				log.Printf("DEBUG CACHE HIT for %s", cacheKey) // Added log
-			} else if errors.Is(err, common.ErrCacheNoneResult) {
+			case errors.Is(err, common.ErrCacheNoneResult):
 				// Found NoneResult marker - this ID is handled, DO NOT add to missingIDs.
 				log.Printf("DEBUG CACHE HIT (NoneResult) for %s", cacheKey) // Added log
-			} else if errors.Is(err, common.ErrNotFound) {
+			case errors.Is(err, common.ErrNotFound):
 				// True cache miss
 				log.Printf("DEBUG CACHE MISS for %s", cacheKey) // Added log
 				missingIDs = append(missingIDs, id)
-			} else {
+			default:
 				// Unexpected cache error
 				log.Printf("WARN: Cache error during batch fetch for key %s: %v", cacheKey, err)
 				missingIDs = append(missingIDs, id) // Treat as missing if error

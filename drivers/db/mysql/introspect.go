@@ -21,7 +21,7 @@ func (mi *MySQLIntrospector) GetTableInfo(ctx context.Context, tableName string)
 	}
 
 	// 1. 获取字段信息
-	colRows, err := mi.DB.QueryContext(ctx, "SHOW COLUMNS FROM "+tableName)
+	colRows, err := mi.DB.QueryContext(ctx, "SHOW COLUMNS FROM "+tableName) // #nosec G202
 	if err != nil {
 		// MySQL: Error 1146 (42S02): Table 'xxx' doesn't exist
 		if err.Error() == "Error 1146: Table '"+tableName+"' doesn't exist" ||

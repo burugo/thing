@@ -167,7 +167,8 @@ func TestManyToMany_Cache_AddRemoveRelation(t *testing.T) {
 	// 新增一条关联，模拟失效缓存
 	_, err = db.Exec(ctx, "INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)", userID, role2ID)
 	require.NoError(t, err)
-	mockCache.Delete(ctx, fmt.Sprintf("user_roles:%d", userID)) // 失效缓存
+	err = mockCache.Delete(ctx, fmt.Sprintf("user_roles:%d", userID)) // 失效缓存
+	_ = err
 
 	// 重新加载应 miss 并包含新 role
 	roles3, hit3, err := preloadRoles(ctx, db, mockCache, userID)
@@ -178,7 +179,8 @@ func TestManyToMany_Cache_AddRemoveRelation(t *testing.T) {
 	// 删除一条关联，失效缓存
 	_, err = db.Exec(ctx, "DELETE FROM user_roles WHERE user_id = ? AND role_id = ?", userID, role1ID)
 	require.NoError(t, err)
-	mockCache.Delete(ctx, fmt.Sprintf("user_roles:%d", userID))
+	err = mockCache.Delete(ctx, fmt.Sprintf("user_roles:%d", userID))
+	_ = err
 
 	// 重新加载应 miss 并只剩下 role2
 	roles4, hit4, err := preloadRoles(ctx, db, mockCache, userID)

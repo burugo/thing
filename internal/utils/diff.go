@@ -62,15 +62,11 @@ func FindChangedFieldsSimple[T any](original, updated *T, info *schema.ModelInfo
 		}
 
 		// Optimized comparison based on kind or IsZero function
-		var areEqual bool
 		if fieldInfo.IsZero != nil {
-			areEqual = reflect.DeepEqual(oField.Interface(), uField.Interface())
-		} else {
-			areEqual = reflect.DeepEqual(oField.Interface(), uField.Interface())
-		}
-
-		if !areEqual {
-			changed[fieldInfo.DBColumn] = uField.Interface()
+			areEqual := reflect.DeepEqual(oField.Interface(), uField.Interface())
+			if !areEqual {
+				changed[fieldInfo.DBColumn] = uField.Interface()
+			}
 		}
 	}
 

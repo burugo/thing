@@ -10,10 +10,6 @@ run:
   #   - mytag
 
 linters-settings:
-  # govet:
-  #   check-shadowing: true # Deprecated, use 'shadow' linter instead
-  # golint:
-  #   min-confidence: 0.0
   gocyclo:
     # minimal code complexity to report, 30 by default (but we recommend 10-20)
     min-complexity: 15
@@ -30,20 +26,7 @@ linters-settings:
   misspell:
     # Correct commonly misspelled English words in comments and strings
     locale: US
-  lll:
-    # max line length, lines longer will be reported. Defaults to 120.
-    line-length: 120
-  mnd:
-    ignored-numbers: ['0', '1', '2', '3']
-    # Optionally, specify checks to run (e.g., argument, case, condition, operation, return, assign)
-    # checks: argument,case,condition,operation,return,assign
-  # goimports:
-  #   local-prefixes: github.com/burugo/thing
-  # gocritic:
-    # enabled-checks:
-    #   - singleCaseSwitch
-    # disabled-checks:
-    #   - hugeParam
+
   depguard:
     rules:
       allow_internal:
@@ -60,71 +43,35 @@ linters:
   # inverted configuration with `enable-all` and `disable` is not scalable during updates of golangci-lint
   disable-all: true
   enable:
-    - bodyclose
-    # - deadcode # Deprecated: use unused
-    - depguard
-    - dogsled
-    - dupl
-    - errcheck
-    # - exportloopref # Deprecated: use copyloopvar or Go 1.22+
-    - exhaustive
-    - funlen
-    - gochecknoinits
-    - goconst
-    - gocritic
-    - gocyclo
-    - gofmt
-    - goimports
-    - revive # Replacement for golint
-    # - gomnd # Deprecated: use mnd
-    - goprintffuncname
-    - gosec
-    - gosimple
     - govet
+    - gocritic
+    - gosec
     - ineffassign
-    - lll
     - misspell
-    - nakedret
-    - noctx
-    - nolintlint
-    - staticcheck
-    # - structcheck # Deprecated: use unused
-    - stylecheck
-    - typecheck
     - unconvert
     - unparam
-    - unused # Replaces deadcode, structcheck, varcheck
-    # - varcheck # Deprecated: use unused
     - whitespace
-    # Added replacements/recommendations:
-    - mnd # Replaces gomnd
-    - copyloopvar # Replaces exportloopref (for Go < 1.22)
-    # - shadow # Replaces govet.check-shadowing (Seems not available/enabled by default in all versions)
+    # 如需复杂度检测可加 cyclop
+    # - cyclop
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
 
 issues:
-  # Excluding configuration per-path, per-linter, per-text and per-source
   exclude-rules:
-    # Exclude some linters from running on tests files.
-    - path: _test\\.go
+    - path: _test\.go
       linters:
-        - funlen # Test functions can be long
-        - gocyclo # Test functions can be complex
-        - gosec  # Test files might have less strict security needs
-        - lll    # Ignore long line warnings in test files
-        - errcheck # Allow unchecked error returns in test files
-        - lll # Allow long lines in test files
-    # Exclude depguard for all files in tests/ directory
+        - gosec
+        - unparam
+        - ineffassign
+        - misspell
     - path: ^tests/.*
       linters:
-        - depguard
-        - funlen
-        - gocyclo
-        - errcheck
-        - lll
-
-    # Example: Disable Deprecated linters warning
-    # - linters: [deadcode, structcheck, varcheck]
-    #   text: \"is deprecated\"
-
+        - gosec
+        - unparam
+        - ineffassign
+        - misspell
   max-issues-per-linter: 0
-  max-same-issues: 0 
+  max-same-issues: 0

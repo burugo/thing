@@ -55,7 +55,7 @@ func WithLock(ctx context.Context, cache CacheClient, lockKey string, action fun
 		}
 		select {
 		case <-ctx.Done():
-			log.Printf("Context cancelled while waiting for lock: %s", lockKey)
+			log.Printf("Context canceled while waiting for lock: %s", lockKey)
 			return ctx.Err()
 		case <-time.After(LockRetryDelay):
 			// Retry
@@ -300,11 +300,12 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					readErrors[task.cacheKey] = err
 					initialListValues[task.cacheKey] = nil
 				} else {
-					if errors.Is(err, common.ErrNotFound) {
+					switch {
+					case errors.Is(err, common.ErrNotFound):
 						initialListValues[task.cacheKey] = []int64{}
-					} else if cachedIDs == nil {
+					case cachedIDs == nil:
 						initialListValues[task.cacheKey] = []int64{}
-					} else {
+					default:
 						initialListValues[task.cacheKey] = cachedIDs
 					}
 					log.Printf("DEBUG Read (%s): Read initial list (size %d).", task.cacheKey, len(initialListValues[task.cacheKey]))
@@ -314,19 +315,17 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			if _, exists := initialCountValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
 				countStr, err := t.cache.Get(ctx, task.cacheKey)
 				var count int64
-				if err != nil {
-					if errors.Is(err, common.ErrNotFound) {
-						count = 0
-						err = nil
-					} else {
-						log.Printf("ERROR: Failed to read initial count cache for key %s: %v", task.cacheKey, err)
-						readErrors[task.cacheKey] = err
-						initialCountValues[task.cacheKey] = -1
-						continue
-					}
-				} else if countStr == "" {
+				switch {
+				case err != nil && errors.Is(err, common.ErrNotFound):
 					count = 0
-				} else {
+				case err != nil:
+					log.Printf("ERROR: Failed to read initial count cache for key %s: %v", task.cacheKey, err)
+					readErrors[task.cacheKey] = err
+					initialCountValues[task.cacheKey] = -1
+					continue
+				case countStr == "":
+					count = 0
+				default:
 					parsedCount, parseErr := strconv.ParseInt(countStr, 10, 64)
 					if parseErr != nil {
 						log.Printf("ERROR: Failed to parse count cache value '%s' for key %s: %v", countStr, task.cacheKey, parseErr)
@@ -480,19 +479,21 @@ func determineCacheAction(isCreate, matchesOriginal, matchesCurrent bool, isKept
 	needsAdd := false
 	needsRemove := false
 
-	if !isKept {
+	switch {
+	case !isKept:
 		// If item is soft-deleted, it always needs removal from standard caches.
 		log.Printf("DEBUG Determine Action: Model is soft-deleted (KeepItem=false). Needs Removal.")
 		needsRemove = true
 		needsAdd = false
 		// Return early, soft-delete removal takes precedence
 		return needsAdd, needsRemove
-	} else if isCreate {
+	case isCreate:
 		if matchesCurrent {
 			needsAdd = true
 			log.Printf("DEBUG Determine Action: Create matches query. Needs Add.")
 		}
-	} else { // Update
+	default:
+		// Update
 		if matchesCurrent && !matchesOriginal {
 			needsAdd = true
 			log.Printf("DEBUG Determine Action: Update now matches query (didn't before). Needs Add.")
