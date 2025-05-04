@@ -110,6 +110,8 @@ func demonstrateCaching() {
   - [Usage Overview](#usage-overview)
   - [Index Declaration](#index-declaration)
   - [Auto Migration Example](#auto-migration-example-1)
+- [Multi-Database Testing](#multi-database-testing)
+- [FAQ](#faq)
 - [Contributing](#contributing)
 - [Performance](#performance)
 - [License](#license)
@@ -238,8 +240,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/burugo/thing/internal/types"
-
 	"github.com/burugo/thing"
 )
 
@@ -288,7 +288,7 @@ func main() {
 	fmt.Println("Updated:", found)
 
 	// Query all
-	result, err := users.Query(types.QueryParams{})
+	result, err := users.Query(thing.QueryParams{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -422,7 +422,6 @@ import (
 	"log"
 
 	"github.com/burugo/thing"
-	"github.com/burugo/thing/internal/types"
 	// import your models package e.g., "yourproject/models"
 )
 
@@ -434,7 +433,7 @@ func main() {
 	bookThing, _ := thing.Use[*models.Book]()
 
 	// Example 1: Find a user and preload their books (HasMany)
-	userParams := types.QueryParams{
+	userParams := thing.QueryParams{
 		Where:    "id = ?",
 		Args:     []interface{}{1}, // Assuming user with ID 1 exists
 		Preloads: []string{"Books"}, // Specify the relationship field name
@@ -447,7 +446,7 @@ func main() {
 	}
 
 	// Example 2: Find a book and preload its user (BelongsTo)
-	bookParams := types.QueryParams{
+	bookParams := thing.QueryParams{
 		Where:    "id = ?",
 		Args:     []interface{}{5}, // Assuming book with ID 5 exists
 		Preloads: []string{"User"}, // Specify the relationship field name
@@ -694,10 +693,6 @@ if err != nil {
 - During migration, CREATE TABLE and CREATE INDEX/UNIQUE INDEX statements are automatically generated.
 - Supports batch migration of multiple models: `thing.AutoMigrate(&User{}, &Book{})`
 
-## License
-
-Thing ORM is released under the [MIT License](LICENSE).
-
 ## Multi-Database Testing
 
 Thing ORM supports multiple database systems, including MySQL, PostgreSQL, and SQLite. This section provides guidelines and considerations for testing across different environments.
@@ -764,9 +759,9 @@ Thing ORM is designed to be performant and efficient. The following sections pro
 
 ### Performance Considerations
 
-- **Memory Usage:** Thing ORM uses in-memory caching for performance gains. Ensure that your system has enough memory to handle the cache.
-- **Database Load:** Thing ORM reduces database load by caching queries and entities. However, excessive caching can lead to memory usage issues.
+- **Caching & Resource Usage:** Thing ORM reduces database load by caching queries and entities. In development, in-memory cache is convenient and memory is rarely a concern. In production, however, excessive or unbounded in-memory caching can cause memory pressure or leaks. For production deployments, Redis is strongly recommended for reliability and scalability.
 - **Query Execution:** Thing ORM provides efficient query execution. Complex queries might still require manual optimization.
+
 
 ### Optimizing Thing ORM
 
@@ -776,6 +771,10 @@ Thing ORM is designed to be performant and efficient. The following sections pro
 - **Query Execution:**
   - **Preloading:** Thing ORM provides efficient query execution with preloading.
   - **Raw SQL:** Thing ORM supports raw SQL execution. Use it for complex queries or when Thing ORM's API doesn't meet your needs.
+
+## License
+
+Thing ORM is released under the [MIT License](LICENSE).
 
 
 
