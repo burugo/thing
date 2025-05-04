@@ -125,7 +125,7 @@ func (t *Thing[T]) preloadRelations(ctx context.Context, results []T, preloadNam
 	// Default LocalKey if not specified
 	if opts.LocalKey == "" {
 		opts.LocalKey = t.info.PkName // Use the cached primary key column name
-		log.Printf("DEBUG: Using default local key '%s' for relation '%s'", opts.LocalKey, preloadName)
+		// log.Printf("DEBUG: Using default local key '%s' for relation '%s'", opts.LocalKey, preloadName)
 	}
 
 	// --- Reflection fix: ensure resultsVal is a slice of pointers to struct ---
@@ -238,13 +238,13 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 				if relatedModelPtr, found := relatedMap[fkValueInt64]; found {
 					relationField := owningModelElem.FieldByName(field.Name) // Get the *User field
 					if relationField.IsValid() && relationField.CanSet() {
-						log.Printf("DEBUG Preload Set: Setting %s.%s (FK: %d) to %v", owningModelElem.Type().Name(), field.Name, fkValueInt64, relatedModelPtr.Interface()) // DEBUG LOG
-						relationField.Set(relatedModelPtr)                                                                                                                  // Set post.Author = userPtr (*R)
+						// log.Printf("DEBUG Preload Set: Setting %s.%s (FK: %d) to %v", owningModelElem.Type().Name(), field.Name, fkValueInt64, relatedModelPtr.Interface()) // DEBUG LOG
+						relationField.Set(relatedModelPtr) // Set post.Author = userPtr (*R)
 					} else {
 						log.Printf("WARN Preload Set: Relation field %s.%s is not valid or settable", owningModelElem.Type().Name(), field.Name) // DEBUG LOG
 					}
 				} else {
-					log.Printf("DEBUG Preload Set: Related model for FK %d not found in map", fkValueInt64) // DEBUG LOG
+					// log.Printf("DEBUG Preload Set: Related model for FK %d not found in map", fkValueInt64) // DEBUG LOG
 				}
 			} // else: FK was not convertible or was zero, do nothing
 		}

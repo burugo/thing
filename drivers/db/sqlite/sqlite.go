@@ -15,7 +15,6 @@ import (
 	"github.com/burugo/thing/common"
 	"github.com/burugo/thing/drivers/schema"
 
-	// "github.com/jmoiron/sqlx" // Removed sqlx import
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
 
@@ -527,61 +526,6 @@ func (t *SQLiteTx) Rollback() error {
 
 // --- Helper Functions ---
 
-// getStructFieldPointersForScan recursively extracts pointers to the fields of a struct suitable for Scan,
-// handling nested and embedded structs. It skips fields tagged with `db:"-"`.
-// destPtr must be a pointer to the struct.
-func getStructFieldPointersForScan(destPtr interface{}) ([]interface{}, error) {
-	val := reflect.ValueOf(destPtr)
-	if val.Kind() != reflect.Ptr || val.IsNil() {
-		return nil, fmt.Errorf("getStructFieldPointersForScan: destination must be a non-nil pointer, got %T", destPtr)
-	}
-
-	elem := val.Elem()
-	if elem.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("getStructFieldPointersForScan: destination must point to a struct, got %T", destPtr)
-	}
-
-	pointers := make([]interface{}, 0)
-	typ := elem.Type()
-
-	for i := 0; i < elem.NumField(); i++ {
-		fieldVal := elem.Field(i)
-		fieldType := typ.Field(i)
-
-		if !fieldType.IsExported() {
-			continue // Skip unexported fields
-		}
-
-		dbTag := fieldType.Tag.Get("db")
-		if dbTag == "-" {
-			continue // Skip explicitly ignored fields
-		}
-
-		// Handle embedded structs recursively
-		if fieldType.Anonymous && fieldVal.Kind() == reflect.Struct {
-			if fieldVal.CanAddr() {
-				nestedPointers, err := getStructFieldPointersForScan(fieldVal.Addr().Interface())
-				if err != nil {
-					return nil, fmt.Errorf("error getting pointers for embedded struct %s: %w", fieldType.Name, err)
-				}
-				pointers = append(pointers, nestedPointers...)
-			} else {
-				return nil, fmt.Errorf("cannot get address of embedded struct field %s", fieldType.Name)
-			}
-			continue // Move to the next field
-		}
-
-		// Handle regular fields
-		if fieldVal.CanAddr() {
-			pointers = append(pointers, fieldVal.Addr().Interface())
-		} else {
-			return nil, fmt.Errorf("cannot get address of field %s", fieldType.Name)
-		}
-	}
-
-	return pointers, nil
-}
-
 // prepareScanDest creates a slice of pointers suitable for sql.Rows.Scan,
 // mapping columns returned by the query to fields in the target struct.
 // structVal should be the reflect.Value of the struct itself (not a pointer to it).
@@ -628,7 +572,7 @@ func getStructFieldMap(structVal reflect.Value) (map[string]reflect.Value, error
 
 	typ := structVal.Type()
 	fieldMap := make(map[string]reflect.Value)
-	log.Printf("DEBUG: getStructFieldMap processing type: %s", typ.Name()) // Added log
+	// log.Printf("DEBUG: getStructFieldMap processing type: %s", typ.Name()) // Added log
 
 	for i := 0; i < structVal.NumField(); i++ {
 		field := structVal.Field(i)
@@ -653,13 +597,13 @@ func getStructFieldMap(structVal reflect.Value) (map[string]reflect.Value, error
 				continue
 			}
 
-			log.Printf("DEBUG: getStructFieldMap recursing into anonymous field: %s", structField.Name) // Added log
-			embeddedMap, err := getStructFieldMap(field)                                                // Recursive call
+			// log.Printf("DEBUG: getStructFieldMap recursing into anonymous field: %s", structField.Name) // Added log
+			embeddedMap, err := getStructFieldMap(field) // Recursive call
 			if err != nil {
 				return nil, fmt.Errorf("error processing embedded struct field %s: %w", structField.Name, err)
 			}
 			// Merge embedded fields. Outer fields processed later will overwrite if names clash.
-			log.Printf("DEBUG: getStructFieldMap merging %d fields from embedded %s", len(embeddedMap), structField.Name) // Added log
+			// log.Printf("DEBUG: getStructFieldMap merging %d fields from embedded %s", len(embeddedMap), structField.Name) // Added log
 			for k, v := range embeddedMap {
 				fieldMap[k] = v
 			}
@@ -683,26 +627,10 @@ func getStructFieldMap(structVal reflect.Value) (map[string]reflect.Value, error
 
 		// Add/overwrite the field in the map. Outer fields overwrite embedded fields naturally
 		fieldMap[mapKey] = field
-		log.Printf("DEBUG: getStructFieldMap added/updated mapKey: '%s' for field: %s", mapKey, fieldName) // Added log
+		// log.Printf("DEBUG: getStructFieldMap added/updated mapKey: '%s' for field: %s", mapKey, fieldName) // Added log
 	}
-	log.Printf("DEBUG: getStructFieldMap finished processing type: %s, map size: %d", typ.Name(), len(fieldMap)) // Added log
+	// log.Printf("DEBUG: getStructFieldMap finished processing type: %s, map size: %d", typ.Name(), len(fieldMap)) // Added log
 	return fieldMap, nil
-}
-
-// appendValueToSlice appends a value to a slice pointed to by slicePtr.
-// Handles type checking.
-func appendValueToSlice(slicePtr interface{}, value interface{}) error {
-	sliceVal := reflect.ValueOf(slicePtr).Elem()
-	valueVal := reflect.ValueOf(value)
-
-	// Ensure the value is assignable to the slice element type
-	if !valueVal.Type().AssignableTo(sliceVal.Type().Elem()) {
-		return fmt.Errorf("cannot append value of type %s to slice of type %s",
-			valueVal.Type(), sliceVal.Type().Elem())
-	}
-
-	sliceVal.Set(reflect.Append(sliceVal, valueVal))
-	return nil
 }
 
 // isBasicType checks if a reflect.Type represents a basic Go type suitable for direct scanning.

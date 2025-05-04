@@ -39,36 +39,29 @@ func NewSQLBuilder(d Dialector) SQLBuilder {
 // New creates a new Thing instance with default context.Background().
 // Accepts one or more CacheClient; if none provided, uses defaultLocalCache.
 func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
-	log.Println("DEBUG: Entering New[T]") // Added log
 	if db == nil {
-		log.Println("DEBUG: New[T] - DB is nil") // Added log
 		return nil, errors.New("DBAdapter must be non-nil")
 	}
 	if cache == nil {
-		log.Println("DEBUG: New[T] - No cache provided, using defaultLocalCache")
 		cache = DefaultLocalCache
 	}
-	log.Println("New Thing instance created.")
-	// Pre-compute model info for T
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
-	log.Printf("DEBUG: New[T] - Getting model info for type: %s", modelType.Name())
+	// log.Printf("DEBUG: New[T] - Getting model info for type: %s", modelType.Name())
 	info, err := schema.GetCachedModelInfo(modelType)
 	if err != nil {
-		log.Printf("DEBUG: New[T] - Error getting model info: %v", err)
+		// log.Printf("DEBUG: New[T] - Error getting model info: %v", err)
 		return nil, fmt.Errorf("failed to get model info for type %s: %w", modelType.Name(), err)
 	}
-	log.Printf("DEBUG: New[T] - Got model info: %+v", info)
+	// log.Printf("DEBUG: New[T] - Got model info: %+v", info)
 	if info.TableName == "" {
 		log.Printf("Warning: Could not determine table name for type %s during New. Relying on instance method?", modelType.Name())
 	}
-	log.Println("DEBUG: New[T] - Creating Thing struct")
 	t := &Thing[T]{
 		db:    db,
 		cache: cache,
 		ctx:   context.Background(),
 		info:  info,
 	}
-	log.Println("DEBUG: New[T] - Returning new Thing instance")
 	return t, nil
 }
 

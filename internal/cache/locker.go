@@ -27,9 +27,9 @@ func (m *CacheKeyLockManagerInternal) Lock(key string) {
 	// LoadOrStore ensures that only one mutex is created per key.
 	// It returns the existing mutex if found, or stores and returns the new one.
 	mutex, _ := m.locks.LoadOrStore(key, &sync.Mutex{})
-	log.Printf("DEBUG: Acquiring lock for key '%s'", key)
+	// log.Printf("DEBUG: Acquiring lock for key '%s'", key)
 	mutex.(*sync.Mutex).Lock()
-	log.Printf("DEBUG: Acquired lock for key '%s'", key)
+	// log.Printf("DEBUG: Acquired lock for key '%s'", key)
 }
 
 // Unlock releases the mutex associated with the given cache key.
@@ -42,7 +42,7 @@ func (m *CacheKeyLockManagerInternal) Unlock(key string) {
 	// Load retrieves the mutex associated with the key.
 	if mutex, ok := m.locks.Load(key); ok {
 		mutex.(*sync.Mutex).Unlock()
-		log.Printf("DEBUG: Released lock for key '%s'", key)
+		// log.Printf("DEBUG: Released lock for key '%s'", key)
 	} else {
 		// This case should ideally not happen if Lock was called correctly.
 		// Log a warning if it does.

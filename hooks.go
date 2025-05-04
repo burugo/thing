@@ -65,7 +65,7 @@ func UnregisterListener(eventType EventType, listenerToRemove EventListener) {
 	// If found, remove it from the slice
 	if foundIndex != -1 {
 		listenerRegistry[eventType] = append(listeners[:foundIndex], listeners[foundIndex+1:]...)
-		log.Printf("DEBUG: Unregistered listener for event %s", eventType)
+		// log.Printf("DEBUG: Unregistered listener for event %s", eventType)
 	} else {
 		log.Printf("WARN: Listener not found for event %s during unregister attempt.", eventType)
 	}

@@ -200,11 +200,11 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	}
 
 	if len(queryCacheKeys) == 0 {
-		log.Printf("DEBUG: No query caches registered for table '%s', skipping cache update for ID %d", tableName, id)
+		// log.Printf("DEBUG: No query caches registered for table '%s', skipping cache update for ID %d", tableName, id)
 		return
 	}
 
-	log.Printf("DEBUG: Found %d potential query caches to update for table '%s' (isDelete=%v) for ID %d", len(queryCacheKeys), tableName, isDelete, id)
+	// log.Printf("DEBUG: Found %d potential query caches to update for table '%s' (isDelete=%v) for ID %d", len(queryCacheKeys), tableName, isDelete, id)
 
 	// --- Phase 1: Gather Tasks ---
 	tasks := make([]cacheTask, 0, len(queryCacheKeys))
@@ -237,7 +237,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 				continue
 			}
 			if matches {
-				log.Printf("DEBUG Gather Task (%s): Deleted item matched query. Needs Remove.", cacheKey)
+				// log.Printf("DEBUG Gather Task (%s): Deleted item matched query. Needs Remove.", cacheKey)
 				tasks = append(tasks, cacheTask{
 					cacheKey:    cacheKey,
 					queryParams: paramsRoot,
@@ -247,7 +247,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					needsRemove: true,
 				})
 			} else {
-				log.Printf("DEBUG Gather Task (%s): Deleted item did not match query. No cache change needed.", cacheKey)
+				// log.Printf("DEBUG Gather Task (%s): Deleted item did not match query. No cache change needed.", cacheKey)
 			}
 		} else {
 			// Save/Update: check both current and original model
@@ -272,7 +272,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			}
 			needsAdd, needsRemove := determineCacheAction(isCreate, matchesOriginal, matchesCurrent, model.KeepItem())
 			if needsAdd || needsRemove {
-				log.Printf("DEBUG Gather Task (%s): Action determined: Add=%v, Remove=%v", cacheKey, needsAdd, needsRemove)
+				// log.Printf("DEBUG Gather Task (%s): Action determined: Add=%v, Remove=%v", cacheKey, needsAdd, needsRemove)
 				tasks = append(tasks, cacheTask{
 					cacheKey:    cacheKey,
 					queryParams: paramsRoot,
@@ -282,17 +282,17 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					needsRemove: needsRemove,
 				})
 			} else {
-				log.Printf("DEBUG Gather Task (%s): No cache change needed.", cacheKey)
+				// log.Printf("DEBUG Gather Task (%s): No cache change needed.", cacheKey)
 			}
 		}
 	}
 
 	if len(tasks) == 0 {
-		log.Printf("DEBUG: No actual cache updates required for ID %d after checks.", id)
+		// log.Printf("DEBUG: No actual cache updates required for ID %d after checks.", id)
 		return
 	}
 
-	log.Printf("DEBUG: Processing %d cache update tasks for ID %d.", len(tasks), id)
+	// log.Printf("DEBUG: Processing %d cache update tasks for ID %d.", len(tasks), id)
 
 	// --- Phase 2: Simulated Batch Read ---
 	initialListValues := make(map[string][]int64)
@@ -319,7 +319,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					default:
 						initialListValues[task.cacheKey] = cachedIDs
 					}
-					log.Printf("DEBUG Read (%s): Read initial list (size %d).", task.cacheKey, len(initialListValues[task.cacheKey]))
+					// log.Printf("DEBUG Read (%s): Read initial list (size %d).", task.cacheKey, len(initialListValues[task.cacheKey]))
 				}
 			}
 		} else if task.isCountKey {
@@ -348,7 +348,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					}
 				}
 				initialCountValues[task.cacheKey] = count
-				log.Printf("DEBUG Read (%s): Read initial count (%d).", task.cacheKey, count)
+				// log.Printf("DEBUG Read (%s): Read initial count (%d).", task.cacheKey, count)
 			}
 		}
 	}
@@ -369,13 +369,13 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			if task.needsAdd {
 				if !containsID(initialIDs, id) {
 					changed = true
-					log.Printf("DEBUG Compute (%s): Needs Add - Adding ID %d. Marking changed.", task.cacheKey, id)
+					// log.Printf("DEBUG Compute (%s): Needs Add - Adding ID %d. Marking changed.", task.cacheKey, id)
 				} else {
-					log.Printf("DEBUG Compute (%s): Skipping list add as ID %d already exists. No change needed.", task.cacheKey, id)
+					// log.Printf("DEBUG Compute (%s): Skipping list add as ID %d already exists. No change needed.", task.cacheKey, id)
 				}
 			} else if task.needsRemove {
 				changed = true
-				log.Printf("DEBUG Compute (%s): Needs Remove (due to query mismatch, soft delete, or delete op). Marking changed.", task.cacheKey)
+				// log.Printf("DEBUG Compute (%s): Needs Remove (due to query mismatch, soft delete, or delete op). Marking changed.", task.cacheKey)
 			}
 			if changed {
 				writesNeeded[task.cacheKey] = finalWriteTask{
@@ -383,7 +383,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					newCount:  -1,
 					isListKey: true,
 				}
-				log.Printf("DEBUG Compute (%s): Identified list invalidation needed.", task.cacheKey)
+				// log.Printf("DEBUG Compute (%s): Identified list invalidation needed.", task.cacheKey)
 			}
 		} else if task.isCountKey {
 			initialCount := initialCountValues[task.cacheKey]
@@ -395,14 +395,14 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			if task.needsAdd {
 				newCount++
 				changed = true
-				log.Printf("DEBUG Compute (%s): Incrementing count %d -> %d", task.cacheKey, initialCount, newCount)
+				// log.Printf("DEBUG Compute (%s): Incrementing count %d -> %d", task.cacheKey, initialCount, newCount)
 			} else if task.needsRemove {
 				if newCount > 0 {
 					newCount--
 					changed = true
-					log.Printf("DEBUG Compute (%s): Decrementing count %d -> %d", task.cacheKey, initialCount, newCount)
+					// log.Printf("DEBUG Compute (%s): Decrementing count %d -> %d", task.cacheKey, initialCount, newCount)
 				} else {
-					log.Printf("DEBUG Compute (%s): Skipping count decrement as it's already zero.", task.cacheKey)
+					// log.Printf("DEBUG Compute (%s): Skipping count decrement as it's already zero.", task.cacheKey)
 				}
 			}
 			if changed {
@@ -412,46 +412,46 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					newCount:  newCount,
 					isListKey: false,
 				}
-				log.Printf("DEBUG Compute (%s): Identified count write needed. New value: %d", task.cacheKey, newCount)
+				// log.Printf("DEBUG Compute (%s): Identified count write needed. New value: %d", task.cacheKey, newCount)
 			}
 		}
 	}
 
 	// --- Phase 4: Conditional Batch Write (with Locking) ---
 	if len(writesNeeded) == 0 {
-		log.Printf("DEBUG: No actual cache writes required for ID %d after computation.", id)
+		// log.Printf("DEBUG: No actual cache writes required for ID %d after computation.", id)
 		return
 	}
 
-	log.Printf("DEBUG: Attempting to write %d cache updates for ID %d.", len(writesNeeded), id)
+	// log.Printf("DEBUG: Attempting to write %d cache updates for ID %d.", len(writesNeeded), id)
 	locker := cacheinternal.GlobalCacheKeyLocker
 
 	for key, writeTask := range writesNeeded {
-		log.Printf("DEBUG Write (%s): Acquiring lock...", key)
+		// log.Printf("DEBUG Write (%s): Acquiring lock...", key)
 		locker.Lock(key)
-		log.Printf("DEBUG Write (%s): Acquired lock.", key)
+		// log.Printf("DEBUG Write (%s): Acquired lock.", key)
 
 		var writeErr error
 		if writeTask.isListKey {
-			log.Printf("DEBUG Write (%s): Invalidating list cache due to computed change (Add/Remove/Delete).", key)
+			// log.Printf("DEBUG Write (%s): Invalidating list cache due to computed change (Add/Remove/Delete).", key)
 			writeErr = t.cache.Delete(ctx, key)
 			if writeErr == nil {
-				log.Printf("DEBUG Write (%s): Successfully invalidated list cache.", key)
+				// log.Printf("DEBUG Write (%s): Successfully invalidated list cache.", key)
 			} else if errors.Is(writeErr, common.ErrNotFound) {
-				log.Printf("DEBUG Write (%s): List cache key not found during invalidation (already gone?).", key)
+				// log.Printf("DEBUG Write (%s): List cache key not found during invalidation (already gone?).", key)
 				writeErr = nil
 			}
 		} else {
 			countStr := strconv.FormatInt(writeTask.newCount, 10)
 			writeErr = t.cache.Set(ctx, key, countStr, globalCacheTTL)
 			if writeErr == nil {
-				log.Printf("DEBUG Write (%s): Successfully updated cached count (%d).", key, writeTask.newCount)
+				// log.Printf("DEBUG Write (%s): Successfully updated cached count (%d).", key, writeTask.newCount)
 			}
 		}
 
-		log.Printf("DEBUG Write (%s): Releasing lock...", key)
+		// log.Printf("DEBUG Write (%s): Releasing lock...", key)
 		locker.Unlock(key)
-		log.Printf("DEBUG Write (%s): Released lock.", key)
+		// log.Printf("DEBUG Write (%s): Released lock.", key)
 
 		if writeErr != nil {
 			log.Printf("ERROR: Failed cache write for key %s: %v", key, writeErr)
@@ -463,7 +463,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			}
 		}
 	}
-	log.Printf("DEBUG: Completed cache update processing for ID %d.", id)
+	// log.Printf("DEBUG: Completed cache update processing for ID %d.", id)
 }
 
 // --- Helper functions for list/count cache ---
@@ -487,7 +487,7 @@ func determineCacheAction(isCreate, matchesOriginal, matchesCurrent bool, isKept
 	switch {
 	case !isKept:
 		// If item is soft-deleted, it always needs removal from standard caches.
-		log.Printf("DEBUG Determine Action: Model is soft-deleted (KeepItem=false). Needs Removal.")
+		// log.Printf("DEBUG Determine Action: Model is soft-deleted (KeepItem=false). Needs Removal.")
 		needsRemove = true
 		needsAdd = false
 		// Return early, soft-delete removal takes precedence
@@ -495,16 +495,16 @@ func determineCacheAction(isCreate, matchesOriginal, matchesCurrent bool, isKept
 	case isCreate:
 		if matchesCurrent {
 			needsAdd = true
-			log.Printf("DEBUG Determine Action: Create matches query. Needs Add.")
+			// log.Printf("DEBUG Determine Action: Create matches query. Needs Add.")
 		}
 	default:
 		// Update
 		if matchesCurrent && !matchesOriginal {
 			needsAdd = true
-			log.Printf("DEBUG Determine Action: Update now matches query (didn't before). Needs Add.")
+			// log.Printf("DEBUG Determine Action: Update now matches query (didn't before). Needs Add.")
 		} else if !matchesCurrent && matchesOriginal {
 			needsRemove = true
-			log.Printf("DEBUG Determine Action: Update no longer matches query (did before). Needs Remove.")
+			// log.Printf("DEBUG Determine Action: Update no longer matches query (did before). Needs Remove.")
 		}
 		// If match status didn't change (both true or both false), neither add nor remove is needed.
 	}
@@ -540,9 +540,9 @@ func (m *CacheKeyLockManagerInternal) Lock(key string) {
 		return
 	}
 	mutex, _ := m.locks.LoadOrStore(key, &sync.Mutex{})
-	log.Printf("DEBUG: Acquiring lock for key '%s'", key)
+	// log.Printf("DEBUG: Acquiring lock for key '%s'", key)
 	mutex.(*sync.Mutex).Lock()
-	log.Printf("DEBUG: Acquired lock for key '%s'", key)
+	// log.Printf("DEBUG: Acquired lock for key '%s'", key)
 }
 
 // Unlock releases the mutex associated with the given cache key.
@@ -552,7 +552,7 @@ func (m *CacheKeyLockManagerInternal) Unlock(key string) {
 	}
 	if mutex, ok := m.locks.Load(key); ok {
 		mutex.(*sync.Mutex).Unlock()
-		log.Printf("DEBUG: Released lock for key '%s'", key)
+		// log.Printf("DEBUG: Released lock for key '%s'", key)
 	} else {
 		log.Printf("WARN: Attempted to Unlock a key ('%s') that was not locked or doesn't exist.", key)
 	}
