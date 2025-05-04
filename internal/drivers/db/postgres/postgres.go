@@ -10,11 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/burugo/thing/internal/schema"
-	"github.com/burugo/thing/internal/types"
-
+	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
-	"github.com/burugo/thing/internal/interfaces"
 	"github.com/burugo/thing/internal/sqlbuilder"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
@@ -43,13 +40,13 @@ type PostgreSQLTx struct {
 }
 
 // Compile-time checks to ensure interfaces are implemented.
-var _ interfaces.DBAdapter = (*PostgreSQLAdapter)(nil)
-var _ interfaces.Tx = (*PostgreSQLTx)(nil)
+var _ thing.DBAdapter = (*PostgreSQLAdapter)(nil)
+var _ thing.Tx = (*PostgreSQLTx)(nil)
 
 // --- Constructor ---
 
 // NewPostgreSQLAdapter creates a new PostgreSQL adapter instance.
-func NewPostgreSQLAdapter(dsn string) (interfaces.DBAdapter, error) {
+func NewPostgreSQLAdapter(dsn string) (thing.DBAdapter, error) {
 	// return nil, fmt.Errorf("NewPostgreSQLAdapter not yet implemented") // Remove placeholder
 
 	db, err := sql.Open("postgres", dsn)
@@ -294,37 +291,26 @@ func (a *PostgreSQLAdapter) Exec(ctx context.Context, query string, args ...inte
 
 // GetCount executes a SELECT COUNT(*) query.
 // PostgreSQL uses '$N' placeholders.
-func (a *PostgreSQLAdapter) GetCount(ctx context.Context, info *schema.ModelInfo, params types.QueryParams) (int64, error) {
-	// return 0, fmt.Errorf("PostgreSQLAdapter.GetCount not implemented") // Remove placeholder
-
-	// --- Basic Query Construction (Placeholder - Needs SQL builder) ---
-	whereClause := params.Where
-	args := params.Args
-	baseQuery := a.builder.BuildCountSQL(info.TableName, whereClause)
-	reboundQuery := a.builder.Rebind(baseQuery)
-	// --- End Placeholder ---
-
-	log.Printf("DB GetCount (PostgreSQL): %s [%v] (Original: %s)", reboundQuery, args, baseQuery)
-	start := time.Now()
+func (a *PostgreSQLAdapter) GetCount(ctx context.Context, tableName string, where string, args []interface{}) (int64, error) {
+	if tableName == "" {
+		return 0, errors.New("getCount: table name is missing")
+	}
+	query := a.builder.BuildCountSQL(tableName, where)
+	log.Printf("DB GetCount (Postgres): %s [%v]", query, args)
+	row := a.db.QueryRowContext(ctx, query, args...)
 	var count int64
-	err := a.db.QueryRowContext(ctx, reboundQuery, args...).Scan(&count)
-	duration := time.Since(start)
-
+	err := row.Scan(&count)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			log.Printf("DB GetCount (No Rows - PostgreSQL): %s [%v] (%s)", reboundQuery, args, duration)
 			return 0, nil
 		}
-		log.Printf("DB GetCount Error (PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
-		return 0, fmt.Errorf("postgres GetCount query/scan error: %w", err)
+		return 0, fmt.Errorf("postgres GetCount scan error: %w", err)
 	}
-
-	log.Printf("DB GetCount Result (PostgreSQL): %d (%s)", count, duration)
 	return count, nil
 }
 
 // BeginTx starts a transaction.
-func (a *PostgreSQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (interfaces.Tx, error) {
+func (a *PostgreSQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, error) {
 	// return nil, fmt.Errorf("PostgreSQLAdapter.BeginTx not implemented") // Remove placeholder
 
 	log.Println("DB Transaction Started (PostgreSQL)")
@@ -342,7 +328,7 @@ func (a *PostgreSQLAdapter) DB() *sql.DB {
 }
 
 // Builder returns the SQLBuilder associated with the PostgreSQLAdapter.
-func (a *PostgreSQLAdapter) Builder() *sqlbuilder.SQLBuilder {
+func (a *PostgreSQLAdapter) Builder() thing.SQLBuilder {
 	return a.builder
 }
 

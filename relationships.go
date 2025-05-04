@@ -15,7 +15,6 @@ import (
 
 	"github.com/burugo/thing/common"
 	"github.com/burugo/thing/internal/cache"
-	"github.com/burugo/thing/internal/interfaces"
 	"github.com/burugo/thing/internal/schema"
 	"github.com/burugo/thing/internal/types"
 )
@@ -743,7 +742,7 @@ func (t *Thing[T]) Load(model T, relations ...string) error {
 }
 
 // NewThingByType creates a *Thing for a given model type (reflect.Type)
-func NewThingByType(modelType reflect.Type, db interfaces.DBAdapter, cache interfaces.CacheClient) (interface{}, error) {
+func NewThingByType(modelType reflect.Type, db DBAdapter, cache CacheClient) (interface{}, error) {
 	if modelType.Kind() == reflect.Ptr {
 		modelType = modelType.Elem()
 	}

@@ -1,3 +1,6 @@
+// DEPRECATED: All interfaces/types must now be imported from the main package (thing/interfaces.go). This file will be removed soon.
+// Do not use these definitions; update all code to use thing.DBAdapter, thing.CacheClient, thing.Tx, thing.CacheStats, etc.
+
 package interfaces
 
 import (

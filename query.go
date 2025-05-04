@@ -16,11 +16,31 @@ const (
 	cacheListCountLimit = 200
 )
 
+// QueryParams is the public query parameter type for Thing ORM queries.
+type QueryParams struct {
+	Where          string
+	Args           []interface{}
+	Order          string
+	Preloads       []string
+	IncludeDeleted bool
+}
+
+// toInternalQueryParams converts a public QueryParams to internal/types.QueryParams.
+func toInternalQueryParams(p QueryParams) types.QueryParams {
+	return types.QueryParams{
+		Where:          p.Where,
+		Args:           p.Args,
+		Order:          p.Order,
+		Preloads:       p.Preloads,
+		IncludeDeleted: p.IncludeDeleted,
+	}
+}
+
 // CachedResult represents a cached query result with lazy loading capabilities.
 // It allows for efficient querying with pagination and caching.
 type CachedResult[T Model] struct {
 	thing          *Thing[T]
-	params         types.QueryParams
+	params         QueryParams
 	cachedIDs      []int64
 	cachedCount    int64
 	hasLoadedIDs   bool
@@ -35,7 +55,7 @@ type CachedResult[T Model] struct {
 // The actual database query happens when Count() or Fetch() is called on the result.
 // It returns the CachedResult instance and a nil error, assuming basic validation passed.
 // Error handling for query execution is done within CachedResult methods.
-func (t *Thing[T]) Query(params types.QueryParams) (*CachedResult[T], error) {
+func (t *Thing[T]) Query(params QueryParams) (*CachedResult[T], error) {
 	// TODO: Add validation for params if necessary?
 	return &CachedResult[T]{
 		thing:  t,
@@ -105,7 +125,7 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 			countParams.Where = "\"deleted\" = false"
 		}
 	}
-	dbCount, dbErr := cr.thing.db.GetCount(cr.thing.ctx, cr.thing.info, countParams)
+	dbCount, dbErr := cr.thing.db.GetCount(cr.thing.ctx, cr.thing.info.TableName, countParams.Where, countParams.Args)
 	if dbErr != nil {
 		log.Printf("DB ERROR: Count query failed: %v", dbErr)
 		return 0, fmt.Errorf("database count query failed: %w", dbErr)
@@ -122,7 +142,7 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 	}
 
 	// Register the count key
-	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, cacheKey, cr.params)
+	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, cacheKey, toInternalQueryParams(cr.params))
 
 	return cr.cachedCount, nil
 }
@@ -172,9 +192,16 @@ func (cr *CachedResult[T]) _fetch_ids_from_db(offset, limit int) ([]int64, error
 		return nil, errors.New("_fetch_ids_from_db: CachedResult not properly initialized")
 	}
 
-	// Build the SQL query with pagination
-	// Pass includeDeleted flag via params to the builder
-	query, args := cr.thing.builder.BuildSelectIDsSQL(cr.thing.info.TableName, cr.thing.info.PkName, cr.params)
+	// Always handle soft delete at the query layer
+	where := cr.params.Where
+	if !cr.params.IncludeDeleted {
+		if where != "" {
+			where = fmt.Sprintf("(%s) AND \"deleted\" = false", where)
+		} else {
+			where = "\"deleted\" = false"
+		}
+	}
+	query, args := cr.thing.builder.BuildSelectIDsSQL(cr.thing.info.TableName, cr.thing.info.PkName, where, cr.params.Args, cr.params.Order)
 	queryWithPagination := fmt.Sprintf("%s LIMIT %d OFFSET %d", query, limit, offset)
 
 	// Execute the query
@@ -286,7 +313,7 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 		log.Printf("WARN: Failed to cache list IDs for key %s: %v", listCacheKey, cacheSetErr) // Log remains the same
 	}
 	// Register the list key
-	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, cr.params)
+	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, listCacheKey, toInternalQueryParams(cr.params))
 
 	// If fetched count < limit, update Count cache as well (handles count=0 correctly)
 	if len(validIDs) < cacheListCountLimit { // Changed to < for clarity
@@ -299,7 +326,7 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 			log.Printf("Updated count cache (key: %s) with count %d after list fetch", countCacheKey, len(validIDs))
 		}
 		// Register the count key
-		cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, cr.params)
+		cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, toInternalQueryParams(cr.params))
 
 	}
 	return validIDs, nil // Return filtered valid IDs (or empty slice)

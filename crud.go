@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/burugo/thing/common"
-	"github.com/burugo/thing/internal/interfaces"
 	"github.com/burugo/thing/internal/schema"
 	"github.com/burugo/thing/internal/utils"
 )
@@ -29,7 +28,7 @@ const (
 // handling cache checks, database queries for misses, and caching results.
 // It requires the concrete modelType to instantiate objects and slices correctly.
 // REMOVED TTL arguments
-func fetchModelsByIDsInternal(ctx context.Context, cache interfaces.CacheClient, db interfaces.DBAdapter, modelInfo *schema.ModelInfo, modelType reflect.Type, ids []int64) (map[int64]reflect.Value, error) {
+func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapter, modelInfo *schema.ModelInfo, modelType reflect.Type, ids []int64) (map[int64]reflect.Value, error) {
 	resultMap := make(map[int64]reflect.Value)
 	if len(ids) == 0 {
 		return resultMap, nil
@@ -45,9 +44,9 @@ func fetchModelsByIDsInternal(ctx context.Context, cache interfaces.CacheClient,
 	// 1. Try fetching from cache
 	if cache != nil {
 		for _, id := range ids { // Iterate through original ids
-			cacheKey := generateCacheKey(modelInfo.TableName, id)
-			instanceVal := reflect.New(modelType.Elem()).Elem() // User
-			instancePtr := instanceVal.Addr().Interface()       // *User
+			cacheKey := generateCacheKey(modelInfo.TableName, id) // 统一用主键 key
+			instanceVal := reflect.New(modelType.Elem()).Elem()   // User
+			instancePtr := instanceVal.Addr().Interface()         // *User
 			err := cache.GetModel(ctx, cacheKey, instancePtr)
 
 			if err == nil {
@@ -376,7 +375,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 
 		// Use a lock to prevent race conditions during cache update
 		lockKey := cacheKey + ":lock"
-		errLock := withLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
+		err := WithLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
 			// Re-set the model in the cache with the latest data and TTL
 			if errCache := t.cache.SetModel(ctx, cacheKey, value, globalCacheTTL); errCache != nil { // USE globalCacheTTL
 				log.Printf("WARN: Failed to update cache for %s after save: %v", cacheKey, errCache)
@@ -385,8 +384,8 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 			return nil // Lock action successful
 		})
 
-		if errLock != nil {
-			log.Printf("WARN: Failed to acquire lock for cache update %s: %v", lockKey, errLock)
+		if err != nil {
+			log.Printf("WARN: Failed to acquire lock for cache update %s: %v", lockKey, err)
 			// Log warning, but don't fail the whole save operation
 		}
 
@@ -430,7 +429,7 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 	cacheKey := generateCacheKey(tableName, id)
 	lockKey := cacheKey + ":lock"
 
-	err := withLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
+	err := WithLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
 		// --- DB Delete ---
 		query := t.builder.BuildDeleteSQL(tableName, t.info.PkName)
 		result, err := t.db.Exec(ctx, query, id)

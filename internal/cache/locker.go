@@ -5,21 +5,21 @@ import (
 	"sync"
 )
 
-// CacheKeyLockManager manages a map of mutexes, one for each cache key.
+// CacheKeyLockManagerInternal manages a map of mutexes, one for each cache key.
 // It uses sync.Map for efficient concurrent access.
-type CacheKeyLockManager struct {
+type CacheKeyLockManagerInternal struct {
 	locks sync.Map // map[string]*sync.Mutex
 }
 
-// NewCacheKeyLockManager creates a new lock manager.
-func NewCacheKeyLockManager() *CacheKeyLockManager {
-	return &CacheKeyLockManager{}
+// NewCacheKeyLockManagerInternal creates a new lock manager.
+func NewCacheKeyLockManagerInternal() *CacheKeyLockManagerInternal {
+	return &CacheKeyLockManagerInternal{}
 }
 
 // Lock acquires the mutex associated with the given cache key.
 // If the mutex does not exist, it is created.
 // This operation blocks until the lock is acquired.
-func (m *CacheKeyLockManager) Lock(key string) {
+func (m *CacheKeyLockManagerInternal) Lock(key string) {
 	if key == "" {
 		// Avoid locking on empty key, though this shouldn't happen in practice.
 		return
@@ -35,7 +35,7 @@ func (m *CacheKeyLockManager) Lock(key string) {
 // Unlock releases the mutex associated with the given cache key.
 // It is crucial to call Unlock after the critical section protected by Lock.
 // Typically used with defer: `defer cacheKeyLocker.Unlock(key)`.
-func (m *CacheKeyLockManager) Unlock(key string) {
+func (m *CacheKeyLockManagerInternal) Unlock(key string) {
 	if key == "" {
 		return
 	}
@@ -72,6 +72,5 @@ func (m *CacheKeyLockManager) Unlock(key string) {
 
 // --- Global Instance ---
 
-// // GlobalCacheKeyLocker provides a global instance of the lock manager.
-// // Initialized using the constructor NewCacheKeyLocker.
-// var GlobalCacheKeyLocker = NewCacheKeyLockManager() // Capitalized to export, corrected constructor name
+// GlobalCacheKeyLocker provides a global instance of the lock manager for cache keys.
+var GlobalCacheKeyLocker = NewCacheKeyLockManagerInternal()

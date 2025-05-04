@@ -5,16 +5,13 @@ import (
 	"log"
 	"sync"
 	"time"
-
-	sqlite "github.com/burugo/thing/internal/drivers/db/sqlite"
-	interfaces "github.com/burugo/thing/internal/interfaces"
 )
 
 // --- Global Configuration ---
 
 var (
-	globalDB     interfaces.DBAdapter
-	globalCache  interfaces.CacheClient
+	globalDB     DBAdapter
+	globalCache  CacheClient
 	isConfigured bool
 	configMutex  sync.RWMutex
 	// Global cache TTL, determined at startup
@@ -23,16 +20,15 @@ var (
 
 // Config holds configuration for the Thing ORM.
 type Config struct {
-	DB    interfaces.DBAdapter   // User must initialize and provide
-	Cache interfaces.CacheClient // User must initialize and provide
+	DB    DBAdapter   // User must initialize and provide
+	Cache CacheClient // User must initialize and provide
 	TTL   time.Duration
 }
 
 // Configure sets up the package-level database and cache clients, and the global cache TTL.
 // Usage:
 //
-//	Configure() // uses in-memory SQLite and local cache
-//	Configure(db) // uses provided DB, local cache
+//	Configure(db) // uses provided DB, default local cache
 //	Configure(db, cache) // uses provided DB and cache
 //	Configure(db, cache, ttl) // uses all provided
 //
@@ -42,53 +38,44 @@ func Configure(args ...interface{}) error {
 	defer configMutex.Unlock()
 
 	defaultTTL := 8 * time.Hour
-	var db interfaces.DBAdapter
-	var cache interfaces.CacheClient
+	var db DBAdapter
+	var cache CacheClient
 	var ttl time.Duration
 
 	switch len(args) {
-	case 0:
-		// No arguments: use in-memory SQLite and local cache
-		var err error
-		db, err = sqlite.NewSQLiteAdapter(":memory:")
-		if err != nil {
-			return errors.New("Configure: failed to create in-memory SQLite adapter: " + err.Error())
-		}
-		cache = defaultLocalCache
-		log.Println("thing.Configure: Using in-memory SQLite and local cache.")
 	case 1:
 		// One argument: must be DBAdapter
-		db, _ = args[0].(interfaces.DBAdapter)
+		db, _ = args[0].(DBAdapter)
 		if db == nil {
-			return errors.New("Configure: first argument must be a DBAdapter or nil")
+			return errors.New("Configure: first argument must be a DBAdapter")
 		}
-		cache = defaultLocalCache
-		log.Println("thing.Configure: Using provided DBAdapter and local cache.")
+		cache = DefaultLocalCache
+		log.Println("thing.Configure: Using provided DBAdapter and default local cache.")
 	case 2:
 		// Two arguments: DBAdapter, CacheClient
-		db, _ = args[0].(interfaces.DBAdapter)
-		cache, _ = args[1].(interfaces.CacheClient)
+		db, _ = args[0].(DBAdapter)
+		cache, _ = args[1].(CacheClient)
 		if db == nil {
-			return errors.New("Configure: first argument must be a DBAdapter or nil")
+			return errors.New("Configure: first argument must be a DBAdapter")
 		}
 		if cache == nil {
-			cache = defaultLocalCache
-			log.Println("thing.Configure: Cache is nil, using defaultLocalCache")
+			cache = DefaultLocalCache
+			log.Println("thing.Configure: Cache is nil, using DefaultLocalCache")
 		}
 	case 3:
 		// Three arguments: DBAdapter, CacheClient, TTL
-		db, _ = args[0].(interfaces.DBAdapter)
-		cache, _ = args[1].(interfaces.CacheClient)
+		db, _ = args[0].(DBAdapter)
+		cache, _ = args[1].(CacheClient)
 		ttl, _ = args[2].(time.Duration)
 		if db == nil {
-			return errors.New("Configure: first argument must be a DBAdapter or nil")
+			return errors.New("Configure: first argument must be a DBAdapter")
 		}
 		if cache == nil {
-			cache = defaultLocalCache
-			log.Println("thing.Configure: Cache is nil, using defaultLocalCache")
+			cache = DefaultLocalCache
+			log.Println("thing.Configure: Cache is nil, using DefaultLocalCache")
 		}
 	default:
-		return errors.New("Configure: too many arguments")
+		return errors.New("Configure: must provide at least a DBAdapter")
 	}
 
 	if ttl > 0 {

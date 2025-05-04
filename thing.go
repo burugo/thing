@@ -8,10 +8,7 @@ import (
 	"log"     // For placeholder logging
 	"reflect" // Added for parsing env var
 
-	"github.com/burugo/thing/internal/interfaces"
 	"github.com/burugo/thing/internal/schema"
-	"github.com/burugo/thing/internal/sqlbuilder"
-	// Added for configuring cache TTL
 )
 
 // --- Thing Core Struct ---
@@ -25,18 +22,18 @@ type Model interface {
 // Thing is the central access point for ORM operations, analogous to gorm.DB.
 // It holds database/cache clients and the context for operations.
 type Thing[T Model] struct {
-	db      interfaces.DBAdapter
-	cache   interfaces.CacheClient
+	db      DBAdapter
+	cache   CacheClient
 	ctx     context.Context
-	info    *schema.ModelInfo      // Pre-computed metadata for type T
-	builder *sqlbuilder.SQLBuilder // Add builder field
+	info    *schema.ModelInfo // Pre-computed metadata for type T
+	builder SQLBuilder        // Use interface type
 }
 
 // --- Thing Constructors & Accessors ---
 
 // New creates a new Thing instance with default context.Background().
 // Accepts one or more CacheClient; if none provided, uses defaultLocalCache.
-func New[T Model](db interfaces.DBAdapter, cache interfaces.CacheClient) (*Thing[T], error) {
+func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 	log.Println("DEBUG: Entering New[T]") // Added log
 	if db == nil {
 		log.Println("DEBUG: New[T] - DB is nil") // Added log
@@ -44,7 +41,7 @@ func New[T Model](db interfaces.DBAdapter, cache interfaces.CacheClient) (*Thing
 	}
 	if cache == nil {
 		log.Println("DEBUG: New[T] - No cache provided, using defaultLocalCache")
-		cache = defaultLocalCache
+		cache = DefaultLocalCache
 	}
 	log.Println("New Thing instance created.")
 	// Pre-compute model info for T
@@ -100,12 +97,12 @@ func (t *Thing[T]) WithContext(ctx context.Context) *Thing[T] { // Returns *Thin
 }
 
 // Cache returns the underlying CacheClient associated with this Thing instance.
-func (t *Thing[T]) Cache() interfaces.CacheClient {
+func (t *Thing[T]) Cache() CacheClient {
 	return t.cache
 }
 
 // GlobalDB returns the global DBAdapter (for internal use, e.g., AutoMigrate)
-func GlobalDB() interfaces.DBAdapter {
+func GlobalDB() DBAdapter {
 	return globalDB
 }
 

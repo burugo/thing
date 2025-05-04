@@ -5,8 +5,6 @@ import (
 	"log"
 	"reflect"
 	"strings"
-
-	"github.com/burugo/thing/internal/types"
 )
 
 // Dialector defines how to quote identifiers and bind variables for a specific SQL dialect.
@@ -39,40 +37,25 @@ func (b *SQLBuilder) BuildSelectSQL(tableName string, columns []string) string {
 }
 
 // BuildSelectIDsSQL constructs a SELECT statement to fetch only primary key IDs.
-// Note: Exported and takes explicit arguments.
-func (b *SQLBuilder) BuildSelectIDsSQL(tableName string, pkName string, params types.QueryParams) (string, []interface{}) {
+// The where argument should already include all conditions (including soft delete if needed).
+func (b *SQLBuilder) BuildSelectIDsSQL(tableName string, pkName string, where string, args []interface{}, order string) (string, []interface{}) {
 	var query strings.Builder
-	args := []interface{}{}
 	if tableName == "" || pkName == "" {
 		log.Printf("Error: BuildSelectIDsSQL called with incomplete info: TableName='%s', PkName='%s'", tableName, pkName)
 		return "", nil
 	}
 	query.WriteString(fmt.Sprintf("SELECT %s FROM %s", b.Dialect.Quote(pkName), b.Dialect.Quote(tableName)))
 
-	// Combine user WHERE with soft delete condition
-	whereClause := params.Where
-	// Use the flag from params directly
-	if !params.IncludeDeleted {
-		if whereClause != "" {
-			whereClause = fmt.Sprintf("(%s) AND %s = false", whereClause, b.Dialect.Quote("deleted"))
-		} else {
-			whereClause = fmt.Sprintf("%s = false", b.Dialect.Quote("deleted"))
-		}
-	}
-
-	if whereClause != "" {
-		// Expand IN (?) with slice args to IN (?, ?, ...)
-		expandedWhere, expandedArgs := b.expandInClauses(whereClause, params.Args)
+	if where != "" {
+		expandedWhere, expandedArgs := b.expandInClauses(where, args)
 		query.WriteString(" WHERE ")
 		query.WriteString(expandedWhere)
-		args = append(args, expandedArgs...)
-	} else {
-		args = append(args, params.Args...)
+		args = expandedArgs
 	}
 
-	if params.Order != "" {
+	if order != "" {
 		query.WriteString(" ORDER BY ")
-		query.WriteString(params.Order)
+		query.WriteString(order)
 	}
 	return query.String(), args
 }
