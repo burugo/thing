@@ -164,9 +164,7 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 			}
 		}
 		// --- End Cache NoneResult ---
-
 	}
-
 	return resultMap, nil
 }
 
@@ -275,11 +273,9 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 			updatedAtField := modelValue.Elem().FieldByName("UpdatedAt")
 			if updatedAtField.IsValid() {
 				colsToInsert = append(colsToInsert, updatedAtCol)
-				placeholders = append(placeholders, "?")
 				vals = append(vals, updatedAtField.Interface())
 			} else {
 				colsToInsert = append(colsToInsert, updatedAtCol)
-				placeholders = append(placeholders, "?")
 				vals = append(vals, now) // Fallback
 			}
 		}
@@ -293,7 +289,6 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 
 		// Execute the INSERT query
 		result, err = t.db.Exec(ctx, query, args...)
-
 	} else {
 		// --- UPDATE Path ---
 		// Fetch the original record to compare against (bypass cache)
