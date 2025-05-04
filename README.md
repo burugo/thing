@@ -21,6 +21,7 @@
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [API Documentation](#api-documentation)
+- [AI Assistant Integration (e.g., Cursor)](#ai-assistant-integration-eg-cursor)
 - [Basic CRUD Example](#basic-crud-example)
 - [Flexible JSON Serialization](#flexible-json-serialization)
   - [Examples](#examples)
@@ -157,6 +158,14 @@ For simpler applications or global setup, you can use `thing.Configure` once at 
 Full API documentation is available on [pkg.go.dev](https://pkg.go.dev/github.com/burugo/thing).
 
 *(Note: The documentation link will become active after the first official release/tag of the package.)*
+
+## AI Assistant Integration (e.g., Cursor)
+
+For developers using AI coding assistants like Cursor, a dedicated project rule file is available to help the AI understand and correctly utilize the Thing ORM within this project.
+
+You can find the rule file here: [Thing ORM Cursor Rules](https://github.com/burugo/thing/blob/main/.cursor/rules/thing.mdc)
+
+Referencing this rule (`@thing`) in your prompts can improve the AI's accuracy when generating or modifying code related to Thing ORM.
 
 ## Basic CRUD Example
 
