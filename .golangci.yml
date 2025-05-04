@@ -34,8 +34,7 @@ linters-settings:
     # max line length, lines longer will be reported. Defaults to 120.
     line-length: 120
   mnd:
-    # Comma-separated list of numbers to ignore.
-    ignored-numbers: 0,1,2,3
+    ignored-numbers: ['0', '1', '2', '3']
     # Optionally, specify checks to run (e.g., argument, case, condition, operation, return, assign)
     # checks: argument,case,condition,operation,return,assign
   # goimports:
@@ -45,8 +44,7 @@ linters-settings:
     #   - singleCaseSwitch
     # disabled-checks:
     #   - hugeParam
-  depguard:
-    ignore-internal: true
+  depguard: {}
 
 linters:
   # please, do not use `enable-all`: it's deprecated and will be removed soon.
