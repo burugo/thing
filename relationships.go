@@ -172,7 +172,6 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 	if !fkFieldFound {
 		if _, directFieldFound := reflect.TypeOf(resultsVal.Index(0).Interface()).Elem().FieldByName(opts.ForeignKey); directFieldFound {
 			fkFieldName = opts.ForeignKey
-			fkFieldFound = true
 		} else {
 			return fmt.Errorf("foreign key field '%s' (from tag 'fk') not found in owning model %s", opts.ForeignKey, resultsVal.Type().Elem().Elem().Name())
 		}
@@ -267,13 +266,14 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 	relatedElemType := relatedFieldType.Elem() // Type of slice elements (e.g., Comment or *Comment)
 	var relatedModelType reflect.Type
 	var relatedIsSliceOfPtr bool
-	if relatedElemType.Kind() == reflect.Ptr && relatedElemType.Elem().Kind() == reflect.Struct {
+	switch {
+	case relatedElemType.Kind() == reflect.Ptr && relatedElemType.Elem().Kind() == reflect.Struct:
 		relatedModelType = relatedElemType.Elem() // Type R (e.g., Comment)
 		relatedIsSliceOfPtr = true
-	} else if relatedElemType.Kind() == reflect.Struct {
+	case relatedElemType.Kind() == reflect.Struct:
 		relatedModelType = relatedElemType // Type R (e.g., Comment)
 		relatedIsSliceOfPtr = false
-	} else {
+	default:
 		return fmt.Errorf("hasMany field '%s' must be a slice of structs or pointers to structs, got slice of %s", field.Name, relatedElemType.String())
 	}
 	log.Printf("Preloading HasMany: Field %s (%s), FK in %s: %s", field.Name, relatedFieldType.String(), relatedModelType.Name(), opts.ForeignKey)
@@ -331,7 +331,6 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 		// Fallback check if FK name matches Go field name directly
 		if _, directFieldFound := relatedModelType.FieldByName(opts.ForeignKey); directFieldFound {
 			relatedFkGoFieldName = opts.ForeignKey
-			fkFieldFound = true
 		} else {
 			return fmt.Errorf("foreign key column '%s' (from tag 'fk') not found in related model %s info or as a direct field name", relatedFkColName, relatedModelType.Name())
 		}
@@ -370,16 +369,17 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 			// 2. Try GetQueryIDs directly (handles NoneResult internally now)
 			cachedIDs, queryIDsErr := t.cache.GetQueryIDs(ctx, listCacheKey)
 
-			if queryIDsErr == nil {
+			switch {
+			case queryIDsErr == nil:
 				// Cache hit with actual IDs
 				log.Printf("CACHE HIT (Query IDs): Found %d related IDs for key %s", len(cachedIDs), listCacheKey)
 				relatedIDs = cachedIDs
 				cacheHit = true // Got the IDs from cache
-			} else if errors.Is(queryIDsErr, common.ErrNotFound) {
+			case errors.Is(queryIDsErr, common.ErrNotFound):
 				// Cache miss
 				log.Printf("CACHE MISS (Query IDs): Key %s not found.", listCacheKey)
 				// cacheHit remains false
-			} else {
+			default:
 				// Other cache error
 				log.Printf("WARN: Cache GetQueryIDs error for key %s: %v. Treating as cache miss.", listCacheKey, queryIDsErr)
 				// cacheHit remains false
