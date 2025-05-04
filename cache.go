@@ -116,6 +116,23 @@ func (t *Thing[T]) ClearCacheByID(ctx context.Context, id int64) error {
 	return nil // Or return err if you want to propagate cache errors
 }
 
+// --- Helper structs for cache update tasks (moved out of generic function for Go 1.18 compatibility) ---
+type cacheTask struct {
+	cacheKey    string
+	queryParams QueryParams
+	isListKey   bool
+	isCountKey  bool
+	needsAdd    bool
+	needsRemove bool
+}
+
+type finalWriteTask struct {
+	cacheKey  string
+	newList   []int64
+	newCount  int64
+	isListKey bool
+}
+
 // --- Incremental Cache Update Methods ---
 
 // invalidateAffectedQueryCaches handles both Save/Update and Delete cache invalidation in a unified way.
@@ -188,14 +205,6 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	log.Printf("DEBUG: Found %d potential query caches to update for table '%s' (isDelete=%v) for ID %d", len(queryCacheKeys), tableName, isDelete, id)
 
 	// --- Phase 1: Gather Tasks ---
-	type cacheTask struct {
-		cacheKey    string
-		queryParams QueryParams
-		isListKey   bool
-		isCountKey  bool
-		needsAdd    bool
-		needsRemove bool
-	}
 	tasks := make([]cacheTask, 0, len(queryCacheKeys))
 
 	for _, cacheKey := range queryCacheKeys {
@@ -343,12 +352,6 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	}
 
 	// --- Phase 3: Compute Updates & Identify Changes ---
-	type finalWriteTask struct {
-		cacheKey  string
-		newList   []int64
-		newCount  int64
-		isListKey bool
-	}
 	writesNeeded := make(map[string]finalWriteTask)
 
 	for _, task := range tasks {
