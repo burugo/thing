@@ -9,11 +9,9 @@ import (
 	"time"
 
 	// For QueryParams used in GetCount test
+	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
-	"github.com/burugo/thing/internal/drivers/db/sqlite"
-	"github.com/burugo/thing/internal/interfaces"
-	"github.com/burugo/thing/internal/schema"
-	"github.com/burugo/thing/internal/types"
+	"github.com/burugo/thing/drivers/db/sqlite"
 
 	_ "github.com/mattn/go-sqlite3" // Import driver
 	"github.com/stretchr/testify/assert"
@@ -30,7 +28,7 @@ type TestItem struct {
 
 // setupSQLiteAdapterTest initializes an in-memory SQLite DB, creates a test table,
 // and returns the adapter and a cleanup function.
-func setupSQLiteAdapterTest(t *testing.T) (interfaces.DBAdapter, func()) {
+func setupSQLiteAdapterTest(t *testing.T) (thing.DBAdapter, func()) {
 	t.Helper()
 	// Use a unique in-memory database for each test run
 	dsn := fmt.Sprintf("file:%s-%d?mode=memory&cache=shared", t.Name(), time.Now().UnixNano())
@@ -231,23 +229,18 @@ func TestSQLiteAdapter_GetCount(t *testing.T) {
 	_, err := adapter.Exec(ctx, "INSERT INTO test_items (name, value) VALUES (?, ?), (?, ?), (?, ?)", "CountMe", 1.0, "CountMe", 2.0, "DontCount", 3.0)
 	require.NoError(t, err)
 
-	// Minimal ModelInfo needed for GetCount (TableName)
-	info := &schema.ModelInfo{TableName: "test_items"}
-	params := types.QueryParams{Where: "name = ?", Args: []interface{}{"CountMe"}}
-
-	count, err := adapter.GetCount(ctx, info, params)
+	// Test count with where
+	count, err := adapter.GetCount(ctx, "test_items", "name = ?", []interface{}{"CountMe"})
 	require.NoError(t, err)
 	assert.EqualValues(t, 2, count)
 
 	// Test zero count
-	paramsZero := types.QueryParams{Where: "name = ?", Args: []interface{}{"NoSuchName"}}
-	countZero, err := adapter.GetCount(ctx, info, paramsZero)
+	countZero, err := adapter.GetCount(ctx, "test_items", "name = ?", []interface{}{"NoSuchName"})
 	require.NoError(t, err)
 	assert.EqualValues(t, 0, countZero)
 
 	// Test count all
-	paramsAll := types.QueryParams{}
-	countAll, err := adapter.GetCount(ctx, info, paramsAll)
+	countAll, err := adapter.GetCount(ctx, "test_items", "", nil)
 	require.NoError(t, err)
 	assert.EqualValues(t, 3, countAll)
 }

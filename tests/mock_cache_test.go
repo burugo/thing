@@ -13,7 +13,7 @@ import (
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
-	"github.com/burugo/thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing/drivers/db/sqlite"
 
 	"github.com/stretchr/testify/assert"
 )

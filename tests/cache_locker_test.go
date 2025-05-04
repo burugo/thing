@@ -13,7 +13,7 @@ import (
 )
 
 func TestCacheKeyLockManager_LockUnlock(t *testing.T) {
-	manager := cache.NewCacheKeyLockManager()
+	manager := cache.NewCacheKeyLockManagerInternal()
 	key := "test_key_1"
 
 	// Lock and unlock normally
@@ -38,7 +38,7 @@ func TestCacheKeyLockManager_LockUnlock(t *testing.T) {
 }
 
 func TestCacheKeyLockManager_ConcurrentLock(t *testing.T) {
-	manager := cache.NewCacheKeyLockManager()
+	manager := cache.NewCacheKeyLockManagerInternal()
 	key := "concurrent_key"
 	numGoroutines := 10
 	var wg sync.WaitGroup
@@ -62,7 +62,7 @@ func TestCacheKeyLockManager_ConcurrentLock(t *testing.T) {
 }
 
 func TestCacheKeyLockManager_MultipleKeys(t *testing.T) {
-	manager := cache.NewCacheKeyLockManager()
+	manager := cache.NewCacheKeyLockManagerInternal()
 	key1 := "multi_key_1"
 	key2 := "multi_key_2"
 	var wg sync.WaitGroup
@@ -93,7 +93,7 @@ func TestCacheKeyLockManager_MultipleKeys(t *testing.T) {
 }
 
 func TestCacheKeyLockManager_UnlockNonexistent(t *testing.T) {
-	manager := cache.NewCacheKeyLockManager()
+	manager := cache.NewCacheKeyLockManagerInternal()
 	// Unlocking a key that was never locked should not panic
 	assert.NotPanics(t, func() {
 		manager.Unlock("nonexistent_key")
@@ -101,7 +101,7 @@ func TestCacheKeyLockManager_UnlockNonexistent(t *testing.T) {
 }
 
 func TestCacheKeyLockManager_EmptyKey(t *testing.T) {
-	manager := cache.NewCacheKeyLockManager()
+	manager := cache.NewCacheKeyLockManagerInternal()
 	// Locking or unlocking an empty key should not panic or block indefinitely
 	assert.NotPanics(t, func() {
 		manager.Lock("")

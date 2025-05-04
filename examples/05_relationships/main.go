@@ -6,8 +6,7 @@ import (
 	"log"
 
 	"github.com/burugo/thing"
-	"github.com/burugo/thing/internal/drivers/db/sqlite"
-	"github.com/burugo/thing/internal/types"
+	"github.com/burugo/thing/drivers/db/sqlite"
 )
 
 // User model with HasMany Books and ManyToMany Roles
@@ -85,7 +84,7 @@ func main() {
 	_ = userRoleThing.Save(&UserRole{UserID: user.ID, RoleID: role2.ID})
 
 	// --- Load HasMany (Books) ---
-	books, err := bookThing.Query(types.QueryParams{Where: "user_id = ?", Args: []interface{}{user.ID}})
+	books, err := bookThing.Query(thing.QueryParams{Where: "user_id = ?", Args: []interface{}{user.ID}})
 	if err != nil {
 		log.Fatalf("Failed to query books: %v", err)
 	}
@@ -103,7 +102,7 @@ func main() {
 	}
 
 	// --- Load ManyToMany (Roles via UserRole) ---
-	userRoles, err := userRoleThing.Query(types.QueryParams{Where: "user_id = ?", Args: []interface{}{user.ID}})
+	userRoles, err := userRoleThing.Query(thing.QueryParams{Where: "user_id = ?", Args: []interface{}{user.ID}})
 	if err != nil {
 		log.Fatalf("Failed to query user_roles: %v", err)
 	}
@@ -112,7 +111,7 @@ func main() {
 	for _, ur := range userRoleList {
 		roleIDs = append(roleIDs, ur.RoleID)
 	}
-	roles, err := roleThing.Query(types.QueryParams{Where: "id IN (?)", Args: []interface{}{roleIDs}})
+	roles, err := roleThing.Query(thing.QueryParams{Where: "id IN (?)", Args: []interface{}{roleIDs}})
 	if err != nil {
 		log.Fatalf("Failed to query roles: %v", err)
 	}

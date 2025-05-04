@@ -8,8 +8,8 @@ import (
 
 	"github.com/burugo/thing"
 	// "thing/examples/models" // Old import
-	"github.com/burugo/thing/internal/drivers/cache/redis" // Corrected import path usage
-	"github.com/burugo/thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing/drivers/cache/redis"
+	"github.com/burugo/thing/drivers/db/sqlite"
 
 	redis_driver "github.com/redis/go-redis/v9"
 )

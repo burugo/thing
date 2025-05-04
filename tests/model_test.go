@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/burugo/thing"
-	"github.com/burugo/thing/internal/drivers/db/sqlite"
+	"github.com/burugo/thing/drivers/db/sqlite"
 
 	"github.com/stretchr/testify/require"
 )
@@ -61,7 +61,7 @@ func TestAutoMigrate_IndexAndUnique(t *testing.T) {
 	defer cleanup()
 	err = thing.Configure(adapter, cache)
 	require.NoError(t, err)
-	db := adapter.(*sqlite.SQLiteAdapter).DB()
+	db := adapter.DB()
 
 	// Auto migrate
 	err = thing.AutoMigrate(&TestIndexModel{})

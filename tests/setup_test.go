@@ -10,16 +10,16 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/burugo/thing"
+	"github.com/burugo/thing/drivers/db/mysql"
+	"github.com/burugo/thing/drivers/db/postgres"
+	"github.com/burugo/thing/drivers/db/sqlite"
 	"github.com/burugo/thing/internal/cache"
-	"github.com/burugo/thing/internal/drivers/db/mysql"
-	"github.com/burugo/thing/internal/drivers/db/postgres"
-	"github.com/burugo/thing/internal/drivers/db/sqlite"
-	interfaces "github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/internal/types"
 )
 
 // setupTestDB creates a new file-based SQLite database for testing.
 // It returns the DBAdapter, a mock CacheClient, and a cleanup function.
-func setupTestDB(tb testing.TB) (interfaces.DBAdapter, *mockCacheClient, func()) {
+func setupTestDB(tb testing.TB) (thing.DBAdapter, *mockCacheClient, func()) {
 	// Use a file-based DB for testing to rule out :memory: issues
 	dbFile := "test_thing.db"
 	_ = os.Remove(dbFile) // Remove any previous test db file
@@ -61,7 +61,7 @@ func setupTestDB(tb testing.TB) (interfaces.DBAdapter, *mockCacheClient, func())
 	mockcache := &mockCacheClient{}
 
 	// Wrap SQLiteAdapter in mockDBAdapter for counting
-	mockDB := &mockDBAdapter{SQLiteAdapter: adapter.(*sqlite.SQLiteAdapter)}
+	mockDB := &mockDBAdapter{SQLiteAdapter: adapter}
 
 	// Reset the global query cache index to prevent interference between tests
 	cache.ResetGlobalCacheIndex()
@@ -86,7 +86,7 @@ func setupTestDB(tb testing.TB) (interfaces.DBAdapter, *mockCacheClient, func())
 }
 
 // setupMySQLTestDB creates a MySQL database for testing.
-func setupMySQLTestDB(tb testing.TB) (interfaces.DBAdapter, interfaces.CacheClient, func()) {
+func setupMySQLTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	dsn := os.Getenv("MYSQL_TEST_DSN")
 	if dsn == "" {
 		dsn = "root:password@tcp(127.0.0.1:3306)/test_db?parseTime=true"
@@ -137,7 +137,7 @@ func setupMySQLTestDB(tb testing.TB) (interfaces.DBAdapter, interfaces.CacheClie
 }
 
 // setupPostgresTestDB creates a PostgreSQL database for testing.
-func setupPostgresTestDB(tb testing.TB) (interfaces.DBAdapter, interfaces.CacheClient, func()) {
+func setupPostgresTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
 	dsn := os.Getenv("POSTGRES_TEST_DSN")
 	if dsn == "" {
 		dsn = "postgres://postgres:password@localhost:5432/test_db?sslmode=disable"
@@ -189,7 +189,7 @@ func setupPostgresTestDB(tb testing.TB) (interfaces.DBAdapter, interfaces.CacheC
 
 // setupCacheTest creates test setup specifically for cache tests.
 // It returns the Thing instance, the mock cache, the DB adapter, and a cleanup function.
-func setupCacheTest[T thing.Model](tb testing.TB) (*thing.Thing[T], *mockCacheClient, interfaces.DBAdapter, func()) {
+func setupCacheTest[T thing.Model](tb testing.TB) (*thing.Thing[T], *mockCacheClient, thing.DBAdapter, func()) {
 	db, mockCache, cleanupDB := setupTestDB(tb)
 
 	// Reset mock cache state
@@ -251,4 +251,15 @@ func TestMain(m *testing.M) {
 	// Exit with appropriate code
 	log.Printf("--- TestMain: Exiting with code: %d ---", exitCode)
 	os.Exit(exitCode)
+}
+
+// toInternalQueryParams converts thing.QueryParams to types.QueryParams for use with internal/test APIs.
+func toInternalQueryParams(p thing.QueryParams) types.QueryParams {
+	return types.QueryParams{
+		Where:          p.Where,
+		Args:           p.Args,
+		Order:          p.Order,
+		Preloads:       p.Preloads,
+		IncludeDeleted: p.IncludeDeleted,
+	}
 }

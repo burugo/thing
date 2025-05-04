@@ -7,11 +7,8 @@ import (
 	"testing"
 
 	"github.com/burugo/thing"
+	"github.com/burugo/thing/drivers/db/sqlite"
 	"github.com/burugo/thing/internal/cache"
-	"github.com/burugo/thing/internal/drivers/db/sqlite"
-	"github.com/burugo/thing/internal/types"
-
-	"github.com/burugo/thing/internal/interfaces"
 
 	"github.com/stretchr/testify/require"
 )
@@ -32,7 +29,7 @@ func getRoleIDs(roles []*Role) []int64 {
 }
 
 // preloadRoles: 支持缓存，key=user_roles:{userID}
-func preloadRoles(ctx context.Context, db interfaces.DBAdapter, cache interfaces.CacheClient, userID int64) ([]*Role, bool, error) {
+func preloadRoles(ctx context.Context, db thing.DBAdapter, cache thing.CacheClient, userID int64) ([]*Role, bool, error) {
 	cacheKey := fmt.Sprintf("user_roles:%d", userID)
 	// 1. 先查缓存
 	if mock, ok := cache.(*mockCacheClient); ok {
@@ -235,11 +232,11 @@ func TestUserRole_Save_TriggersCacheInvalidation(t *testing.T) {
 	require.True(t, mockCache.Exists(cacheKey), "缓存应已存在")
 
 	// 注册值级别索引（模拟 ORM preloadManyToMany 注册的 key）
-	params := types.QueryParams{
+	params := thing.QueryParams{
 		Where: "user_id = ?",
 		Args:  []interface{}{userID},
 	}
-	cache.GlobalCacheIndex.RegisterQuery("user_roles", cacheKey, params)
+	cache.GlobalCacheIndex.RegisterQuery("user_roles", cacheKey, toInternalQueryParams(params))
 
 	// 用 ORM Save 新增一条 UserRole
 	userRole := &UserRole{UserID: userID, RoleID: roleID}

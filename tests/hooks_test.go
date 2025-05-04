@@ -307,7 +307,7 @@ func TestHook_ErrorAborts(t *testing.T) {
 
 	// Verify user was not actually saved
 	// count, countErr := th.Count(thing.QueryParams{Where: "email = ?", Args: []interface{}{"abort@example.com"}})
-	countResult, countErr := th.Query(types.QueryParams{Where: "email = ?", Args: []interface{}{"abort@example.com"}}) // Use types.QueryParams
+	countResult, countErr := th.Query(thing.QueryParams{Where: "email = ?", Args: []interface{}{"abort@example.com"}}) // Use thing.QueryParams
 	require.NoError(t, countErr, "Query should not fail")
 	count, countErr := countResult.Count() // Get count from CachedResult
 	require.NoError(t, countErr)

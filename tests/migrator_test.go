@@ -8,17 +8,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/burugo/thing"
 	"github.com/burugo/thing/internal/migration"
 
-	"github.com/burugo/thing/internal/drivers/db/sqlite"
-	"github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/drivers/db/sqlite"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // setupTestMigrator 创建一个用于测试的 Migrator 和临时目录
-func setupTestMigrator(t *testing.T) (*migration.Migrator, interfaces.DBAdapter, string, func()) {
+func setupTestMigrator(t *testing.T) (*migration.Migrator, thing.DBAdapter, string, func()) {
 	tempDir, err := os.MkdirTemp("", "migrator_test_")
 	require.NoError(t, err)
 
