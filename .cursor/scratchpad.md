@@ -105,8 +105,8 @@ Current goals:
 - [ ] ~~localCache 迁移到 internal/drivers/cache/localcache.go，并确保 NoneResult 相关逻辑与 mock/redis 保持一致~~（已取消，见反馈）
 - [ ] 检查/修正 localCache GetModel、Get、GetQueryIDs 等方法对 NoneResult 的处理，确保与 mockCache/redis 行为一致
 - [x] Review cache.go for migration candidates
-- [ ] Migrate to internal/cache/ and update references
-- [ ] Retain/adjust necessary public APIs in main package
+- [x] Migrate to internal/cache/ and update references（已评估，无需迁移/已完成。主包缓存相关内容因接口暴露和依赖关系，绝大多数无法迁移到 internal，详见反馈。）
+- [x] Retain/adjust necessary public APIs in main package（已评估，当前暴露范围合理，无需调整）
 - [ ] Full test validation
     - [ ] Commit changes
 - [ ] Review and fix remaining lint issues
@@ -128,6 +128,7 @@ Current goals:
 - Read the file before you try to edit it.
 - Always ask before using the -force git command
 - 避免直接运行 `go test -v ./tests`，推荐用 `go test -v ./tests | grep FAIL` 或按需单测，防止输出过多影响调试。
+- When the user says "去掉/移除/删除xxx" (remove/delete something) as a direct code modification instruction, do not ask for mode, immediately switch to executor and execute.
 
 ---
 
