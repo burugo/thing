@@ -538,13 +538,14 @@ func (t *Thing[T]) preloadManyToMany(ctx context.Context, resultsVal reflect.Val
 	relatedElemType := relatedFieldType.Elem()
 	var relatedModelType reflect.Type
 	var relatedIsSliceOfPtr bool
-	if relatedElemType.Kind() == reflect.Ptr && relatedElemType.Elem().Kind() == reflect.Struct {
+	switch {
+	case relatedElemType.Kind() == reflect.Ptr && relatedElemType.Elem().Kind() == reflect.Struct:
 		relatedModelType = relatedElemType.Elem()
 		relatedIsSliceOfPtr = true
-	} else if relatedElemType.Kind() == reflect.Struct {
+	case relatedElemType.Kind() == reflect.Struct:
 		relatedModelType = relatedElemType
 		relatedIsSliceOfPtr = false
-	} else {
+	default:
 		return fmt.Errorf("manyToMany field '%s' must be a slice of structs or pointers to structs, got slice of %s", field.Name, relatedElemType.String())
 	}
 
