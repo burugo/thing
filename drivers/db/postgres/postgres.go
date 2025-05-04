@@ -667,6 +667,8 @@ func isBasicType(t reflect.Type) bool {
 		return t == reflect.TypeOf(time.Time{})
 	case reflect.Ptr:
 		return isBasicType(t.Elem())
+	case reflect.Invalid, reflect.Uintptr, reflect.Complex64, reflect.Complex128, reflect.Array, reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.UnsafePointer:
+		return false
 	default:
 		return false
 	}

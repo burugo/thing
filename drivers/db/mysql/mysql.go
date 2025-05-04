@@ -170,11 +170,6 @@ func (a *MySQLAdapter) Get(ctx context.Context, dest interface{}, query string, 
 // Select executes a query and scans the results into a slice.
 // MySQL uses '?' placeholders.
 func (a *MySQLAdapter) Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
-	// TODO: Implement using db.QueryContext and loop through rows.Scan
-	// TODO: Handle slice of structs, slice of pointers, slice of basic types
-	// IMPORTANT: Use '?' placeholders
-	// return fmt.Errorf("MySQLAdapter.Select not implemented") // Remove placeholder
-
 	log.Printf("DB Select (MySQL): %s [%v]", query, args)
 	start := time.Now()
 
@@ -212,43 +207,12 @@ func (a *MySQLAdapter) Select(ctx context.Context, dest interface{}, query strin
 
 	rowCount := 0
 	for rows.Next() {
-		var elemToScan reflect.Value
-		var scanDest []interface{}
-		var setupErr error
-
-		if isBasicTypeSlice {
-			elemPtr := reflect.New(elemType)
-			elemToScan = elemPtr
-			scanDest = []interface{}{elemToScan.Interface()}
-		} else {
-			newElemPtrVal := reflect.New(baseElemType)
-			elemToScan = newElemPtrVal
-			// Use the dynamic scanner preparation for structs
-			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols) // Pass struct value
-			if setupErr != nil {
-				duration := time.Since(start)
-				log.Printf("DB Select Error (Prepare Scan - MySQL): %s [%v] (%s) - %v", query, args, duration, setupErr)
-				return fmt.Errorf("mysql Select row setup error: %w", setupErr)
-			}
-		}
-
-		if err := rows.Scan(scanDest...); err != nil {
+		err := a.scanAndAppendRowForSelect(rows, &sliceVal, isBasicTypeSlice, elemType, baseElemType, isPtrElem, cols)
+		if err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Select Scan Error (MySQL): %s [%v] (%s) - %v", query, args, duration, err)
-			return fmt.Errorf("mysql Select scan error: %w", err)
+			log.Printf("DB Select Error (Scan Row - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+			return fmt.Errorf("mysql Select scan row error: %w", err)
 		}
-
-		var valToAppend reflect.Value
-		if isBasicTypeSlice {
-			valToAppend = elemToScan.Elem()
-		} else {
-			if isPtrElem {
-				valToAppend = elemToScan // Append the pointer (*User)
-			} else {
-				valToAppend = elemToScan.Elem() // Append the value (User)
-			}
-		}
-		sliceVal.Set(reflect.Append(sliceVal, valToAppend))
 		rowCount++
 	}
 
@@ -260,6 +224,43 @@ func (a *MySQLAdapter) Select(ctx context.Context, dest interface{}, query strin
 
 	duration := time.Since(start)
 	log.Printf("DB Select OK (MySQL): %s [%v] (%d rows, %s)", query, args, rowCount, duration)
+	return nil
+}
+
+// scanAndAppendRowForSelect 扫描单行并追加到 slice
+func (a *MySQLAdapter) scanAndAppendRowForSelect(rows *sql.Rows, sliceVal *reflect.Value, isBasicTypeSlice bool, elemType, baseElemType reflect.Type, isPtrElem bool, cols []string) error {
+	var elemToScan reflect.Value
+	var scanDest []interface{}
+	var setupErr error
+
+	if isBasicTypeSlice {
+		elemPtr := reflect.New(elemType)
+		elemToScan = elemPtr
+		scanDest = []interface{}{elemToScan.Interface()}
+	} else {
+		newElemPtrVal := reflect.New(baseElemType)
+		elemToScan = newElemPtrVal
+		scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols)
+		if setupErr != nil {
+			return setupErr
+		}
+	}
+
+	if err := rows.Scan(scanDest...); err != nil {
+		return err
+	}
+
+	var valToAppend reflect.Value
+	if isBasicTypeSlice {
+		valToAppend = elemToScan.Elem()
+	} else {
+		if isPtrElem {
+			valToAppend = elemToScan
+		} else {
+			valToAppend = elemToScan.Elem()
+		}
+	}
+	sliceVal.Set(reflect.Append(*sliceVal, valToAppend))
 	return nil
 }
 
