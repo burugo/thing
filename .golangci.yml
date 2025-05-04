@@ -51,7 +51,7 @@ linters:
     - unconvert
     - unparam
     - whitespace
-    # 如需复杂度检测可加 cyclop
+    - gofumpt
     # - cyclop
 
 issues:
