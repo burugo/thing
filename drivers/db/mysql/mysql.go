@@ -12,6 +12,7 @@ import (
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
+	driversSchema "github.com/burugo/thing/drivers/schema"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 )
@@ -672,4 +673,12 @@ func (a *MySQLAdapter) Builder() thing.SQLBuilder {
 
 func (a *MySQLAdapter) DialectName() string {
 	return "mysql"
+}
+
+// Register the MySQL introspector factory at init time to avoid import cycles.
+func init() {
+	thing.RegisterIntrospectorFactory("mysql", func(adapter thing.DBAdapter) driversSchema.Introspector {
+		db := adapter.DB()
+		return &MySQLIntrospector{DB: db}
+	})
 }

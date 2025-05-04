@@ -130,10 +130,10 @@ First, create an instance of a database adapter for your chosen database (MySQL,
 
 ```go
 import (
-	"github.com/burugo/thing/internal/drivers/db/mysql"
-	"github.com/burugo/thing/internal/drivers/db/postgres"
-	"github.com/burugo/thing/internal/drivers/db/sqlite"
-	"github.com/burugo/thing/internal/interfaces"
+	"github.com/burugo/thing/drivers/db/mysql"
+	"github.com/burugo/thing/drivers/db/postgres"
+	"github.com/burugo/thing/drivers/db/sqlite"
+	"github.com/burugo/thing/interfaces"
 )
 
 // Example: SQLite (replace ":memory:" with your file path)
@@ -164,8 +164,8 @@ Thing ORM includes a built-in in-memory cache, which is used by default if no ca
 ```go
 import (
 	"github.com/redis/go-redis/v9"
-	redisCache "github.com/burugo/thing/internal/drivers/cache/redis"
-	"github.com/burugo/thing/internal/interfaces"
+	redisCache "github.com/burugo/thing/drivers/cache/redis"
+	"github.com/burugo/thing/interfaces"
 )
 
 // Option A: Use Default In-Memory Cache
@@ -697,6 +697,85 @@ if err != nil {
 ## License
 
 Thing ORM is released under the [MIT License](LICENSE).
+
+## Multi-Database Testing
+
+Thing ORM supports multiple database systems, including MySQL, PostgreSQL, and SQLite. This section provides guidelines and considerations for testing across different environments.
+
+### Considerations
+
+- **Database Compatibility:** Thing ORM is designed to work with the SQL dialects of MySQL, PostgreSQL, and SQLite. However, there might be differences in SQL syntax or features between these databases.
+- **Migration Tools:** Thing ORM's migration tools are database-agnostic and should work across all supported databases. However, you might need to adjust SQL statements or query results based on the specific database you're using.
+- **Testing Strategy:**
+  - **Unit Tests:** Ensure that your tests cover different database scenarios.
+  - **Integration Tests:** Test the ORM's functionality with a variety of databases.
+  - **Manual Testing:** Test the ORM in different environments to ensure compatibility.
+
+### FAQ
+
+- **Driver Customization:** If you need to customize the behavior of a database driver, you can do so by implementing the `DBAdapter` interface.
+- **Test Environment Configuration:** Ensure that your test environment is set up correctly for database testing.
+- **Interface Location:** All database-related interfaces are located in the `drivers/db` package.
+
+## Contributing
+
+We welcome contributions from the community! If you're interested in contributing to Thing ORM, please follow these steps:
+
+1. **Fork the Repository:**
+   - Go to the [Thing ORM GitHub repository](https://github.com/burugo/thing).
+   - Click the "Fork" button to create your own copy of the repository.
+
+2. **Clone the Repository:**
+   - Clone your forked repository to your local machine.
+   ```bash
+   git clone https://github.com/your-username/thing.git
+   ```
+
+3. **Create a New Branch:**
+   - Create a new branch for your changes.
+   ```bash
+   git checkout -b feature-new-feature
+   ```
+
+4. **Make Your Changes:**
+   - Implement your changes in the code.
+
+5. **Commit Your Changes:**
+   - Commit your changes with a meaningful commit message.
+   ```bash
+   git commit -m "Added new feature"
+   ```
+
+6. **Push Your Changes:**
+   - Push your changes to your forked repository.
+   ```bash
+   git push origin feature-new-feature
+   ```
+
+7. **Create a Pull Request:**
+   - Go to your forked repository on GitHub.
+   - Click the "Pull Request" button to create a pull request.
+
+We'll review your pull request and merge it if it meets our standards.
+
+## Performance
+
+Thing ORM is designed to be performant and efficient. The following sections provide information about its performance characteristics and how to optimize its usage.
+
+### Performance Considerations
+
+- **Memory Usage:** Thing ORM uses in-memory caching for performance gains. Ensure that your system has enough memory to handle the cache.
+- **Database Load:** Thing ORM reduces database load by caching queries and entities. However, excessive caching can lead to memory usage issues.
+- **Query Execution:** Thing ORM provides efficient query execution. Complex queries might still require manual optimization.
+
+### Optimizing Thing ORM
+
+- **Caching Strategy:**
+  - **Cache Invalidation:** Thing ORM automatically invalidates cache entries when data changes.
+  - **Cache Size:** Thing ORM uses in-memory caching. Monitor memory usage and adjust cache size as needed.
+- **Query Execution:**
+  - **Preloading:** Thing ORM provides efficient query execution with preloading.
+  - **Raw SQL:** Thing ORM supports raw SQL execution. Use it for complex queries or when Thing ORM's API doesn't meet your needs.
 
 
 

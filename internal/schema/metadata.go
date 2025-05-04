@@ -1,7 +1,6 @@
 package schema
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"reflect"
@@ -9,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	driversSchema "github.com/burugo/thing/drivers/schema"
 )
 
 // --- Model Metadata Cache ---
@@ -23,6 +24,23 @@ type ComparableFieldInfo struct {
 	Type         reflect.Type               // Field type (for more detailed type checking)
 	IsEmbedded   bool                       // Whether this is from an embedded struct
 	IgnoreInDiff bool                       // Whether to ignore this field during diffing (e.g., tags like db:"-")
+}
+
+// TableInfo holds the actual schema info introspected from the database (internal use only).
+type TableInfo struct {
+	Name       string       // Table name
+	Columns    []ColumnInfo // All columns
+	Indexes    []IndexInfo  // All indexes (including unique)
+	PrimaryKey string       // Primary key column name (if any)
+}
+
+type ColumnInfo struct {
+	Name       string  // Column name
+	DataType   string  // Database type (e.g., INT, VARCHAR(255))
+	IsNullable bool    // Whether the column is nullable
+	IsPrimary  bool    // Whether this column is the primary key
+	IsUnique   bool    // Whether this column has a unique constraint
+	Default    *string // Default value (if any)
 }
 
 // IndexInfo holds metadata for a single index (normal or unique).
@@ -321,26 +339,34 @@ func ToSnakeCase(str string) string {
 	return strings.ToLower(snake)
 }
 
-// TableInfo holds the actual schema info introspected from the database.
-type TableInfo struct {
-	Name       string       // Table name
-	Columns    []ColumnInfo // All columns
-	Indexes    []IndexInfo  // All indexes (including unique)
-	PrimaryKey string       // Primary key column name (if any)
-}
-
-// ColumnInfo holds metadata for a single column in a table.
-type ColumnInfo struct {
-	Name       string  // Column name
-	DataType   string  // Database type (e.g., INT, VARCHAR(255))
-	IsNullable bool    // Whether the column is nullable
-	IsPrimary  bool    // Whether this column is the primary key
-	IsUnique   bool    // Whether this column has a unique constraint
-	Default    *string // Default value (if any)
-}
-
-// Introspector defines the interface for database schema introspection.
-type Introspector interface {
-	// GetTableInfo introspects the given table and returns its schema info.
-	GetTableInfo(ctx context.Context, tableName string) (*TableInfo, error)
+// ConvertTableInfo converts a drivers/schema.TableInfo to internal/schema.TableInfo (deep copy).
+func ConvertTableInfo(src *driversSchema.TableInfo) *TableInfo {
+	if src == nil {
+		return nil
+	}
+	columns := make([]ColumnInfo, len(src.Columns))
+	for i, c := range src.Columns {
+		columns[i] = ColumnInfo{
+			Name:       c.Name,
+			DataType:   c.DataType,
+			IsNullable: c.IsNullable,
+			IsPrimary:  c.IsPrimary,
+			IsUnique:   c.IsUnique,
+			Default:    c.Default,
+		}
+	}
+	indexes := make([]IndexInfo, len(src.Indexes))
+	for i, idx := range src.Indexes {
+		indexes[i] = IndexInfo{
+			Name:    idx.Name,
+			Columns: idx.Columns,
+			Unique:  idx.Unique,
+		}
+	}
+	return &TableInfo{
+		Name:       src.Name,
+		Columns:    columns,
+		Indexes:    indexes,
+		PrimaryKey: src.PrimaryKey,
+	}
 }

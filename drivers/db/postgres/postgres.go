@@ -12,6 +12,7 @@ import (
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
+	driversSchema "github.com/burugo/thing/drivers/schema"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
@@ -680,3 +681,11 @@ type pgResult struct {
 
 func (r *pgResult) LastInsertId() (int64, error) { return r.lastInsertId, nil }
 func (r *pgResult) RowsAffected() (int64, error) { return r.rowsAffected, nil }
+
+// Register the PostgreSQL introspector factory at init time to avoid import cycles.
+func init() {
+	thing.RegisterIntrospectorFactory("postgres", func(adapter thing.DBAdapter) driversSchema.Introspector {
+		db := adapter.DB()
+		return &PostgreSQLIntrospector{DB: db}
+	})
+}

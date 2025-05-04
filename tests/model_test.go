@@ -1,6 +1,7 @@
 package thing_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -235,6 +236,118 @@ func TestBaseModel_ToJSONWithOptions(t *testing.T) {
 					t.Errorf("Unexpected field '%s' found in JSON output", key)
 				}
 			}
+		})
+	}
+}
+
+// --- Schema Diff/ALTER TABLE TDD ---
+
+type DiffUserV1 struct {
+	ID   int64  `db:"id,pk"`
+	Name string `db:"name"`
+}
+
+func (u *DiffUserV1) TableName() string { return "diff_users" }
+
+type DiffUserV2 struct {
+	ID    int64  `db:"id,pk"`
+	Name  string `db:"name"`
+	Email string `db:"email"`
+}
+
+func (u *DiffUserV2) TableName() string { return "diff_users" }
+
+func TestAutoMigrate_SchemaDiff(t *testing.T) {
+	dbs := []struct {
+		name  string
+		setup func(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func())
+		check func(t *testing.T, db thing.DBAdapter)
+	}{
+		{
+			name: "SQLite",
+			setup: func(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()) {
+				db, cache, cleanup := setupTestDB(tb)
+				return db, cache, cleanup
+			},
+			check: func(t *testing.T, db thing.DBAdapter) {
+				rows, err := db.DB().Query(`PRAGMA table_info(diff_users)`)
+				require.NoError(t, err)
+				defer rows.Close()
+				var cols []string
+				for rows.Next() {
+					var cid int
+					var name, ctype string
+					var notnull, pk int
+					var dflt interface{}
+					require.NoError(t, rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk))
+					cols = append(cols, name)
+				}
+				require.Contains(t, cols, "email", "Should have added email column")
+			},
+		},
+		{
+			name:  "MySQL",
+			setup: setupMySQLTestDB,
+			check: func(t *testing.T, db thing.DBAdapter) {
+				rows, err := db.DB().Query(`SHOW COLUMNS FROM diff_users`)
+				require.NoError(t, err)
+				defer rows.Close()
+				var cols []string
+				for rows.Next() {
+					var field, ctype, null, key, def, extra string
+					require.NoError(t, rows.Scan(&field, &ctype, &null, &key, &def, &extra))
+					cols = append(cols, field)
+				}
+				require.Contains(t, cols, "email", "Should have added email column")
+			},
+		},
+		{
+			name:  "Postgres",
+			setup: setupPostgresTestDB,
+			check: func(t *testing.T, db thing.DBAdapter) {
+				rows, err := db.DB().Query(`SELECT column_name FROM information_schema.columns WHERE table_name = 'diff_users'`)
+				require.NoError(t, err)
+				defer rows.Close()
+				var cols []string
+				for rows.Next() {
+					var name string
+					require.NoError(t, rows.Scan(&name))
+					cols = append(cols, name)
+				}
+				require.Contains(t, cols, "email", "Should have added email column")
+			},
+		},
+	}
+
+	for _, dbcase := range dbs {
+		t.Run(dbcase.name, func(t *testing.T) {
+			db, cache, cleanup := dbcase.setup(t)
+			defer cleanup()
+			require.NoError(t, thing.Configure(db, cache))
+
+			// Step 1: Initial migration (V1)
+			err := thing.AutoMigrate(&DiffUserV1{})
+			require.NoError(t, err)
+
+			// Step 2: Insert a row
+			_, err = db.Exec(context.Background(), "INSERT INTO diff_users (id, name) VALUES (?, ?)", 1, "Alice")
+			// MySQL/Postgres 可能需要不同的占位符处理，这里假设统一接口
+			if err != nil {
+				t.Fatalf("Insert failed: %v", err)
+			}
+
+			// Step 3: Change struct (V2: add Email)
+			err = thing.AutoMigrate(&DiffUserV2{})
+			require.NoError(t, err)
+
+			// Step 4: Check table columns (should have id, name, email)
+			dbcase.check(t, db)
+
+			// Step 5: Remove Email from struct, re-migrate (should NOT drop column)
+			err = thing.AutoMigrate(&DiffUserV1{})
+			require.NoError(t, err)
+			// 再次检查 email 列依然存在
+			dbcase.check(t, db)
 		})
 	}
 }

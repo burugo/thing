@@ -10,8 +10,6 @@ import (
 	// "thing/examples/models" // Old import
 	"github.com/burugo/thing/drivers/cache/redis"
 	"github.com/burugo/thing/drivers/db/sqlite"
-
-	redis_driver "github.com/redis/go-redis/v9"
 )
 
 // User definition is now in models.go within the same package
@@ -40,16 +38,8 @@ func main() {
 	// --- Cache Setup (Redis) ---
 	// Note: Requires a running Redis instance
 	redisAddr := "127.0.0.1:6379" // Use IP address instead of hostname
-	redisClient := redis_driver.NewClient(&redis_driver.Options{Addr: redisAddr})
-	if _, err := redisClient.Ping(ctx).Result(); err != nil {
-		log.Printf("WARN: Failed to connect to Redis at %s: %v. Cache operations will likely fail.", redisAddr, err)
-		// Decide if you want to continue without cache or fail hard
-		// For this example, we might proceed but expect cache errors/misses.
-		// return
-	}
-	// cacheClient := redis.NewRedisCache(redisClient)
-	// Corrected constructor call using options and handling cleanup
-	cacheClient, cacheCleanup, err := redis.NewClient(redis.Options{Addr: redisAddr})
+	opts := redis.Options{Addr: redisAddr}
+	cacheClient, cacheCleanup, err := redis.NewClient(opts)
 	if err != nil {
 		log.Fatalf("Failed to create redis cache client: %v", err)
 	}

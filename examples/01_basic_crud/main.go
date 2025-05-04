@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/burugo/thing/internal/types"
-
 	"github.com/burugo/thing"
 )
 
@@ -58,7 +56,7 @@ func main() {
 	fmt.Println("Updated:", found)
 
 	// Query all
-	result, err := users.Query(types.QueryParams{})
+	result, err := users.Query(thing.QueryParams{})
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/burugo/thing/internal/schema"
+	driversSchema "github.com/burugo/thing/drivers/schema"
 )
 
 // PostgreSQLIntrospector implements schema.Introspector for PostgreSQL.
@@ -15,7 +15,7 @@ type PostgreSQLIntrospector struct {
 }
 
 // GetTableInfo introspects the given table and returns its schema info (PostgreSQL).
-func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName string) (*schema.TableInfo, error) {
+func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName string) (*driversSchema.TableInfo, error) {
 	if pi.DB == nil {
 		return nil, fmt.Errorf("PostgreSQLIntrospector: DB is nil")
 	}
@@ -30,8 +30,10 @@ func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName st
 	}
 	defer colRows.Close()
 
-	var columns []schema.ColumnInfo
+	var columns []driversSchema.ColumnInfo
+	rowCount := 0
 	for colRows.Next() {
+		rowCount++
 		var name, dataType, isNullable string
 		var defaultVal sql.NullString
 		if err := colRows.Scan(&name, &dataType, &isNullable, &defaultVal); err != nil {
@@ -42,7 +44,7 @@ func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName st
 		if defaultVal.Valid {
 			defPtr = &defaultVal.String
 		}
-		columns = append(columns, schema.ColumnInfo{
+		columns = append(columns, driversSchema.ColumnInfo{
 			Name:       name,
 			DataType:   dataType,
 			IsNullable: nullable,
@@ -51,6 +53,10 @@ func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName st
 	}
 	if err := colRows.Err(); err != nil {
 		return nil, fmt.Errorf("columns rows: %w", err)
+	}
+	if rowCount == 0 {
+		// Table does not exist
+		return nil, nil
 	}
 
 	// 2. 主键信息
@@ -116,7 +122,7 @@ func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName st
 		return nil, fmt.Errorf("pg_indexes: %w", err)
 	}
 	defer idxRows.Close()
-	var indexes []schema.IndexInfo
+	var indexes []driversSchema.IndexInfo
 	for idxRows.Next() {
 		var name, def string
 		if err := idxRows.Scan(&name, &def); err != nil {
@@ -132,7 +138,7 @@ func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName st
 		if name == "" || name == tableName+"_pkey" {
 			continue
 		}
-		indexes = append(indexes, schema.IndexInfo{
+		indexes = append(indexes, driversSchema.IndexInfo{
 			Name:    name,
 			Columns: cols,
 			Unique:  unique,
@@ -142,7 +148,7 @@ func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName st
 		return nil, fmt.Errorf("index rows: %w", err)
 	}
 
-	return &schema.TableInfo{
+	return &driversSchema.TableInfo{
 		Name:       tableName,
 		Columns:    columns,
 		Indexes:    indexes,

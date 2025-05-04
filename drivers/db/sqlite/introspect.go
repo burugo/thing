@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/drivers/schema"
 )
 
 // SQLiteIntrospector implements schema.Introspector for SQLite.
@@ -28,7 +28,9 @@ func (si *SQLiteIntrospector) GetTableInfo(ctx context.Context, tableName string
 
 	var columns []schema.ColumnInfo
 	var pkCol string
+	rowCount := 0
 	for colRows.Next() {
+		rowCount++
 		var cid int
 		var name, colType string
 		var notnull, pk int
@@ -55,6 +57,9 @@ func (si *SQLiteIntrospector) GetTableInfo(ctx context.Context, tableName string
 	}
 	if err := colRows.Err(); err != nil {
 		return nil, fmt.Errorf("table_info rows: %w", err)
+	}
+	if rowCount == 0 {
+		return nil, nil
 	}
 
 	// 2. 索引信息

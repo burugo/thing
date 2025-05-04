@@ -13,6 +13,7 @@ import (
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
+	"github.com/burugo/thing/drivers/schema"
 
 	// "github.com/jmoiron/sqlx" // Removed sqlx import
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
@@ -725,4 +726,20 @@ func (a *SQLiteAdapter) Builder() thing.SQLBuilder {
 
 func (a *SQLiteAdapter) DialectName() string {
 	return "sqlite"
+}
+
+// Register the SQLite introspector factory at init time to avoid import cycles.
+func init() {
+	// Use a type assertion to get the underlying *sql.DB from the adapter
+	// and return a new SQLiteIntrospector
+	importThingRegister := func() {
+		// Import only for registration
+		importThing := struct{}{}
+		_ = importThing
+	}
+	_ = importThingRegister // avoid unused warning
+	thing.RegisterIntrospectorFactory("sqlite", func(adapter thing.DBAdapter) schema.Introspector {
+		db := adapter.DB()
+		return &SQLiteIntrospector{DB: db}
+	})
 }

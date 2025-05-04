@@ -3,8 +3,11 @@ package thing
 import (
 	"context"
 	"fmt"
+	"reflect"
+	"strings"
 
-	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/drivers/schema"
+	internalSchema "github.com/burugo/thing/internal/schema"
 )
 
 // GenerateMigrationSQL 生成建表 SQL，但不执行，支持批量模型
@@ -13,23 +16,85 @@ func GenerateMigrationSQL(models ...interface{}) ([]string, error) {
 		return nil, fmt.Errorf("GenerateMigrationSQL: globalDB is nil, please call thing.Configure(db, cache)")
 	}
 	dialect := globalDB.DialectName()
-	return schema.AutoMigrateWithDialect(dialect, models...)
+	return internalSchema.AutoMigrateWithDialect(dialect, models...)
 }
 
-// AutoMigrate 生成并执行建表 SQL，支持批量建表
-func AutoMigrate(models ...interface{}) error {
-	sqls, err := GenerateMigrationSQL(models...)
-	if err != nil {
-		// Propagate error from GenerateMigrationSQL (which already checks globalDB)
-		return err
-	}
+// IntrospectorFactory is a function that returns a schema.Introspector for a given DBAdapter.
+type IntrospectorFactory func(DBAdapter) schema.Introspector
 
-	// Execute the generated SQLs
-	for _, sql := range sqls {
-		fmt.Println("[AutoMigrate] Executing SQL:\n", sql)
-		_, err := globalDB.Exec(context.Background(), sql)
+var introspectorFactories = make(map[string]IntrospectorFactory)
+
+// RegisterIntrospectorFactory registers a factory for a given dialect (e.g. "sqlite", "mysql", "postgres").
+func RegisterIntrospectorFactory(dialect string, factory IntrospectorFactory) {
+	introspectorFactories[dialect] = factory
+}
+
+// getIntrospectorFactory returns the registered factory for a dialect, or nil if not found.
+func getIntrospectorFactory(dialect string) IntrospectorFactory {
+	return introspectorFactories[dialect]
+}
+
+// introspectTable returns the current schema.TableInfo for a table using the registered driver introspector.
+func introspectTable(db DBAdapter, tableName string, dialect string) (*schema.TableInfo, error) {
+	factory := getIntrospectorFactory(dialect)
+	if factory == nil {
+		return nil, fmt.Errorf("no introspector registered for dialect: %s", dialect)
+	}
+	introspector := factory(db)
+	return introspector.GetTableInfo(context.Background(), tableName)
+}
+
+// AutoMigrate 生成并执行建表 SQL，支持批量建表和 schema diff
+func AutoMigrate(models ...interface{}) error {
+	if globalDB == nil {
+		return fmt.Errorf("AutoMigrate: globalDB is nil, please call thing.Configure(db, cache)")
+	}
+	dialect := globalDB.DialectName()
+	ctx := context.Background()
+	for _, model := range models {
+		// 1. 获取模型元信息
+		typeOf := reflect.TypeOf(model)
+		if typeOf.Kind() == reflect.Ptr {
+			typeOf = typeOf.Elem()
+		}
+		info, err := internalSchema.GetCachedModelInfo(typeOf)
 		if err != nil {
-			return fmt.Errorf("AutoMigrate: failed to execute SQL: %w\nSQL: %s", err, sql)
+			return fmt.Errorf("AutoMigrate: failed to get model info for %s: %w", typeOf.Name(), err)
+		}
+		tableName := info.TableName
+		// 2. introspect table (returns nil, nil if not exists)
+		dbTableInfo, err := introspectTable(globalDB, tableName, dialect)
+		if err != nil {
+			return fmt.Errorf("AutoMigrate: failed to introspect table %s: %w", tableName, err)
+		}
+		if dbTableInfo == nil {
+			// 表不存在，直接建表
+			createSQL, err := internalSchema.GenerateCreateTableSQL(info, dialect)
+			if err != nil {
+				return fmt.Errorf("AutoMigrate: failed to generate CREATE TABLE SQL for %s: %w", tableName, err)
+			}
+			fmt.Println("[AutoMigrate] Executing SQL:\n", createSQL)
+			_, err = globalDB.Exec(ctx, createSQL)
+			if err != nil {
+				return fmt.Errorf("AutoMigrate: failed to execute CREATE TABLE SQL: %w\nSQL: %s", err, createSQL)
+			}
+			continue
+		}
+		// 表已存在，做 schema diff
+		alterSQLs, err := internalSchema.GenerateAlterTableSQL(info, internalSchema.ConvertTableInfo(dbTableInfo), dialect)
+		if err != nil {
+			return fmt.Errorf("AutoMigrate: failed to generate ALTER TABLE SQL for %s: %w", tableName, err)
+		}
+		for _, alterSQL := range alterSQLs {
+			if strings.HasPrefix(alterSQL, "-- [manual] DROP COLUMN") {
+				fmt.Println("[AutoMigrate] Skipping column drop (manual):", alterSQL)
+				continue // do not drop columns automatically
+			}
+			fmt.Println("[AutoMigrate] Executing SQL:\n", alterSQL)
+			_, err = globalDB.Exec(ctx, alterSQL)
+			if err != nil {
+				return fmt.Errorf("AutoMigrate: failed to execute ALTER TABLE SQL: %w\nSQL: %s", err, alterSQL)
+			}
 		}
 	}
 	return nil

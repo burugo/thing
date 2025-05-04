@@ -57,7 +57,13 @@ type CacheStats struct {
 	Counters map[string]int // Operation name to count
 }
 
-// SQLBuilder provides SQL generation with dialect-specific identifier quoting.
+// Dialector defines how to quote identifiers and bind variables for a specific SQL dialect.
+type Dialector interface {
+	Quote(identifier string) string // Quote a SQL identifier (table/column name)
+	Placeholder(index int) string   // Bind variable placeholder (e.g. ?, $1)
+}
+
+// SQLBuilder defines the contract for SQL generation with dialect-specific identifier quoting.
 type SQLBuilder interface {
 	BuildSelectSQL(tableName string, columns []string) string
 	BuildSelectIDsSQL(tableName string, pkName string, where string, args []interface{}, order string) (string, []interface{})
@@ -66,10 +72,4 @@ type SQLBuilder interface {
 	BuildDeleteSQL(tableName, pkName string) string
 	BuildCountSQL(tableName string, whereClause string) string
 	Rebind(query string) string
-}
-
-// Dialector defines how to quote identifiers and bind variables for a specific SQL dialect.
-type Dialector interface {
-	Quote(identifier string) string
-	Placeholder(index int) string
 }
