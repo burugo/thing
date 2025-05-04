@@ -44,7 +44,16 @@ linters-settings:
     #   - singleCaseSwitch
     # disabled-checks:
     #   - hugeParam
-  depguard: {}
+  depguard:
+    rules:
+      allow_internal:
+        files:
+          - $all
+        allow:
+          - $gostd
+          - github.com/burugo/thing/internal
+        deny: []
+        list-mode: lax
 
 linters:
   # please, do not use `enable-all`: it's deprecated and will be removed soon.
