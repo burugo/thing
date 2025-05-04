@@ -394,7 +394,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 	// Fetch IDs from DB if cache was not hit (cacheHit is false)
 	if !cacheHit {
 		// Build query to select only the primary key of the related model
-		idQuery := t.builder.BuildSelectSQL(relatedInfo.TableName, []string{relatedInfo.PkName})
+		idQuery := t.db.Builder().BuildSelectSQL(relatedInfo.TableName, []string{relatedInfo.PkName})
 		if relatedIDParams.Where != "" {
 			idQuery = idQuery + " WHERE " + relatedIDParams.Where
 		}
@@ -761,8 +761,5 @@ func NewThingByType(modelType reflect.Type, db DBAdapter, cache CacheClient) (in
 		return nil, err
 	}
 	thingVal.FieldByName("info").Set(reflect.ValueOf(info))
-	if db != nil {
-		thingVal.FieldByName("builder").Set(reflect.ValueOf(db.Builder()))
-	}
 	return thingPtr.Interface(), nil
 }

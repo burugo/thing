@@ -201,7 +201,7 @@ func (cr *CachedResult[T]) _fetch_ids_from_db(offset, limit int) ([]int64, error
 			where = "\"deleted\" = false"
 		}
 	}
-	query, args := cr.thing.builder.BuildSelectIDsSQL(cr.thing.info.TableName, cr.thing.info.PkName, where, cr.params.Args, cr.params.Order)
+	query, args := cr.thing.db.Builder().BuildSelectIDsSQL(cr.thing.info.TableName, cr.thing.info.PkName, where, cr.params.Args, cr.params.Order)
 	queryWithPagination := fmt.Sprintf("%s LIMIT %d OFFSET %d", query, limit, offset)
 
 	// Execute the query

@@ -287,7 +287,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 			return errors.New("no columns to insert")
 		}
 
-		query = t.builder.BuildInsertSQL(t.info.TableName, colsToInsert)
+		query = t.db.Builder().BuildInsertSQL(t.info.TableName, colsToInsert)
 		args = vals
 
 		// Execute the INSERT query
@@ -299,7 +299,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		// We need the original state to correctly update query caches incrementally.
 		original = utils.NewPtr[T]()
 		// Now original is a non-nil pointer of type T
-		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", t.builder.BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName), id) // Use exported PkName
+		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", t.db.Builder().BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName), id) // Use exported PkName
 		if err != nil {
 			// If not found, use a non-nil zero value pointer for original
 			original = utils.NewPtr[T]() // Ensure original is a non-nil pointer
@@ -337,7 +337,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 
 		vals = append(vals, id) // Add ID for WHERE clause
 
-		query = t.builder.BuildUpdateSQL(t.info.TableName, setClauses, t.info.PkName)
+		query = t.db.Builder().BuildUpdateSQL(t.info.TableName, setClauses, t.info.PkName)
 		args = vals
 
 		// Execute the UPDATE query
@@ -431,7 +431,7 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 
 	err := WithLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
 		// --- DB Delete ---
-		query := t.builder.BuildDeleteSQL(tableName, t.info.PkName)
+		query := t.db.Builder().BuildDeleteSQL(tableName, t.info.PkName)
 		result, err := t.db.Exec(ctx, query, id)
 		if err != nil {
 			return fmt.Errorf("database delete failed for %s %d: %w", tableName, id, err)

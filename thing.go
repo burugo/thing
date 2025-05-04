@@ -22,11 +22,10 @@ type Model interface {
 // Thing is the central access point for ORM operations, analogous to gorm.DB.
 // It holds database/cache clients and the context for operations.
 type Thing[T Model] struct {
-	db      DBAdapter
-	cache   CacheClient
-	ctx     context.Context
-	info    *schema.ModelInfo // Pre-computed metadata for type T
-	builder SQLBuilder        // Use interface type
+	db    DBAdapter
+	cache CacheClient
+	ctx   context.Context
+	info  *schema.ModelInfo // Pre-computed metadata for type T
 }
 
 // --- Thing Constructors & Accessors ---
@@ -58,11 +57,10 @@ func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 	}
 	log.Println("DEBUG: New[T] - Creating Thing struct")
 	t := &Thing[T]{
-		db:      db,
-		cache:   cache,
-		ctx:     context.Background(),
-		info:    info,
-		builder: db.Builder(),
+		db:    db,
+		cache: cache,
+		ctx:   context.Background(),
+		info:  info,
 	}
 	log.Println("DEBUG: New[T] - Returning new Thing instance")
 	return t, nil
