@@ -54,11 +54,6 @@ linters:
     # 如需复杂度检测可加 cyclop
     # - cyclop
 
-formatters:
-  enable:
-    - gofumpt
-    - goimports
-
 issues:
   exclude-rules:
     - path: _test\.go
