@@ -23,6 +23,7 @@ type MySQLDialector struct{}
 func (d MySQLDialector) Quote(identifier string) string {
 	return "`" + identifier + "`"
 }
+
 func (d MySQLDialector) Placeholder(_ int) string {
 	return "?"
 }
@@ -39,8 +40,10 @@ type MySQLTx struct {
 }
 
 // Compile-time checks to ensure interfaces are implemented.
-var _ thing.DBAdapter = (*MySQLAdapter)(nil)
-var _ thing.Tx = (*MySQLTx)(nil)
+var (
+	_ thing.DBAdapter = (*MySQLAdapter)(nil)
+	_ thing.Tx        = (*MySQLTx)(nil)
+)
 
 // --- Constructor ---
 

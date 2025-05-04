@@ -379,7 +379,6 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 			}
 			return nil // Lock action successful
 		})
-
 		if err != nil {
 			log.Printf("WARN: Failed to acquire lock for cache update %s: %v", lockKey, err)
 			// Log warning, but don't fail the whole save operation
@@ -463,7 +462,6 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 		t.invalidateAffectedQueryCaches(ctx, value, value, false, true)
 		return nil // Success
 	})
-
 	if err != nil {
 		// Don't trigger AfterDelete hook if the lock or DB/Cache operation failed
 		if errors.Is(err, common.ErrNotFound) {

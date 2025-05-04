@@ -7,7 +7,6 @@ import (
 	"reflect"
 	"strconv"
 	"testing"
-
 	"time"
 
 	"github.com/burugo/thing"

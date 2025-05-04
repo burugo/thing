@@ -29,12 +29,12 @@ func TestDiscoverMigrations(t *testing.T) {
 		"123456789012345678901_too_big.up.sql", // 版本号过大，无法解析
 	}
 	for _, fname := range filesToCreate {
-		err := os.WriteFile(filepath.Join(tempDir, fname), []byte("-- test"), 0644)
+		err := os.WriteFile(filepath.Join(tempDir, fname), []byte("-- test"), 0o644)
 		require.NoError(t, err)
 	}
 
 	// 创建一个子目录
-	err = os.Mkdir(filepath.Join(tempDir, "subdir"), 0755)
+	err = os.Mkdir(filepath.Join(tempDir, "subdir"), 0o755)
 	require.NoError(t, err)
 
 	// 测试 DiscoverMigrations

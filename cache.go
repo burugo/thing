@@ -27,9 +27,11 @@ import (
 // const NoneResult = "NoneResult" // Migrated
 
 // Lock duration constants for cache locking
-const LockDuration = 5 * time.Second
-const LockRetryDelay = 50 * time.Millisecond
-const LockMaxRetries = 5
+const (
+	LockDuration   = 5 * time.Second
+	LockRetryDelay = 50 * time.Millisecond
+	LockMaxRetries = 5
+)
 
 // Global instance of the lock manager for cache keys.
 // Defined here to avoid import cycles.

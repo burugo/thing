@@ -580,6 +580,7 @@ func convertToInt64(v reflect.Value) (int64, bool) {
 		return 0, false
 	}
 }
+
 func convertToUint64(v reflect.Value) (uint64, bool) {
 	switch v.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -600,6 +601,7 @@ func convertToUint64(v reflect.Value) (uint64, bool) {
 		return 0, false
 	}
 }
+
 func convertToFloat64(v reflect.Value) (float64, bool) {
 	switch v.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:

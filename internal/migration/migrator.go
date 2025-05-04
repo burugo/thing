@@ -110,7 +110,8 @@ func (m *Migrator) getAppliedVersions(ctx context.Context) (map[int64]bool, erro
 // recordAppliedVersion inserts a record for a successfully applied migration
 func (m *Migrator) recordAppliedVersion(ctx context.Context, execer interface {
 	Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
-}, version int64, description string) error {
+}, version int64, description string,
+) error {
 	m.logf("Recording applied version %d (%s)...", version, description)
 	query := fmt.Sprintf("INSERT INTO %s (version, description, applied_at) VALUES (?, ?, ?)", migrationsTableName)
 	versionStr := fmt.Sprintf("%d", version)

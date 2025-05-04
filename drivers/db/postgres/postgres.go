@@ -23,6 +23,7 @@ type Dialector struct{}
 func (d Dialector) Quote(identifier string) string {
 	return `"` + identifier + `"`
 }
+
 func (d Dialector) Placeholder(index int) string {
 	return fmt.Sprintf("$%d", index)
 }
@@ -40,8 +41,10 @@ type Tx struct {
 }
 
 // Compile-time checks to ensure interfaces are implemented.
-var _ thing.DBAdapter = (*Adapter)(nil)
-var _ thing.Tx = (*Tx)(nil)
+var (
+	_ thing.DBAdapter = (*Adapter)(nil)
+	_ thing.Tx        = (*Tx)(nil)
+)
 
 // --- Constructor ---
 

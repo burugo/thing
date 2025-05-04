@@ -31,6 +31,7 @@ type SQLiteDialector struct{}
 func (d SQLiteDialector) Quote(identifier string) string {
 	return `"` + identifier + `"`
 }
+
 func (d SQLiteDialector) Placeholder(_ int) string {
 	return "?"
 }

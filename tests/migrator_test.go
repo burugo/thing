@@ -23,7 +23,7 @@ func setupTestMigrator(t *testing.T) (*migration.Migrator, thing.DBAdapter, stri
 	require.NoError(t, err)
 
 	migrationsDir := filepath.Join(tempDir, "migrations")
-	err = os.Mkdir(migrationsDir, 0755)
+	err = os.Mkdir(migrationsDir, 0o755)
 	require.NoError(t, err)
 
 	dbPath := filepath.Join(tempDir, "test_migrate.db")
@@ -45,7 +45,7 @@ func setupTestMigrator(t *testing.T) (*migration.Migrator, thing.DBAdapter, stri
 func createMigrationFile(t *testing.T, dir string, version int, name, direction, content string) {
 	filename := fmt.Sprintf("%05d_%s.%s.sql", version, name, direction)
 	path := filepath.Join(dir, filename)
-	err := os.WriteFile(path, []byte(content), 0644)
+	err := os.WriteFile(path, []byte(content), 0o644)
 	require.NoError(t, err)
 }
 

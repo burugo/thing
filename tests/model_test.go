@@ -3,10 +3,9 @@ package thing_test
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
-
-	"strings"
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/drivers/db/sqlite"

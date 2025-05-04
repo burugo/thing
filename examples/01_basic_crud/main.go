@@ -22,7 +22,6 @@ type User struct {
 }
 
 func main() {
-
 	// Configure Thing ORM (in-memory DB and cache for demo)
 	thing.Configure()
 

@@ -79,6 +79,7 @@ This project builds upon the initial goal of replicating a specific `BaseModel`,
 - [x] Remove ineffectual assignment to fkFieldFound in preloadBelongsTo and preloadHasMany (relationships.go)
 - [x] Refactor if-else chain to switch in preloadManyToMany (relationships.go, line 541)
 - [x] Remove ineffectual assignment to placeholders in saveInternal else branch (crud.go)
+- [x] Move type declarations out of generic function in cache.go for Go 1.18 compatibility
 
 ## Executor's Feedback or Assistance Requests
 
@@ -101,3 +102,7 @@ This project builds upon the initial goal of replicating a specific `BaseModel`,
 - Linter warning (ineffassign) is now resolved for this issue.
 - All tests passed after the change.
 - Committed as: fix: remove ineffectual assignment to placeholders in saveInternal else branch
+- Moved 'cacheTask' and 'finalWriteTask' type declarations out of the generic function in cache.go to the package level.
+- This resolves the Go 1.18 build error: 'type declarations inside generic functions are not currently supported'.
+- All code now builds and runs as expected on Go 1.18+.
+- Committed as: fix: move type declarations out of generic function for Go 1.18 compatibility

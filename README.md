@@ -8,7 +8,7 @@
 
 **Thing ORM** is a high-performance, open-source Object-Relational Mapper for Go, designed for modern application needs:
 
-- **Unique Integrated Caching:** Thing ORM is the only Go ORM with first-class, built-in support for both Redis and in-memory caching. It automatically caches single-entity and list queries, manages cache invalidation, and provides cache hit/miss monitoring—out of the box. No third-party plugins or manual cache wiring required.
+- **Unique Integrated Caching:** Thing ORM provides built-in support for either Redis or in-memory caching, making cache integration seamless and efficient. It automatically caches single-entity and list queries, manages cache invalidation, and provides cache hit/miss monitoring—out of the box. No third-party plugins or manual cache wiring required.
 - **Type-Safe Generics-Based API:** Built on Go generics, Thing ORM provides compile-time type safety, better performance, and a more intuitive, IDE-friendly API—unlike most Go ORMs that rely on reflection and runtime type checks.
 - **Multi-Database Support:** Effortlessly switch between MySQL, PostgreSQL, and SQLite with a unified API and automatic SQL dialect adaptation.
 - **Simple, Efficient CRUD and List Queries:** Focused on the most common application patterns—thread-safe Create, Read, Update, Delete, and efficient list retrieval with filtering, ordering, and pagination.
