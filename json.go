@@ -347,7 +347,6 @@ func (t *Thing[T]) serializeValue(val reflect.Value, options *JSONOptions) inter
 			}
 		}
 		return ordered
-
 	} else if kind == reflect.Slice || kind == reflect.Array {
 		// Serialize a slice or array of nested models
 		nestedArray := make([]interface{}, val.Len())
@@ -374,7 +373,6 @@ func (t *Thing[T]) serializeValue(val reflect.Value, options *JSONOptions) inter
 // ParseFieldsDSL parses a DSL string and returns populated jsonOptions representing the rules.
 func ParseFieldsDSL(dsl string) (*JSONOptions, error) {
 	// Enhanced parser: handle top-level and nested include/exclude fields
-	rootOpts := newJSONOptions()
 
 	var parse func(input string) (*JSONOptions, error)
 	parse = func(input string) (*JSONOptions, error) {
@@ -472,11 +470,10 @@ func ParseFieldsDSL(dsl string) (*JSONOptions, error) {
 	}
 
 	// Top-level parsing
-	parsedOpts, err := parse(dsl)
+	rootOpts, err := parse(dsl)
 	if err != nil {
 		return nil, err
 	}
-	rootOpts = parsedOpts
 
 	// Recursively apply the id default rule to all JSONOptions (including nested)
 	var applyIDDefaultRule func(opts *JSONOptions)

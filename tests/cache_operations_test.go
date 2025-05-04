@@ -41,7 +41,7 @@ func TestThing_ByID_Cache_MissAndSet(t *testing.T) {
 	foundUser, err := th.ByID(user.ID)
 	require.NoError(t, err)
 	require.NotNil(t, foundUser)
-	assert.Equal(t, user.ID, (*foundUser).ID)
+	assert.Equal(t, user.ID, (foundUser).ID)
 	assert.Equal(t, user.Name, foundUser.Name)
 	assert.Equal(t, user.Email, foundUser.Email)
 
@@ -91,7 +91,7 @@ func TestThing_ByID_Cache_Hit(t *testing.T) {
 	assert.Equal(t, setCount, mockCache.Counters["SetModel"], "Should not set in cache again")
 
 	// Verify the data was correct from cache
-	assert.Equal(t, user.ID, (*foundUser).ID)
+	assert.Equal(t, user.ID, foundUser.ID)
 	assert.Equal(t, user.Name, foundUser.Name)
 	assert.Equal(t, user.Email, foundUser.Email)
 }
@@ -191,7 +191,7 @@ func TestThing_Query_Cache(t *testing.T) {
 	fetchedUsers, fetchErr := queryResult.Fetch(0, 10) // Fetch up to 10
 	require.NoError(t, fetchErr)
 	require.Len(t, fetchedUsers, 1, "Expected to fetch 1 user named Alice Cache")
-	assert.Equal(t, userAlice.ID, (*fetchedUsers[0]).ID)
+	assert.Equal(t, userAlice.ID, fetchedUsers[0].ID)
 
 	// Verify cache operations for first query
 	assert.Equal(t, 1, mockCache.Counters["GetQueryIDs"], "Should attempt to get query from cache")
@@ -211,7 +211,7 @@ func TestThing_Query_Cache(t *testing.T) {
 	fetchedUsers2, fetchErr2 := query2Result.Fetch(0, 10) // Fetch up to 10
 	require.NoError(t, fetchErr2)
 	require.Len(t, fetchedUsers2, 1, "Expected to fetch 1 user from cache")
-	assert.Equal(t, userAlice.ID, (*fetchedUsers2[0]).ID)
+	assert.Equal(t, userAlice.ID, fetchedUsers2[0].ID)
 
 	// Verify cache operations for second query
 	assert.Equal(t, getQueryCount+1, mockCache.Counters["GetQueryIDs"], "Should attempt to get query from cache again")
@@ -455,7 +455,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	fetch2, err := cr2.Fetch(0, 10) // Should hit list cache
 	require.NoError(t, err)
 	require.Len(t, fetch2, 1)
-	assert.Equal(t, user1.ID, (*fetch2[0]).ID)
+	assert.Equal(t, user1.ID, fetch2[0].ID)
 	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Fetch query should hit list cache (GetQueryIDs)")
 	assert.Equal(t, 1, cacheClient.Counters["SetQueryIDs"], "Expected 1 SetQueryIDs (list cache write on miss)")
 
@@ -519,7 +519,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	fetch4, err := cr4.Fetch(0, 10) // Should hit cache
 	require.NoError(t, err)
 	require.Len(t, fetch4, 1)
-	assert.Equal(t, user1.ID, (*fetch4[0]).ID)
+	assert.Equal(t, user1.ID, fetch4[0].ID)
 
 	cacheClient.ResetCalls()
 

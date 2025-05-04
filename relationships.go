@@ -384,7 +384,6 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 				log.Printf("WARN: Cache GetQueryIDs error for key %s: %v. Treating as cache miss.", listCacheKey, queryIDsErr)
 				// cacheHit remains false
 			}
-
 		} else {
 			log.Printf("WARN: Failed to marshal params for list cache key generation: %v", jsonErr)
 			// cacheHit remains false, proceed to DB query

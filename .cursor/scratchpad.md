@@ -77,6 +77,8 @@ This project builds upon the initial goal of replicating a specific `BaseModel`,
 - [x] Ignore lll (long line linter) for all test files in golangci-lint config
 - [x] 修复 JSON DSL 解析器，移除无用 [] 分支，恢复 -field 排除逻辑，所有相关测试通过
 - [x] Remove ineffectual assignment to fkFieldFound in preloadBelongsTo and preloadHasMany (relationships.go)
+- [x] Refactor if-else chain to switch in preloadManyToMany (relationships.go, line 541)
+- [x] Remove ineffectual assignment to placeholders in saveInternal else branch (crud.go)
 
 ## Executor's Feedback or Assistance Requests
 
@@ -91,3 +93,11 @@ This project builds upon the initial goal of replicating a specific `BaseModel`,
 - All tests passed and the linter warning is resolved.
 - Committed the change as: fix: remove ineffectual assignment to fkFieldFound in preloadBelongsTo and preloadHasMany
 - No logic was changed; only the unnecessary assignment was removed as per linter guidance.
+- Refactored the if-else chain for relatedElemType.Kind() in preloadManyToMany to a switch statement as per gocritic suggestion.
+- Linter warning (ifElseChain) is now resolved.
+- All tests passed after the change.
+- Committed as: refactor: use switch instead of if-else for relatedElemType.Kind() in preloadManyToMany to fix gocritic ifElseChain warning
+- Removed the ineffectual assignment to placeholders in the else branch of saveInternal in crud.go.
+- Linter warning (ineffassign) is now resolved for this issue.
+- All tests passed after the change.
+- Committed as: fix: remove ineffectual assignment to placeholders in saveInternal else branch

@@ -104,7 +104,7 @@ func (b *SQLBuilder) expandInClauses(where string, args []interface{}) (string, 
 					coreCond = "(" + coreCond
 				}
 				if closeParen {
-					coreCond = coreCond + ")"
+					coreCond += ")"
 				}
 				newWhere.WriteString(coreCond)
 				continue

@@ -44,9 +44,9 @@ func TestThing_SoftDelete_Basic(t *testing.T) {
 	fetchedUser, err := th.ByID(user.ID)
 	require.NoError(t, err, "Fetching soft-deleted user by ID should succeed")
 	require.NotNil(t, fetchedUser, "Fetched user should not be nil")
-	assert.True(t, (*fetchedUser).Deleted, "Fetched user via ByID should have Deleted flag set to true")
-	assert.Equal(t, user.ID, (*fetchedUser).ID, "Fetched user ID should match")
-	assert.Equal(t, user.Name, (*fetchedUser).Name, "Fetched user Name should match") // Verify other fields too
+	assert.True(t, fetchedUser.Deleted, "Fetched user via ByID should have Deleted flag set to true")
+	assert.Equal(t, user.ID, fetchedUser.ID, "Fetched user ID should match")
+	assert.Equal(t, user.Name, fetchedUser.Name, "Fetched user Name should match") // Verify other fields too
 
 	// 5. Verify standard Query does not find the user
 	params := thing.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
@@ -103,8 +103,8 @@ func TestThing_Query_WithDeleted(t *testing.T) {
 	deletedFetched, err := deletedQueryResult.Fetch(0, 1)
 	require.NoError(t, err)
 	require.Len(t, deletedFetched, 1, "WithDeleted query fetch should find 1")
-	assert.Equal(t, user.ID, (*deletedFetched[0]).ID)
-	assert.True(t, (*deletedFetched[0]).Deleted, "Fetched user should have Deleted flag set")
+	assert.Equal(t, user.ID, deletedFetched[0].ID)
+	assert.True(t, deletedFetched[0].Deleted, "Fetched user should have Deleted flag set")
 }
 
 // Test cache interactions during SoftDelete
@@ -184,7 +184,7 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	fetchedUserByID, errByID := th.ByID(user.ID)
 	require.NoError(t, errByID, "ByID should succeed for soft-deleted user")
 	require.NotNil(t, fetchedUserByID, "ByID result should not be nil")
-	assert.True(t, (*fetchedUserByID).Deleted, "Fetched user via ByID should have Deleted flag set")
+	assert.True(t, fetchedUserByID.Deleted, "Fetched user via ByID should have Deleted flag set")
 
 	// Standard Query should find 0
 	queryResultStd, err := th.Query(params)
@@ -206,8 +206,8 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	fetchDel, err := queryResultDel.Fetch(0, 1)
 	require.NoError(t, err)
 	require.Len(t, fetchDel, 1)
-	assert.Equal(t, user.ID, (*fetchDel[0]).ID)
-	assert.True(t, (*fetchDel[0]).Deleted)
+	assert.Equal(t, user.ID, fetchDel[0].ID)
+	assert.True(t, fetchDel[0].Deleted)
 }
 
 // Test that using WithDeleted doesn't affect the original query object

@@ -234,7 +234,6 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 
 		case "!=", "<>":
 			// Use DeepEqual and invert the result. Handle nil and pointers.
-			conditionMet = false // Assume not equal unless proven otherwise by DeepEqual
 
 			// Handle nil argument explicitly using the safe helper
 			if isArgNil(argValue) {

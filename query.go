@@ -327,7 +327,6 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 		}
 		// Register the count key
 		cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, toInternalQueryParams(cr.params))
-
 	}
 	return validIDs, nil // Return filtered valid IDs (or empty slice)
 }
