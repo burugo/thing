@@ -62,10 +62,9 @@ First, create an instance of a database adapter for your chosen database (MySQL,
 
 ```go
 import (
-	"github.com/burugo/thing/drivers/db/mysql"
-	"github.com/burugo/thing/drivers/db/postgres"
+	// "github.com/burugo/thing/drivers/db/mysql"
+	// "github.com/burugo/thing/drivers/db/postgres"
 	"github.com/burugo/thing/drivers/db/sqlite"
-	"github.com/burugo/thing/interfaces"
 )
 
 // Example: SQLite (replace ":memory:" with your file path)
@@ -97,12 +96,12 @@ Thing ORM includes a built-in in-memory cache, which is used by default if no ca
 import (
 	"github.com/redis/go-redis/v9"
 	redisCache "github.com/burugo/thing/drivers/cache/redis"
-	"github.com/burugo/thing/interfaces"
+	"github.com/burugo/thing"
 )
 
 // Option A: Use Default In-Memory Cache
 // Simply pass nil as the cache client when calling thing.New
-var cacheClient interfaces.CacheClient = nil
+var cacheClient thing.CacheClient = nil
 
 // Option B: Use Redis
 // redisAddr := "localhost:6379"
