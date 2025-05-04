@@ -111,12 +111,14 @@ issues:
         - gocyclo # Test functions can be complex
         - gosec  # Test files might have less strict security needs
         - lll    # Ignore long line warnings in test files
+        - errcheck # Allow unchecked error returns in test files
     # Exclude depguard for all files in tests/ directory
     - path: ^tests/.*
       linters:
         - depguard
         - funlen
         - gocyclo
+        - errcheck
 
     # Example: Disable Deprecated linters warning
     # - linters: [deadcode, structcheck, varcheck]
