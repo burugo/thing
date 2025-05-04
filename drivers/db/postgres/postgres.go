@@ -12,7 +12,6 @@ import (
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
-	"github.com/burugo/thing/internal/sqlbuilder"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
@@ -66,7 +65,7 @@ func NewPostgreSQLAdapter(dsn string) (thing.DBAdapter, error) {
 	db.SetConnMaxLifetime(time.Hour)
 
 	// Create a SQLBuilder with PostgreSQL dialect
-	builder := sqlbuilder.NewSQLBuilder(PostgresDialector{})
+	builder := thing.NewSQLBuilder(PostgresDialector{})
 
 	log.Println("PostgreSQL adapter initialized successfully.")
 	return &PostgreSQLAdapter{

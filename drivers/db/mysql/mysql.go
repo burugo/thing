@@ -12,7 +12,6 @@ import (
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
-	"github.com/burugo/thing/internal/sqlbuilder"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 )
@@ -65,7 +64,7 @@ func NewMySQLAdapter(dsn string) (thing.DBAdapter, error) {
 	db.SetConnMaxLifetime(time.Hour) // Example value
 
 	// Create a SQLBuilder with MySQL dialect
-	builder := sqlbuilder.NewSQLBuilder(MySQLDialector{})
+	builder := thing.NewSQLBuilder(MySQLDialector{})
 
 	log.Println("MySQL adapter initialized successfully.")
 	return &MySQLAdapter{

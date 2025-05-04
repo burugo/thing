@@ -9,6 +9,7 @@ import (
 	"reflect" // Added for parsing env var
 
 	"github.com/burugo/thing/internal/schema"
+	"github.com/burugo/thing/internal/sqlbuilder"
 )
 
 // --- Thing Core Struct ---
@@ -26,6 +27,11 @@ type Thing[T Model] struct {
 	cache CacheClient
 	ctx   context.Context
 	info  *schema.ModelInfo // Pre-computed metadata for type T
+}
+
+// --- SQLBuilder Factory ---
+func NewSQLBuilder(d Dialector) SQLBuilder {
+	return sqlbuilder.NewSQLBuilder(d)
 }
 
 // --- Thing Constructors & Accessors ---

@@ -13,7 +13,6 @@ import (
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
-	"github.com/burugo/thing/internal/sqlbuilder"
 
 	// "github.com/jmoiron/sqlx" // Removed sqlx import
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
@@ -62,7 +61,7 @@ func NewSQLiteAdapter(dsn string) (*SQLiteAdapter, error) {
 	}
 
 	// Create a SQLBuilder with SQLite dialect
-	builder := sqlbuilder.NewSQLBuilder(SQLiteDialector{})
+	builder := thing.NewSQLBuilder(SQLiteDialector{})
 
 	log.Println("SQLite adapter initialized successfully.")
 	return &SQLiteAdapter{
