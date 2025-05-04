@@ -1,8 +1,6 @@
 module github.com/burugo/thing
 
-go 1.21.0
-
-toolchain go1.24.2
+go 1.18
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.28
