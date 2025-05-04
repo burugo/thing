@@ -112,6 +112,7 @@ issues:
         - gosec  # Test files might have less strict security needs
         - lll    # Ignore long line warnings in test files
         - errcheck # Allow unchecked error returns in test files
+        - lll # Allow long lines in test files
     # Exclude depguard for all files in tests/ directory
     - path: ^tests/.*
       linters:
@@ -119,6 +120,7 @@ issues:
         - funlen
         - gocyclo
         - errcheck
+        - lll
 
     # Example: Disable Deprecated linters warning
     # - linters: [deadcode, structcheck, varcheck]
