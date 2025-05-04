@@ -16,7 +16,6 @@ import (
 
 	"github.com/burugo/thing/common" // Added import for common errors/constants
 	"github.com/burugo/thing/internal/cache"
-	cacheinternal "github.com/burugo/thing/internal/cache"
 	"github.com/burugo/thing/internal/schema" // Import internal cache package
 	"github.com/burugo/thing/internal/utils"
 	// "thing/internal/helpers" // Removed import
@@ -424,7 +423,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	}
 
 	// log.Printf("DEBUG: Attempting to write %d cache updates for ID %d.", len(writesNeeded), id)
-	locker := cacheinternal.GlobalCacheKeyLocker
+	locker := cache.GlobalCacheKeyLocker
 
 	for key, writeTask := range writesNeeded {
 		// log.Printf("DEBUG Write (%s): Acquiring lock...", key)
