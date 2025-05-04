@@ -27,23 +27,36 @@ func TestMockCacheClient_GetCacheStats(t *testing.T) {
 	assert.Empty(t, stats.Counters, "Expected no counters before any operations")
 
 	// Perform various cache operations to increment counters
-	mock.Get(ctx, "key")
-	mock.Set(ctx, "key", "value", time.Second)
-	mock.Delete(ctx, "key")
+	_, err := mock.Get(ctx, "key")
+	_ = err
+	err = mock.Set(ctx, "key", "value", time.Second)
+	_ = err
+	err = mock.Delete(ctx, "key")
+	_ = err
 
-	mock.GetModel(ctx, "model", &struct{ ID int }{1})
-	mock.SetModel(ctx, "model", &struct{ ID int }{1}, time.Second)
-	mock.DeleteModel(ctx, "model")
+	err = mock.GetModel(ctx, "model", &struct{ ID int }{1})
+	_ = err
+	err = mock.SetModel(ctx, "model", &struct{ ID int }{1}, time.Second)
+	_ = err
+	err = mock.DeleteModel(ctx, "model")
+	_ = err
 
-	mock.GetQueryIDs(ctx, "query1")
-	mock.SetQueryIDs(ctx, "query1", []int64{1, 2}, time.Second)
-	mock.DeleteQueryIDs(ctx, "query1")
+	_, err = mock.GetQueryIDs(ctx, "query1")
+	_ = err
+	err = mock.SetQueryIDs(ctx, "query1", []int64{1, 2}, time.Second)
+	_ = err
+	err = mock.DeleteQueryIDs(ctx, "query1")
+	_ = err
 
-	mock.AcquireLock(ctx, "lockKey", time.Second)
-	mock.ReleaseLock(ctx, "lockKey")
+	_, err = mock.AcquireLock(ctx, "lockKey", time.Second)
+	_ = err
+	err = mock.ReleaseLock(ctx, "lockKey")
+	_ = err
 
-	mock.SetCount(ctx, "cntKey", 5, time.Second)
-	mock.GetCount(ctx, "cntKey")
+	err = mock.SetCount(ctx, "cntKey", 5, time.Second)
+	_ = err
+	_, err = mock.GetCount(ctx, "cntKey")
+	_ = err
 
 	// Retrieve stats
 	stats = mock.GetCacheStats(ctx)
