@@ -19,6 +19,12 @@ import (
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
 
+const (
+	defaultMaxOpenConns    = 25
+	defaultMaxIdleConns    = 5
+	defaultConnMaxLifetime = 5 * time.Minute
+)
+
 // SQLiteDialector implements the sqlbuilder.Dialector interface for SQLite.
 type SQLiteDialector struct{}
 
@@ -49,9 +55,9 @@ func NewSQLiteAdapter(dsn string) (*SQLiteAdapter, error) {
 	}
 
 	// Configure connection pool settings (optional but recommended)
-	db.SetMaxOpenConns(25)                 // Example value
-	db.SetMaxIdleConns(5)                  // Example value
-	db.SetConnMaxLifetime(5 * time.Minute) // Example value
+	db.SetMaxOpenConns(defaultMaxOpenConns)       // Example value
+	db.SetMaxIdleConns(defaultMaxIdleConns)       // Example value
+	db.SetConnMaxLifetime(defaultConnMaxLifetime) // Example value
 
 	// Ping the database to verify connection
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // Add timeout for ping
