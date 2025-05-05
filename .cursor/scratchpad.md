@@ -64,9 +64,16 @@ These changes will simplify business code, reduce boilerplate, and align Thing O
 
 ## 2. Enhance ToJSON to Support Single and Collection Types (Task Type: New Feature)
 - 2.1 Refactor ToJSON to auto-detect and handle single objects, slices, and arrays.
-- 2.2 Ensure recursive serialization of nested preload objects, with field filtering/DSL support.
-- 2.3 Add/expand tests for single, collection, nested, and filtered serialization.
-- 2.4 Update documentation (README, examples, thing.mdc) to show new usage and capabilities.
+- 2.2 Fix DSL parsing and merging logic (Task Type: Bug Fix)
+    - [ ] 2.2.1 Fix nested merge behavior in `ParseFieldsDSL`: only the first nested block is kept. (Success: 'nested merge not supported' test passes)
+    - [ ] 2.2.2 Ensure default `id` injection in nested `JSONOptions` at all levels. (Success: id default tests in `TestParseFieldsDSL_ToJsonOptions` pass)
+    - [ ] 2.2.3 Fix include/exclude merging logic in `ParseFieldsDSL` to correctly record exclude fields. (Success: exclude tests in `TestParseFieldsDSL_ToJsonOptions` pass)
+- 2.3 Fix ToJSON implementation details (Task Type: Bug Fix)
+    - [ ] 2.3.1 Fix filtering of `BaseModel` fields per DSL Include/Exclude. (Success: base field exclude tests in `TestToJSON_WithFieldsDSL` pass)
+    - [ ] 2.3.2 Fix virtual method support for `WithFields` DSL. (Success: `TestToJSON_MethodBasedVirtuals` tests pass)
+    - [ ] 2.3.3 Fix slice/array serialization ordering and nested DSL application. (Success: single and nested serialization tests in `TestToJSON_SingleAndCollection` and `TestToJSON_NestedIncludeExclude` pass)
+- 2.4 Add/expand tests for the above fixes.
+- 2.5 Update documentation (README, examples).
 
 ### Success Criteria
 - ToJSON works seamlessly for single objects and collections, including nested preload objects.

@@ -93,6 +93,8 @@ alwaysApply: false
         // allUsers, err := result.All()
         // Count:
         // count, err := result.Count()
+        // Chainable Query
+        // usersOver18, err := userThing.Where("age > ?", 18).Order("name ASC").Fetch(0, 100)
         ```
 
 ## Key Features
