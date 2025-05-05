@@ -1,10 +1,10 @@
 package thing_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/burugo/thing"
+	"github.com/stretchr/testify/assert"
 )
 
 // Test with struct that has no json tags
@@ -32,88 +32,78 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 		{
 			dsl: "name,age",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Check inclusion and order - Expect id prepended
-				if len(options.OrderedInclude) != 3 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "name" || options.OrderedInclude[2].Name != "age" {
+				// 只要求 name, age 顺序
+				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "name" || options.OrderedInclude[1].Name != "age" {
 					return false
 				}
-				// Check exclusion
 				if len(options.OrderedExclude) != 0 {
 					return false
 				}
 				return true
 			},
-			desc: "basic include fields with order (id defaulted)",
+			desc: "basic include fields with order (no id default)",
 		},
 		{
 			dsl: "name,-age",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Check inclusion and order - Expect id prepended
-				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "name" {
+				if len(options.OrderedInclude) != 1 || options.OrderedInclude[0].Name != "name" {
 					return false
 				}
-				// Check exclusion
 				if len(options.OrderedExclude) != 1 || options.OrderedExclude[0] != "age" {
 					return false
 				}
 				return true
 			},
-			desc: "include and exclude fields with order (id defaulted)",
+			desc: "include and exclude fields with order (no id default)",
 		},
 		{
 			dsl: "name,book{title,-publish_at},-deleted",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Expected: id, name, book (include), deleted (exclude)
-				if len(options.OrderedInclude) != 3 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "name" || options.OrderedInclude[2].Name != "book" {
+				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "name" || options.OrderedInclude[1].Name != "book" {
 					return false
 				}
 				if len(options.OrderedExclude) != 1 || options.OrderedExclude[0] != "deleted" {
 					return false
 				}
-				// Check nested book rules: id should be prepended
-				bookRule := options.OrderedInclude[2]
-				if bookRule.Nested == nil || len(bookRule.Nested.OrderedInclude) != 2 || bookRule.Nested.OrderedInclude[0].Name != "id" || bookRule.Nested.OrderedInclude[1].Name != "title" || len(bookRule.Nested.OrderedExclude) != 1 || bookRule.Nested.OrderedExclude[0] != "publish_at" {
+				bookRule := options.OrderedInclude[1]
+				if bookRule.Nested == nil || len(bookRule.Nested.OrderedInclude) != 1 || bookRule.Nested.OrderedInclude[0].Name != "title" || len(bookRule.Nested.OrderedExclude) != 1 || bookRule.Nested.OrderedExclude[0] != "publish_at" {
 					return false
 				}
 				return true
 			},
-			desc: "nested include/exclude with order (id defaulted in nested)",
+			desc: "nested include/exclude with order (no id default)",
 		},
 		{
 			dsl: "user{name,profile{avatar}},book{author{name}}",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Expected top level: id, user, book
-				if len(options.OrderedInclude) != 3 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "user" || options.OrderedInclude[2].Name != "book" {
+				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "user" || options.OrderedInclude[1].Name != "book" {
 					return false
 				}
-				// Check user nested: id should be prepended
-				userRule := options.OrderedInclude[1]
-				if userRule.Nested == nil || len(userRule.Nested.OrderedInclude) != 3 || userRule.Nested.OrderedInclude[0].Name != "id" || userRule.Nested.OrderedInclude[1].Name != "name" || userRule.Nested.OrderedInclude[2].Name != "profile" || len(userRule.Nested.OrderedExclude) != 0 {
+				userRule := options.OrderedInclude[0]
+				if userRule.Nested == nil || len(userRule.Nested.OrderedInclude) != 2 || userRule.Nested.OrderedInclude[0].Name != "name" || userRule.Nested.OrderedInclude[1].Name != "profile" || len(userRule.Nested.OrderedExclude) != 0 {
 					return false
 				}
-				// Check profile nested under user: id should be prepended
-				profileRule := userRule.Nested.OrderedInclude[2]
-				if profileRule.Nested == nil || len(profileRule.Nested.OrderedInclude) != 2 || profileRule.Nested.OrderedInclude[0].Name != "id" || profileRule.Nested.OrderedInclude[1].Name != "avatar" || len(profileRule.Nested.OrderedExclude) != 0 {
+				profileRule := userRule.Nested.OrderedInclude[1]
+				if profileRule.Nested == nil || len(profileRule.Nested.OrderedInclude) != 1 || profileRule.Nested.OrderedInclude[0].Name != "avatar" || len(profileRule.Nested.OrderedExclude) != 0 {
 					return false
 				}
-				// Check book nested: id should be prepended
-				bookRule := options.OrderedInclude[2]
-				if bookRule.Nested == nil || len(bookRule.Nested.OrderedInclude) != 2 || bookRule.Nested.OrderedInclude[0].Name != "id" || bookRule.Nested.OrderedInclude[1].Name != "author" || len(bookRule.Nested.OrderedExclude) != 0 {
+				bookRule := options.OrderedInclude[1]
+				if bookRule.Nested == nil || len(bookRule.Nested.OrderedInclude) != 1 || bookRule.Nested.OrderedInclude[0].Name != "author" || len(bookRule.Nested.OrderedExclude) != 0 {
 					return false
 				}
-				// Check author nested under book: id should be prepended
-				authorRule := bookRule.Nested.OrderedInclude[1]
-				if authorRule.Nested == nil || len(authorRule.Nested.OrderedInclude) != 2 || authorRule.Nested.OrderedInclude[0].Name != "id" || authorRule.Nested.OrderedInclude[1].Name != "name" || len(authorRule.Nested.OrderedExclude) != 0 {
+				authorRule := bookRule.Nested.OrderedInclude[0]
+				if authorRule.Nested == nil || len(authorRule.Nested.OrderedInclude) != 1 || authorRule.Nested.OrderedInclude[0].Name != "name" || len(authorRule.Nested.OrderedExclude) != 0 {
 					return false
 				}
 				return true
 			},
-			desc: "multi-level nested fields with order (id defaulted in all levels)",
+			desc: "multi-level nested fields with order (no id default)",
 		},
 		{
 			dsl: "",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Default: only 'id' included
-				if len(options.OrderedInclude) != 1 || options.OrderedInclude[0].Name != "id" {
+				// 空字符串应无 include
+				if len(options.OrderedInclude) != 0 {
 					return false
 				}
 				if len(options.OrderedExclude) != 0 {
@@ -121,16 +111,14 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 				}
 				return true
 			},
-			desc: "empty string defaults to id",
+			desc: "empty string: no default id",
 		},
 		{
 			dsl: "-deleted,-updated_at",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Default 'id' included, plus specified excludes
-				if len(options.OrderedInclude) != 1 || options.OrderedInclude[0].Name != "id" {
+				if len(options.OrderedInclude) != 0 {
 					return false
 				}
-				// Check excludes (order doesn't matter for excludes list assertion)
 				expectedExcludes := map[string]bool{"deleted": true, "updated_at": true}
 				if len(options.OrderedExclude) != len(expectedExcludes) {
 					return false
@@ -142,18 +130,16 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 				}
 				return true
 			},
-			desc: "only excludes, id defaulted",
+			desc: "only excludes, no id default",
 		},
 		{
 			dsl: "book{title}",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Default 'id' included, plus book nested
-				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "book" {
+				if len(options.OrderedInclude) != 1 || options.OrderedInclude[0].Name != "book" {
 					return false
 				}
-				// Check nested book rules: id should be prepended
-				bookRule := options.OrderedInclude[1]
-				if bookRule.Nested == nil || len(bookRule.Nested.OrderedInclude) != 2 || bookRule.Nested.OrderedInclude[0].Name != "id" || bookRule.Nested.OrderedInclude[1].Name != "title" || len(bookRule.Nested.OrderedExclude) != 0 {
+				bookRule := options.OrderedInclude[0]
+				if bookRule.Nested == nil || len(bookRule.Nested.OrderedInclude) != 1 || bookRule.Nested.OrderedInclude[0].Name != "title" || len(bookRule.Nested.OrderedExclude) != 0 {
 					return false
 				}
 				if len(options.OrderedExclude) != 0 {
@@ -161,59 +147,51 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 				}
 				return true
 			},
-			desc: "only nested include, id defaulted in nested",
+			desc: "only nested include, no id default",
 		},
 		{
 			dsl: "book{author{profile{email}}}",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Default 'id' included, plus deeply nested
-				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "book" {
+				if len(options.OrderedInclude) != 1 || options.OrderedInclude[0].Name != "book" {
 					return false
 				}
-				// Check nested book: id should be prepended
-				bookRule := options.OrderedInclude[1]
-				if bookRule.Nested == nil || len(bookRule.Nested.OrderedInclude) != 2 || bookRule.Nested.OrderedInclude[0].Name != "id" || bookRule.Nested.OrderedInclude[1].Name != "author" || len(bookRule.Nested.OrderedExclude) != 0 {
+				bookRule := options.OrderedInclude[0]
+				if bookRule.Nested == nil || len(bookRule.Nested.OrderedInclude) != 1 || bookRule.Nested.OrderedInclude[0].Name != "author" || len(bookRule.Nested.OrderedExclude) != 0 {
 					return false
 				}
-				// Check nested author: id should be prepended
-				authorRule := bookRule.Nested.OrderedInclude[1]
-				if authorRule.Nested == nil || len(authorRule.Nested.OrderedInclude) != 2 || authorRule.Nested.OrderedInclude[0].Name != "id" || authorRule.Nested.OrderedInclude[1].Name != "profile" || len(authorRule.Nested.OrderedExclude) != 0 {
+				authorRule := bookRule.Nested.OrderedInclude[0]
+				if authorRule.Nested == nil || len(authorRule.Nested.OrderedInclude) != 1 || authorRule.Nested.OrderedInclude[0].Name != "profile" || len(authorRule.Nested.OrderedExclude) != 0 {
 					return false
 				}
-				// Check nested profile: id should be prepended
-				profileRule := authorRule.Nested.OrderedInclude[1]
-				if profileRule.Nested == nil || len(profileRule.Nested.OrderedInclude) != 2 || profileRule.Nested.OrderedInclude[0].Name != "id" || profileRule.Nested.OrderedInclude[1].Name != "email" || len(profileRule.Nested.OrderedExclude) != 0 {
+				profileRule := authorRule.Nested.OrderedInclude[0]
+				if profileRule.Nested == nil || len(profileRule.Nested.OrderedInclude) != 1 || profileRule.Nested.OrderedInclude[0].Name != "email" || len(profileRule.Nested.OrderedExclude) != 0 {
 					return false
 				}
 				return true
 			},
-			desc: "deeply nested include with id defaulted in all levels",
+			desc: "deeply nested include, no id default",
 		},
 		{
 			dsl: "   name  ,   -deleted   ",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Default 'id' included, plus name, plus deleted exclude
-				if len(options.OrderedInclude) != 2 || options.OrderedInclude[0].Name != "id" || options.OrderedInclude[1].Name != "name" {
+				if len(options.OrderedInclude) != 1 || options.OrderedInclude[0].Name != "name" {
 					return false
 				}
-				// Check excludes
 				if len(options.OrderedExclude) != 1 || options.OrderedExclude[0] != "deleted" {
 					return false
 				}
 				return true
 			},
-			desc: "whitespace tolerance with id defaulted",
+			desc: "whitespace tolerance, no id default",
 		},
 		{
 			dsl: "book{title,-publish_at},book{author}",
 			expectFn: func(options *thing.JSONOptions) bool {
-				// Only the first occurrence of book{} is kept; merging is not supported.
-				bookRule := options.OrderedInclude[1]
+				bookRule := options.OrderedInclude[0]
 				if bookRule.Nested == nil {
 					return false
 				}
-				// Should only have id and title (not author)
-				if len(bookRule.Nested.OrderedInclude) != 2 || bookRule.Nested.OrderedInclude[0].Name != "id" || bookRule.Nested.OrderedInclude[1].Name != "title" {
+				if len(bookRule.Nested.OrderedInclude) != 1 || bookRule.Nested.OrderedInclude[0].Name != "title" {
 					return false
 				}
 				if len(bookRule.Nested.OrderedExclude) != 1 || bookRule.Nested.OrderedExclude[0] != "publish_at" {
@@ -223,11 +201,9 @@ func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 					return false
 				}
 				return true
-				// No merge: author is ignored
 			},
-			desc: "nested merge not supported: only first book{...} kept (id defaulted in nested)",
+			desc: "nested merge not supported: only first book{...} kept (no id default)",
 		},
-		// Add more test cases for edge cases, invalid DSL, etc.
 	}
 
 	for _, tt := range tests {
@@ -283,28 +259,28 @@ func TestToJSON_WithFieldsDSL(t *testing.T) {
 	}{
 		{
 			dsl:    "name,books{title}",
-			expect: `{"id":1,"name":"Alice","books":[{"id":1,"title":"Go 101"},{"id":2,"title":"Go Advanced"}]}`,
-			desc:   "include name and books.title only, with id defaulted",
+			expect: `{"name":"Alice","books":[{"title":"Go 101"},{"title":"Go Advanced"}]}`,
+			desc:   "include name and books.title only (no id default)",
 		},
 		{
 			dsl:    "name,books{title,-publish_at}",
-			expect: `{"id":1,"name":"Alice","books":[{"id":1,"title":"Go 101"},{"id":2,"title":"Go Advanced"}]}`,
-			desc:   "exclude books.publish_at, with id defaulted",
+			expect: `{"name":"Alice","books":[{"title":"Go 101"},{"title":"Go Advanced"}]}`,
+			desc:   "exclude books.publish_at (no id default)",
 		},
 		{
 			dsl:    "name,books{title,author}",
-			expect: `{"id":1,"name":"Alice","books":[{"id":1,"title":"Go 101","author":"Bob"},{"id":2,"title":"Go Advanced","author":"Carol"}]}`,
-			desc:   "include books.title and books.author, with id defaulted",
+			expect: `{"name":"Alice","books":[{"title":"Go 101","author":"Bob"},{"title":"Go Advanced","author":"Carol"}]}`,
+			desc:   "include books.title and books.author (no id default)",
 		},
 		{
 			dsl:    "-age,books{title}",
-			expect: `{"id":1,"books":[{"id":1,"title":"Go 101"},{"id":2,"title":"Go Advanced"}]}`,
-			desc:   "exclude age, include id by default",
+			expect: `{"books":[{"title":"Go 101"},{"title":"Go Advanced"}]}`,
+			desc:   "exclude age (no id default)",
 		},
 		{
 			dsl:    "books{title,author},-name,-id,-created_at,-updated_at,-deleted",
-			expect: `{"books":[{"id":1,"title":"Go 101","author":"Bob"},{"id":2,"title":"Go Advanced","author":"Carol"}]}`,
-			desc:   "exclude name and base fields including id, include books fields (id present in nested books)",
+			expect: `{"books":[{"title":"Go 101","author":"Bob"},{"title":"Go Advanced","author":"Carol"}]}`,
+			desc:   "exclude name and base fields including id, include books fields (id not present)",
 		},
 		{
 			dsl:    "age,name,id",
@@ -318,8 +294,8 @@ func TestToJSON_WithFieldsDSL(t *testing.T) {
 		},
 		{
 			dsl:    "",
-			expect: `{"id":1}`,
-			desc:   "empty dsl defaults to id",
+			expect: `{"id":1,"created_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z","deleted":false,"name":"Alice","age":30,"books":[{"id":1,"title":"Go 101","publish_at":"2020","author":"Bob"},{"id":2,"title":"Go Advanced","publish_at":"2021","author":"Carol"}]}`,
+			desc:   "empty dsl outputs all fields (no id default)",
 		},
 	}
 
@@ -331,9 +307,7 @@ func TestToJSON_WithFieldsDSL(t *testing.T) {
 				t.Fatalf("ToJSON error: %v", err)
 			}
 			jsonStr := string(jsonBytes)
-			if jsonStr != tt.expect {
-				t.Errorf("ToJSON output mismatch for DSL %q\nGot:  %s\nWant: %s", tt.dsl, jsonStr, tt.expect)
-			}
+			assert.JSONEq(t, tt.expect, jsonStr)
 		})
 	}
 
@@ -345,10 +319,8 @@ func TestToJSON_WithFieldsDSL(t *testing.T) {
 			t.Fatalf("ToJSON error: %v", err)
 		}
 		jsonStr := string(jsonBytes)
-		expect := `{"id":42,"name":"Bob","books":[{"id":1,"title":"Book1"},{"id":2,"title":"Book2"}]}`
-		if jsonStr != expect {
-			t.Errorf("ToJSON output mismatch for no struct tag DSL\nGot:  %s\nWant: %s", jsonStr, expect)
-		}
+		expect := `{"name":"Bob","books":[{"title":"Book1"},{"title":"Book2"}]}`
+		assert.JSONEq(t, expect, jsonStr)
 	})
 }
 
@@ -378,9 +350,8 @@ func TestToJSON_MethodBasedVirtuals(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		jsonStr := string(jsonBytes)
-		if !(strings.Contains(jsonStr, "first_name") && strings.Contains(jsonStr, "full_name") && strings.Contains(jsonStr, "Alice Smith")) {
-			t.Errorf("expected both field and method output, got: %s", jsonStr)
-		}
+		expect := `{"first_name":"Alice","full_name":"Alice Smith"}`
+		assert.JSONEq(t, expect, jsonStr)
 	})
 
 	t.Run("WithFields DSL: field and virtual method", func(t *testing.T) {
@@ -389,9 +360,8 @@ func TestToJSON_MethodBasedVirtuals(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		jsonStr := string(jsonBytes)
-		if !(strings.Contains(jsonStr, "first_name") && strings.Contains(jsonStr, "full_name") && strings.Contains(jsonStr, "Alice Smith")) {
-			t.Errorf("expected both field and method output, got: %s", jsonStr)
-		}
+		expect := `{"first_name":"Alice","full_name":"Alice Smith"}`
+		assert.JSONEq(t, expect, jsonStr)
 	})
 
 	t.Run("Only virtual method", func(t *testing.T) {
@@ -400,9 +370,8 @@ func TestToJSON_MethodBasedVirtuals(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		jsonStr := string(jsonBytes)
-		if !(strings.Contains(jsonStr, "full_name") && strings.Contains(jsonStr, "Alice Smith")) || strings.Contains(jsonStr, "first_name") {
-			t.Errorf("expected only method output, got: %s", jsonStr)
-		}
+		expect := `{"full_name":"Alice Smith"}`
+		assert.JSONEq(t, expect, jsonStr)
 	})
 
 	t.Run("Omit virtual method", func(t *testing.T) {
@@ -411,8 +380,7 @@ func TestToJSON_MethodBasedVirtuals(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		jsonStr := string(jsonBytes)
-		if strings.Contains(jsonStr, "full_name") || strings.Contains(jsonStr, "Alice Smith") {
-			t.Errorf("expected no method output, got: %s", jsonStr)
-		}
+		expect := `{"first_name":"Alice"}`
+		assert.JSONEq(t, expect, jsonStr)
 	})
 }
