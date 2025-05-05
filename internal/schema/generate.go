@@ -2,6 +2,8 @@ package schema
 
 import (
 	"fmt"
+	"log"
+	"sort"
 	"strings"
 )
 
@@ -63,9 +65,7 @@ var TypeMapping = map[string]map[string]string{
 	},
 }
 
-// GenerateCreateTableSQL 生成单表 CREATE TABLE 语句
-// info: 目标模型的 *schema.ModelInfo
-// dialect: "mysql" | "postgres" | "sqlite"
+// GenerateCreateTableSQL 生成单表 CREATE TABLE 语句及后续的 CREATE INDEX 语句
 func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 	typeMap, ok := TypeMapping[dialect]
 	if !ok {
@@ -116,30 +116,85 @@ func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 	}
 
 	tableName := info.TableName
+	// Use IF NOT EXISTS for table creation for better idempotency
 	createTableSQL := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (\n  %s\n);", tableName, strings.Join(cols, ",\n  "))
 
-	// 索引 SQL 生成
+	// --- Index SQL Generation --- (Modified logic)
 	var indexSQLs []string
-	for _, idx := range info.Indexes {
-		idxName := idx.Name
-		if idxName == "" {
-			idxName = fmt.Sprintf("idx_%s_%s", tableName, strings.Join(idx.Columns, "_"))
+	mergedIndexes := make(map[string]IndexInfo) // name -> consolidated IndexInfo
+
+	populateMergedMap := func(indexes []IndexInfo, unique bool) {
+		for _, idx := range indexes {
+			if len(idx.Columns) == 0 {
+				continue
+			}
+
+			idxName := idx.Name
+			// Generate default name for single-column unnamed indexes
+			if idxName == "" && len(idx.Columns) == 1 {
+				if unique {
+					idxName = fmt.Sprintf("uniq_%s_%s", tableName, idx.Columns[0])
+				} else {
+					idxName = fmt.Sprintf("idx_%s_%s", tableName, idx.Columns[0])
+				}
+			} else if idxName == "" && len(idx.Columns) > 1 {
+				log.Printf("Warning (CREATE): Composite index on table '%s' columns [%s] has no explicit name and will be skipped.", tableName, strings.Join(idx.Columns, ", "))
+				continue
+			}
+
+			if existing, ok := mergedIndexes[idxName]; ok {
+				// Index name exists, merge columns (ensure unique)
+				if existing.Unique != unique {
+					log.Printf("Warning (CREATE): Conflicting uniqueness for index name '%s' on table '%s'. Skipping merge.", idxName, tableName)
+					continue
+				}
+				existingColumnsMap := make(map[string]bool)
+				for _, col := range existing.Columns {
+					existingColumnsMap[col] = true
+				}
+				for _, newCol := range idx.Columns {
+					if !existingColumnsMap[newCol] {
+						existing.Columns = append(existing.Columns, newCol)
+						existingColumnsMap[newCol] = true
+					}
+				}
+				// Sort merged columns for consistency
+				sort.Strings(existing.Columns)
+				mergedIndexes[idxName] = existing // Update map with merged columns
+			} else {
+				// New index name, add to map
+				// Sort columns before adding
+				colsCopy := make([]string, len(idx.Columns))
+				copy(colsCopy, idx.Columns)
+				sort.Strings(colsCopy)
+				mergedIndexes[idxName] = IndexInfo{Name: idxName, Columns: colsCopy, Unique: unique}
+			}
 		}
-		indexSQL := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s);", idxName, tableName, strings.Join(idx.Columns, ", "))
-		indexSQLs = append(indexSQLs, indexSQL)
 	}
-	for _, idx := range info.UniqueIndexes {
-		idxName := idx.Name
-		if idxName == "" {
-			idxName = fmt.Sprintf("uniq_%s_%s", tableName, strings.Join(idx.Columns, "_"))
+
+	populateMergedMap(info.Indexes, false)
+	populateMergedMap(info.UniqueIndexes, true)
+
+	// Generate SQL from the merged map
+	// Sort index names for deterministic output order
+	var sortedIndexNames []string
+	for name := range mergedIndexes {
+		sortedIndexNames = append(sortedIndexNames, name)
+	}
+	sort.Strings(sortedIndexNames)
+
+	for _, name := range sortedIndexNames {
+		idx := mergedIndexes[name]
+		indexSQL := generateCreateIndexSQL(tableName, idx.Name, idx.Columns, idx.Unique, dialect)
+		if indexSQL != "" {
+			indexSQLs = append(indexSQLs, indexSQL)
 		}
-		indexSQL := fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s (%s);", idxName, tableName, strings.Join(idx.Columns, ", "))
-		indexSQLs = append(indexSQLs, indexSQL)
 	}
 
 	allSQL := createTableSQL
 	if len(indexSQLs) > 0 {
-		allSQL += "\n" + strings.Join(indexSQLs, "\n")
+		// Add a separator before index statements
+		allSQL += "\n\n-- Indexes --\n" + strings.Join(indexSQLs, "\n")
 	}
 
 	return allSQL, nil
@@ -203,7 +258,7 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 		}
 	}
 
-	// 5. 修改列类型/主键/唯一约束（仅检测，实际变更需谨慎）
+	// 5. 修改列类型/主键（仅检测，实际变更需谨慎）
 	for col, f := range targetCols {
 		if dbCol, ok := dbCols[col]; ok {
 			goType := f.Type.String()
@@ -222,29 +277,231 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 				// 主键变更
 				sqls = append(sqls, fmt.Sprintf("-- [manual] PRIMARY KEY change for %s (may require table rebuild)", col))
 			}
-			if dbCol.IsUnique != isUniqueInModel(col, modelInfo) {
-				if isUniqueInModel(col, modelInfo) {
-					sqls = append(sqls, fmt.Sprintf("CREATE UNIQUE INDEX IF NOT EXISTS uniq_%s_%s ON %s (%s)", tableName, col, tableName, col))
+		}
+	}
+
+	// --- 6. 索引变更 (Modified logic) ---
+	modelIndexes := make(map[string]IndexInfo) // name -> IndexInfo (combined unique/non-unique)
+	dbIndexes := make(map[string]IndexInfo)    // name -> IndexInfo (combined unique/non-unique)
+
+	// Populate modelIndexes map (generate default names for single-column unnamed)
+	populateIndexMap := func(indexes []IndexInfo, unique bool) {
+		for _, idx := range indexes {
+			if len(idx.Columns) == 0 {
+				continue
+			}
+			// *** Add default name generation for single-column unnamed indexes ***
+			idxName := idx.Name
+			if idxName == "" && len(idx.Columns) == 1 {
+				if unique {
+					idxName = fmt.Sprintf("uniq_%s_%s", tableName, idx.Columns[0])
 				} else {
-					sqls = append(sqls, fmt.Sprintf("DROP INDEX IF EXISTS uniq_%s_%s", tableName, col))
+					idxName = fmt.Sprintf("idx_%s_%s", tableName, idx.Columns[0])
+				}
+			} else if idxName == "" && len(idx.Columns) > 1 {
+				log.Printf("Warning (ALTER): Composite index on table '%s' columns [%s] has no explicit name and will be skipped.", tableName, strings.Join(idx.Columns, ", "))
+				continue
+			}
+
+			mapKey := idxName // Use generated or provided name as map key
+			if existing, ok := modelIndexes[mapKey]; ok {
+				if existing.Unique != unique {
+					log.Printf("Warning (ALTER): Conflicting uniqueness for index name '%s' on table '%s'. Skipping definition.", mapKey, tableName)
+					continue
+				}
+				if !equalStringSlice(existing.Columns, idx.Columns) {
+					log.Printf("Warning (ALTER): Index name '%s' on table '%s' used for different column sets? Skipping definition.", mapKey, tableName)
+					continue
+				}
+			} else {
+				modelIndexes[mapKey] = IndexInfo{Name: idxName, Columns: idx.Columns, Unique: unique}
+			}
+		}
+	}
+	populateIndexMap(modelInfo.Indexes, false)
+	populateIndexMap(modelInfo.UniqueIndexes, true)
+
+	// Populate dbIndexes map (using names from DB)
+	for _, idx := range tableInfo.Indexes {
+		if strings.HasPrefix(idx.Name, "sqlite_autoindex_") {
+			continue
+		} // Skip SQLite auto PK index
+		// Sort columns from DB for consistent comparison
+		cols := make([]string, len(idx.Columns))
+		copy(cols, idx.Columns)
+		sort.Strings(cols)
+		dbIndexes[idx.Name] = IndexInfo{Name: idx.Name, Columns: cols, Unique: idx.Unique}
+	}
+
+	// Find indexes to ADD
+	for name, mIdx := range modelIndexes {
+		// log.Printf("[DEBUG ALTER ADD] Checking model index: Name='%s', Unique=%v, Columns=%v", name, mIdx.Unique, mIdx.Columns)
+		if dbIdx, exists := dbIndexes[name]; !exists {
+			// log.Printf("[DEBUG ALTER ADD] Index '%s' not in DB. Generating CREATE statement.", name)
+			// Index exists in model but not in DB -> ADD
+			createSQL := generateCreateIndexSQL(tableName, mIdx.Name, mIdx.Columns, mIdx.Unique, dialect)
+			sqls = append(sqls, createSQL)
+		} else {
+			// log.Printf("[DEBUG ALTER ADD] Index '%s' exists in DB. Checking for changes.", name)
+			// Index exists in both: Check for changes (Unique status or Columns)
+			// Note: Changing columns usually requires DROP + ADD, handled below by drop logic first.
+			if mIdx.Unique != dbIdx.Unique {
+				log.Printf("Info (ALTER): Index '%s' on table '%s' needs uniqueness change (requires DROP+ADD).", name, tableName)
+				dropSQL := generateDropIndexSQL(tableName, name, dialect)
+				// Avoid adding duplicate drop/create if columns also changed
+				if !containsSQL(sqls, dropSQL) {
+					sqls = append(sqls, dropSQL)
+				}
+				createSQL := generateCreateIndexSQL(tableName, mIdx.Name, mIdx.Columns, mIdx.Unique, dialect)
+				if !containsSQL(sqls, createSQL) {
+					sqls = append(sqls, createSQL)
+				}
+			} else if !equalStringSlice(mIdx.Columns, dbIdx.Columns) {
+				// Columns differ, requires DROP + ADD
+				log.Printf("Info (ALTER): Index '%s' on table '%s' needs column change (requires DROP+ADD). Model:[%s], DB:[%s]", name, tableName, strings.Join(mIdx.Columns, ","), strings.Join(dbIdx.Columns, ","))
+				dropSQL := generateDropIndexSQL(tableName, name, dialect)
+				if !containsSQL(sqls, dropSQL) {
+					sqls = append(sqls, dropSQL)
+				}
+				createSQL := generateCreateIndexSQL(tableName, mIdx.Name, mIdx.Columns, mIdx.Unique, dialect)
+				if !containsSQL(sqls, createSQL) {
+					sqls = append(sqls, createSQL)
 				}
 			}
 		}
 	}
 
-	// 6. 索引变更（仅简单支持单列索引/唯一索引）
-	// 可扩展: 多列索引、外键等
+	// Find indexes to DROP
+	for name, dbIdx := range dbIndexes {
+		modelIdx, exists := modelIndexes[name]
+		if !exists || modelIdx.Unique != dbIdx.Unique || !equalStringSlice(modelIdx.Columns, dbIdx.Columns) {
+			// Drop if: not in model OR uniqueness differs OR columns differ (and wasn't handled by ADD/MODIFY above)
+			// Avoid dropping generated indexes if the column still exists and requires one
+			// Check if the model index that *should* exist (based on columns/unique) has a *different* name
+			shouldDrop := true
+			potentialModelMatchName := ""
+			for mName, mIdx := range modelIndexes {
+				if equalStringSlice(dbIdx.Columns, mIdx.Columns) && dbIdx.Unique == mIdx.Unique {
+					potentialModelMatchName = mName
+					break
+				}
+			}
+
+			if !exists && potentialModelMatchName != "" && potentialModelMatchName != name {
+				// Index columns/type match a model index, but the name is different.
+				// This suggests a rename occurred OR the DB index uses a default name while model uses explicit.
+				// Avoid dropping the DB index in this case. A RENAME would be ideal but complex.
+				log.Printf("Info (ALTER): Index '%s' on table '%s' seems to match model index '%s' with different name. Skipping drop.", name, tableName, potentialModelMatchName)
+				shouldDrop = false
+			}
+
+			// If the DB index didn't match any model index by name, and doesn't match any model index by definition (cols/unique) either,
+			// then it's truly orphaned and should be dropped.
+			if exists && (modelIdx.Unique != dbIdx.Unique || !equalStringSlice(modelIdx.Columns, dbIdx.Columns)) {
+				// Already handled by ADD section (DROP + ADD)
+				shouldDrop = false
+			}
+
+			if shouldDrop {
+				dropSQL := generateDropIndexSQL(tableName, name, dialect)
+				if !containsSQL(sqls, dropSQL) { // Avoid duplicates if DROP+ADD already added it
+					sqls = append(sqls, dropSQL)
+				}
+			}
+		}
+	}
+
 	return sqls, nil
 }
 
-// isUniqueInModel 判断列是否在 modelInfo 中声明为唯一索引
-func isUniqueInModel(col string, modelInfo *ModelInfo) bool {
-	for _, idx := range modelInfo.UniqueIndexes {
-		if len(idx.Columns) == 1 && idx.Columns[0] == col {
+// --- Helper Functions ---
+
+// containsSQL checks if a slice already contains a specific SQL string.
+func containsSQL(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
 			return true
 		}
 	}
 	return false
+}
+
+// generateCreateIndexSQL generates the CREATE INDEX statement.
+func generateCreateIndexSQL(tableName, indexName string, columns []string, unique bool, dialect string) string {
+	if len(columns) == 0 {
+		return "" // Should not happen
+	}
+	stmt := "CREATE"
+	if unique {
+		stmt += " UNIQUE"
+	}
+	stmt += " INDEX"
+	if dialect == "sqlite" || dialect == "postgres" {
+		stmt += " IF NOT EXISTS"
+	}
+	// Basic quoting for safety, might need dialect-specific quoting improvement
+	quotedTableName := fmt.Sprintf("`%s`", tableName) // Basic quoting
+	quotedIndexName := fmt.Sprintf("`%s`", indexName)
+	if dialect == "postgres" {
+		quotedTableName = fmt.Sprintf(`"%s"`, tableName)
+		quotedIndexName = fmt.Sprintf(`"%s"`, indexName)
+	}
+
+	// Quote each column name appropriately for the dialect
+	quotedColumnsList := make([]string, len(columns))
+	for i, col := range columns {
+		if dialect == "postgres" {
+			quotedColumnsList[i] = fmt.Sprintf(`"%s"`, col)
+		} else {
+			quotedColumnsList[i] = fmt.Sprintf("`%s`", col) // Basic quoting for mysql/sqlite
+		}
+	}
+
+	// Join the quoted column names with commas
+	columnsSQL := strings.Join(quotedColumnsList, ", ")
+
+	return fmt.Sprintf("%s %s ON %s (%s);", stmt, quotedIndexName, quotedTableName, columnsSQL)
+}
+
+// generateDropIndexSQL generates the DROP INDEX statement.
+func generateDropIndexSQL(tableName, indexName string, dialect string) string {
+	// Basic quoting for safety
+	quotedIndexName := fmt.Sprintf("`%s`", indexName)
+	quotedTableName := fmt.Sprintf("`%s`", tableName)
+	if dialect == "postgres" {
+		quotedIndexName = fmt.Sprintf(`"%s"`, indexName)
+		quotedTableName = fmt.Sprintf(`"%s"`, tableName)
+	}
+
+	switch dialect {
+	case "mysql":
+		// MySQL uses ALTER TABLE or DROP INDEX ... ON ...
+		return fmt.Sprintf("DROP INDEX %s ON %s;", quotedIndexName, quotedTableName)
+	case "postgres", "sqlite":
+		return fmt.Sprintf("DROP INDEX IF EXISTS %s;", quotedIndexName)
+	default:
+		return fmt.Sprintf("-- Unsupported dialect for DROP INDEX: %s", dialect) // Or return error
+	}
+}
+
+// equalStringSlice checks if two string slices contain the same elements, regardless of order.
+func equalStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// Create copies and sort them for comparison
+	sa := make([]string, len(a))
+	copy(sa, a)
+	sort.Strings(sa)
+	sb := make([]string, len(b))
+	copy(sb, b)
+	sort.Strings(sb)
+	for i := range sa {
+		if sa[i] != sb[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // GenerateMigrationsTableSQL 返回 schema_migrations 版本表的建表 SQL，兼容多数据库

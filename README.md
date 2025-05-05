@@ -601,15 +601,23 @@ func rawSQLExample() {
 
 ### Index Declaration
 
-- Normal index: add tag `thing:"index"` to the struct field
-- Unique index: add tag `thing:"unique"` to the struct field
+- Normal index: add tag db:"...,index" to the struct field
+- Unique index: add tag db:"...,unique" to the struct field
+- Composite index: db:"...,index:idx_name"
+- Composite unique: db:"...,unique:uq_name"
 
 ```go
 // Example
  type User struct {
      ID    int64  `db:"id,pk"`
-     Name  string `db:"name" thing:"index"`
-     Email string `db:"email" thing:"unique"`
+     Name  string `db:"name,index"`
+     Email string `db:"email,unique"`
+ }
+
+// Composite index example
+ type Book struct {
+     Title  string `db:"title,index:idx_title_author"`
+     Author string `db:"author,index:idx_title_author"`
  }
 ```
 

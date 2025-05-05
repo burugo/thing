@@ -48,12 +48,33 @@ alwaysApply: false
     ```go
     type User struct {
         thing.BaseModel // Includes ID, CreatedAt, UpdatedAt, DeletedAt
-        Name string `db:"name"`
-        Age  int    `db:"age"`
+        Name string `db:"name"` // Explicitly maps Name field to 'name' column
+        UserAge int // db tag omitted, defaults to 'user_age' column
     }
     // Optional: Define TableName() method if different from snake_case plural struct name.
     // func (u *User) TableName() string { return "custom_users_table" }
     ```
+    **Note:** While using the `db` tag is recommended for clarity, it's technically optional. If omitted, Thing ORM defaults to converting the Go field name (CamelCase, e.g., `UserAge`) to its snake_case equivalent (`user_age`) as the database column name. Use `db:"-"` to explicitly ignore a field.
+
+    **Example:**
+    ```go
+    // Example: All index types and relationships
+    type User struct {
+        thing.BaseModel
+        Name  string `db:"name,index"`                // Single-field index
+        Email string `db:"email,unique"`              // Single-field unique index
+        ColA  string `db:"col_a,index:idx_ab"`        // Composite index (idx_ab)
+        ColB  int    `db:"col_b,index:idx_ab"`        // Composite index (idx_ab)
+        KeyA  string `db:"key_a,unique:uq_ab"`        // Composite unique index (uq_ab)
+        KeyB  string `db:"key_b,unique:uq_ab"`        // Composite unique index (uq_ab)
+        // Relationship example:
+        Books []*Book `thing:"hasMany;fk:user_id;model:Book" db:"-"`
+    }
+    ```
+
+    **Indexes are always declared in the db tag (index, unique, index:..., unique:...).**
+    **The thing tag is only used for relationship declarations (hasMany, belongsTo, model, fk, etc.).**
+    **Do not use thing tag for index declaration.**
 2.  **CRUD Operations (using `userThing` from config step):**
     - **Create/Update:** `err := userThing.Save(userInstance)`
     - **Read by ID:** `foundUser, err := userThing.ByID(id)` (uses cache)
@@ -84,7 +105,7 @@ alwaysApply: false
     // User *User `thing:"belongsTo;fk:user_id" db:"-"`
     ```
 - **Hooks:** Register listeners for events (e.g., `BeforeSave`, `AfterCreate`) using `thing.RegisterListener`.
-- **Auto Migration:** `thing.AutoMigrate(&User{}, &Book{})` creates/updates tables based on model struct tags (`db`, `thing:"index"`, `thing:"unique"`).
+- **Auto Migration:** `thing.AutoMigrate(&User{}, &Book{})` creates/updates tables based on model struct tags (`db`).
 - **JSON Serialization:** `thing.ToJSON(model, options...)`. Use `thing.WithFields("field1,nested{subfield},-excluded")` for flexible control, including method-based virtual properties (e.g., `FullName() string` -> `full_name` in DSL).
 - **Raw SQL:** Access via `dbAdapter := userThing.DBAdapter()`, then use `dbAdapter.Exec`, `dbAdapter.Get`, `dbAdapter.Select`.
 

@@ -95,171 +95,156 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 	info.Columns = make([]string, 0, numFields) // Using renamed field
 	info.Fields = make([]string, 0, numFields)
 
-	var processFields func(structType reflect.Type, parentIndex []int, isEmbedded bool)
-	processFields = func(structType reflect.Type, parentIndex []int, isEmbedded bool) {
+	var processFields func(structType reflect.Type, parentIndex []int, isEmbedded bool, compositeIndexes map[string]*IndexInfo, rootInfo *ModelInfo)
+	processFields = func(structType reflect.Type, parentIndex []int, isEmbedded bool, compositeIndexes map[string]*IndexInfo, rootInfo *ModelInfo) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[PANIC] processFields: structType=%s, parentIndex=%v, isEmbedded=%v, panic=%v", structType.Name(), parentIndex, isEmbedded, r)
+				panic(r)
+			}
+		}()
 		for i := 0; i < structType.NumField(); i++ {
+			if i >= structType.NumField() {
+				log.Printf("[PANIC PREVENT] processFields: i=%d out of bounds for structType=%s (NumField=%d)", i, structType.Name(), structType.NumField())
+				continue
+			}
 			field := structType.Field(i)
 			dbTag := field.Tag.Get("db")
-			diffTag := field.Tag.Get("diff")   // Optional diff tag
-			thingTag := field.Tag.Get("thing") // Check for thing tag (used for relations or index/unique)
-
-			// Only skip if thingTag indicates a relationship (hasMany, belongsTo, rel=, model:, fk:)
-			if thingTag != "" {
-				tagLower := strings.ToLower(thingTag)
-				if strings.Contains(tagLower, "hasmany") || strings.Contains(tagLower, "belongsto") || strings.Contains(tagLower, "rel=") || strings.Contains(tagLower, "model:") || strings.Contains(tagLower, "fk:") {
-					log.Printf("DEBUG GetCachedModelInfo: Skipping field %s with relationship 'thing' tag: %s", field.Name, thingTag)
+			diffTag := field.Tag.Get("diff") // Optional diff tag
+			var columnName string
+			var isPk bool
+			var currentFieldName string
+			var fieldType reflect.Type
+			var dbTagParts []string
+			if dbTag != "" {
+				dbTagParts = strings.Split(dbTag, ",")
+			}
+			switch {
+			case field.Anonymous && field.Type.Kind() == reflect.Struct && field.Type.Name() == "BaseModel":
+				// Robust check: ensure structType.Field(i) exists, is struct, and is BaseModel
+				if i >= structType.NumField() || structType.Field(i).Type.Kind() != reflect.Struct || structType.Field(i).Name != "BaseModel" || structType.Field(i).Type.Name() != "BaseModel" {
+					// log.Printf("[WARN] processFields: Skipping BaseModel aggregation at i=%d, structType=%s, parentIndex=%v (not BaseModel or out of bounds)", i, structType.Name(), parentIndex)
 					continue
 				}
-			}
-
-			// If field is embedded struct, process its fields recursively
-			if field.Anonymous && field.Type.Kind() == reflect.Struct {
-				// For BaseModel, process fields directly since they're important
-				if field.Type.Name() == "BaseModel" {
-					baseModelType := field.Type
-					for j := 0; j < baseModelType.NumField(); j++ {
-						baseField := baseModelType.Field(j)
-						baseDbTag := baseField.Tag.Get("db")
-						baseDiffTag := baseField.Tag.Get("diff") // Optional diff tag for BaseModel fields
-
-						if baseDbTag == "-" || !baseField.IsExported() {
-							continue
-						}
-
-						// Correctly parse column name and pk tag
-						columnName := baseDbTag
-						isPk := false
-						if strings.Contains(columnName, ",") {
-							parts := strings.SplitN(columnName, ",", 2)
-							columnName = parts[0]
-							if parts[1] == "pk" || parts[1] == "primarykey" {
-								isPk = true
-							}
-						}
-						if columnName == "" {
-							columnName = ToSnakeCase(baseField.Name) // Default to snake_case
-						}
-
-						// Store mapping for the BaseModel field
-						info.Columns = append(info.Columns, columnName)
-						info.Fields = append(info.Fields, baseField.Name)
-						info.FieldToColumnMap[baseField.Name] = columnName
-						info.ColumnToFieldMap[columnName] = baseField.Name
-
-						// Store field info for comparison
-						info.CompareFields = append(info.CompareFields, ComparableFieldInfo{
-							GoName:       baseField.Name,
-							DBColumn:     columnName,
-							Index:        append(parentIndex, i, j), // Index into embedded struct + base model field
-							IsZero:       getZeroChecker(baseField.Type),
-							Kind:         baseField.Type.Kind(),
-							Type:         baseField.Type,
-							IsEmbedded:   true, // Mark as embedded field
-							IgnoreInDiff: baseDiffTag == "-",
-						})
-
-						// Check for primary key tag in BaseModel
-						if isPk {
-							pkDbName = columnName
-						}
-
-						// 解析 thing tag
-						thingTag = baseField.Tag.Get("thing")
-						if thingTag != "" {
-							var tags []string
-							tags = strings.Split(thingTag, ",")
-							for _, tag := range tags {
-								tag = strings.TrimSpace(tag)
-								if tag == "index" {
-									info.Indexes = append(info.Indexes, IndexInfo{
-										Name:    "",
-										Columns: []string{columnName},
-										Unique:  false,
-									})
-								} else if tag == "unique" {
-									info.UniqueIndexes = append(info.UniqueIndexes, IndexInfo{
-										Name:    "",
-										Columns: []string{columnName},
-										Unique:  true,
-									})
+				baseModelType := field.Type
+				for j := 0; j < baseModelType.NumField(); j++ {
+					baseField := baseModelType.Field(j)
+					baseDbTag := baseField.Tag.Get("db")
+					baseDiffTag := baseField.Tag.Get("diff")
+					var baseDbTagParts []string
+					if baseDbTag != "" {
+						baseDbTagParts = strings.Split(baseDbTag, ",")
+					}
+					if len(baseDbTagParts) > 0 && baseDbTagParts[0] == "-" || !baseField.IsExported() {
+						continue
+					}
+					columnName = ""
+					isPk = false
+					if len(baseDbTagParts) > 0 {
+						columnName = baseDbTagParts[0]
+						if len(baseDbTagParts) > 1 {
+							for _, part := range baseDbTagParts[1:] {
+								if part == "pk" || part == "primarykey" {
+									isPk = true
 								}
 							}
 						}
 					}
-				} else {
-					// Process other embedded structs recursively
-					processFields(field.Type, append(parentIndex, i), true)
-				}
-				continue // Skip processing the embedded struct field itself
-			}
-
-			// Ignore unexported fields or fields tagged with `db:"-"`
-			if dbTag == "-" || !field.IsExported() {
-				continue
-			}
-
-			// Correctly parse column name and pk tag
-			columnName := dbTag
-			isPk := false
-			if strings.Contains(columnName, ",") {
-				parts := strings.SplitN(columnName, ",", 2)
-				columnName = parts[0]
-				if parts[1] == "pk" || parts[1] == "primarykey" {
-					isPk = true
-				}
-			}
-			if columnName == "" {
-				columnName = ToSnakeCase(field.Name) // Default to snake_case
-			}
-
-			info.Columns = append(info.Columns, columnName)
-			info.Fields = append(info.Fields, field.Name)
-			info.FieldToColumnMap[field.Name] = columnName
-			info.ColumnToFieldMap[columnName] = field.Name
-
-			// Store field info for comparison
-			info.CompareFields = append(info.CompareFields, ComparableFieldInfo{
-				GoName:       field.Name,
-				DBColumn:     columnName,
-				Index:        append(parentIndex, i),
-				IsZero:       getZeroChecker(field.Type),
-				Kind:         field.Type.Kind(),
-				Type:         field.Type,
-				IsEmbedded:   isEmbedded,
-				IgnoreInDiff: diffTag == "-",
-			})
-
-			// Check for primary key if not already found in embedded BaseModel
-			if pkDbName == "" && isPk {
-				pkDbName = columnName
-			}
-
-			// 解析 thing tag
-			thingTag = field.Tag.Get("thing")
-			if thingTag != "" {
-				var tags []string
-				tags = strings.Split(thingTag, ",")
-				for _, tag := range tags {
-					tag = strings.TrimSpace(tag)
-					if tag == "index" {
-						info.Indexes = append(info.Indexes, IndexInfo{
-							Name:    "",
-							Columns: []string{columnName},
-							Unique:  false,
-						})
-					} else if tag == "unique" {
-						info.UniqueIndexes = append(info.UniqueIndexes, IndexInfo{
-							Name:    "",
-							Columns: []string{columnName},
-							Unique:  true,
-						})
+					if columnName == "" {
+						columnName = ToSnakeCase(baseField.Name)
+					}
+					currentFieldName = baseField.Name
+					fieldType = baseField.Type
+					fullIndex := []int{i, j}
+					rootInfo.Columns = append(rootInfo.Columns, columnName)
+					rootInfo.Fields = append(rootInfo.Fields, currentFieldName)
+					rootInfo.FieldToColumnMap[currentFieldName] = columnName
+					rootInfo.ColumnToFieldMap[columnName] = currentFieldName
+					zeroChecker := getZeroChecker(fieldType)
+					rootInfo.CompareFields = append(rootInfo.CompareFields, ComparableFieldInfo{
+						GoName:       currentFieldName,
+						DBColumn:     columnName,
+						Index:        fullIndex,
+						IsZero:       zeroChecker,
+						Kind:         fieldType.Kind(),
+						Type:         fieldType,
+						IsEmbedded:   true,
+						IgnoreInDiff: baseDiffTag == "-",
+					})
+					if isPk && pkDbName == "" {
+						pkDbName = columnName
+					}
+					if len(baseDbTagParts) > 1 {
+						for _, part := range baseDbTagParts[1:] {
+							parseIndexTagFromDb(part, columnName, compositeIndexes, rootInfo)
+						}
 					}
 				}
+				continue
+			case field.Anonymous && field.Type.Kind() == reflect.Struct:
+				// Only recurse for anonymous struct fields
+				processFields(field.Type, append(parentIndex, i), true, compositeIndexes, rootInfo)
+				continue
+			default:
+				// 只聚合自身，不递归、不拼接 parentIndex
+				if len(dbTagParts) > 0 && dbTagParts[0] == "-" || !field.IsExported() {
+					continue
+				}
+				columnName = ""
+				isPk = false
+				if len(dbTagParts) > 0 {
+					columnName = dbTagParts[0]
+					if len(dbTagParts) > 1 {
+						for _, part := range dbTagParts[1:] {
+							if part == "pk" || part == "primarykey" {
+								isPk = true
+							}
+						}
+					}
+				}
+				if columnName == "" {
+					columnName = ToSnakeCase(field.Name)
+				}
+				currentFieldName = field.Name
+				fieldType = field.Type
+				fullIndex := []int{i}
+				zeroChecker := getZeroChecker(fieldType)
+				// Ensure maps are populated for default fields
+				rootInfo.Columns = append(rootInfo.Columns, columnName)
+				rootInfo.Fields = append(rootInfo.Fields, currentFieldName)
+				rootInfo.FieldToColumnMap[currentFieldName] = columnName
+				rootInfo.ColumnToFieldMap[columnName] = currentFieldName
+				rootInfo.CompareFields = append(rootInfo.CompareFields, ComparableFieldInfo{
+					GoName:       currentFieldName,
+					DBColumn:     columnName,
+					Index:        fullIndex,
+					IsZero:       zeroChecker,
+					Kind:         fieldType.Kind(),
+					Type:         fieldType,
+					IsEmbedded:   isEmbedded,
+					IgnoreInDiff: diffTag == "-",
+				})
+				if isPk && pkDbName == "" {
+					pkDbName = columnName
+				}
+				if len(dbTagParts) > 1 {
+					for _, part := range dbTagParts[1:] {
+						parseIndexTagFromDb(part, columnName, compositeIndexes, rootInfo)
+					}
+				}
+			}
+			for name, idxInfo := range compositeIndexes {
+				if idxInfo.Unique {
+					rootInfo.UniqueIndexes = append(rootInfo.UniqueIndexes, *idxInfo)
+				} else {
+					rootInfo.Indexes = append(rootInfo.Indexes, *idxInfo)
+				}
+				delete(compositeIndexes, name)
 			}
 		}
 	}
 
-	processFields(modelType, []int{}, false)
+	processFields(modelType, []int{}, false, make(map[string]*IndexInfo), &info)
 
 	if pkDbName == "" {
 		pkDbName = "id" // Default to "id" if no pk tag found
@@ -368,5 +353,62 @@ func ConvertTableInfo(src *driversSchema.TableInfo) *TableInfo {
 		Columns:    columns,
 		Indexes:    indexes,
 		PrimaryKey: src.PrimaryKey,
+	}
+}
+
+// 新增 parseIndexTagFromDb 辅助函数
+func parseIndexTagFromDb(part string, columnName string, compositeIndexes map[string]*IndexInfo, rootInfo *ModelInfo) {
+	part = strings.TrimSpace(part)
+	switch {
+	case part == "index":
+		rootInfo.Indexes = append(rootInfo.Indexes, IndexInfo{
+			Name:    "",
+			Columns: []string{columnName},
+			Unique:  false,
+		})
+	case part == "unique":
+		rootInfo.UniqueIndexes = append(rootInfo.UniqueIndexes, IndexInfo{
+			Name:    "",
+			Columns: []string{columnName},
+			Unique:  true,
+		})
+	case strings.HasPrefix(part, "index:"):
+		indexName := strings.TrimPrefix(part, "index:")
+		if indexName == "" {
+			log.Printf("Warning: Empty index name found for column %s. Skipping.", columnName)
+			return
+		}
+		if existing, ok := compositeIndexes[indexName]; ok {
+			if existing.Unique {
+				log.Printf("Error: Index '%s' defined as both unique and non-unique. Skipping column %s.", indexName, columnName)
+				return
+			}
+			existing.Columns = append(existing.Columns, columnName)
+		} else {
+			compositeIndexes[indexName] = &IndexInfo{
+				Name:    indexName,
+				Columns: []string{columnName},
+				Unique:  false,
+			}
+		}
+	case strings.HasPrefix(part, "unique:"):
+		indexName := strings.TrimPrefix(part, "unique:")
+		if indexName == "" {
+			log.Printf("Warning: Empty unique index name found for column %s. Skipping.", columnName)
+			return
+		}
+		if existing, ok := compositeIndexes[indexName]; ok {
+			if !existing.Unique {
+				log.Printf("Error: Index '%s' defined as both unique and non-unique. Skipping column %s.", indexName, columnName)
+				return
+			}
+			existing.Columns = append(existing.Columns, columnName)
+		} else {
+			compositeIndexes[indexName] = &IndexInfo{
+				Name:    indexName,
+				Columns: []string{columnName},
+				Unique:  true,
+			}
+		}
 	}
 }

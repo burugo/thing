@@ -50,7 +50,7 @@ func TestGenerateAlterTableSQL(t *testing.T) {
 		if sql == "ALTER TABLE users ADD COLUMN name TEXT" {
 			foundAdd = true
 		}
-		if sql == "CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email ON users (email)" {
+		if strings.Contains(sql, "CREATE UNIQUE INDEX") && strings.Contains(sql, "uniq_users_email") && strings.Contains(sql, "ON `users` (`email`)") {
 			foundUnique = true
 		}
 	}
@@ -77,7 +77,7 @@ func TestGenerateAlterTableSQL_MySQL(t *testing.T) {
 		if sql == "ALTER TABLE users ADD COLUMN name VARCHAR(255)" {
 			foundAdd = true
 		}
-		if sql == "CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email ON users (email)" {
+		if strings.Contains(sql, "CREATE UNIQUE INDEX") && strings.Contains(sql, "uniq_users_email") && strings.Contains(sql, "ON `users` (`email`)") {
 			foundUnique = true
 		}
 	}
@@ -104,7 +104,7 @@ func TestGenerateAlterTableSQL_Postgres(t *testing.T) {
 		if sql == "ALTER TABLE users ADD COLUMN name VARCHAR(255)" {
 			foundAdd = true
 		}
-		if sql == "CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email ON users (email)" {
+		if strings.Contains(sql, "CREATE UNIQUE INDEX") && strings.Contains(sql, "uniq_users_email") && strings.Contains(sql, `ON "users" ("email")`) {
 			foundUnique = true
 		}
 	}

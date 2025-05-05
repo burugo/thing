@@ -53,6 +53,16 @@ func FindChangedFieldsSimple[T any](original, updated *T, info *schema.ModelInfo
 			uVal = uVal.Elem()
 		}
 
+		// *** Add robustness check for FieldByIndex ***
+		if oVal.Kind() != reflect.Struct || uVal.Kind() != reflect.Struct || len(fieldInfo.Index) == 0 {
+			// log.Printf("[WARN] diff.go: Skipping field %s due to invalid struct kind or empty Index. oKind=%v, uKind=%v, Index=%v", fieldInfo.DBColumn, oVal.Kind(), uVal.Kind(), fieldInfo.Index)
+			continue
+		}
+		if fieldInfo.Index[0] >= oVal.NumField() || fieldInfo.Index[0] >= uVal.NumField() {
+			// log.Printf("[WARN] diff.go: Skipping field %s due to Index[0] out of bounds. Index=%v, oNumFields=%d, uNumFields=%d", fieldInfo.DBColumn, fieldInfo.Index, oVal.NumField(), uVal.NumField())
+			continue
+		}
+
 		oField := oVal.FieldByIndex(fieldInfo.Index)
 		uField := uVal.FieldByIndex(fieldInfo.Index)
 

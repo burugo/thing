@@ -291,11 +291,9 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		result, err = t.db.Exec(ctx, query, args...)
 	} else {
 		// --- UPDATE Path ---
-		// Fetch the original record to compare against (bypass cache)
-		// We need the original state to correctly update query caches incrementally.
+		// Fetch the original record to compare against (优先查缓存)
 		original = utils.NewPtr[T]()
-		// Now original is a non-nil pointer of type T
-		err = t.db.Get(ctx, original, fmt.Sprintf("%s WHERE \"%s\" = ?", t.db.Builder().BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName), id) // Use exported PkName
+		err = t.byIDInternal(ctx, id, &original)
 		if err != nil {
 			// If not found, use a non-nil zero value pointer for original
 			original = utils.NewPtr[T]() // Ensure original is a non-nil pointer
@@ -347,56 +345,61 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 	}
 
 	// --- Update Model State (ID, NewRecord) ---
-	if isNew {
-		lastID, errID := result.LastInsertId()
-		if errID != nil {
-			log.Printf("WARN: Could not get LastInsertId for %s: %v", t.info.TableName, errID)
-			// Consider returning error? Or just log?
-		} else {
-			// Use reflection to set ID if needed
-			if setter, ok := any(value).(interface{ SetID(int64) }); ok {
-				setter.SetID(lastID)
+	if modelValue.IsValid() && modelValue.Elem().FieldByName("ID").CanSet() {
+		if isNew {
+			lastID, errID := result.LastInsertId()
+			if errID != nil {
+				log.Printf("WARN: Could not get LastInsertId for %s: %v", t.info.TableName, errID)
+			} else {
+				if setter, ok := any(value).(interface{ SetID(int64) }); ok {
+					setter.SetID(lastID)
+				}
 			}
 		}
-	}
-	// Use reflection to set NewRecord flag if needed
-	if setter, ok := any(value).(interface{ SetNewRecordFlag(bool) }); ok {
-		setter.SetNewRecordFlag(false)
+		// --- Set NewRecord flag to false after save ---
+		setNewRecordFlagIfBaseModel(value, false)
+	} else {
+		log.Printf("[WARN] saveInternal: Could not set ID or NewRecordFlag on model value for %T", value)
 	}
 
 	// --- Update Cache ---
-	if t.cache != nil {
-		// Invalidate/Update the single object cache
+	switch {
+	case t.cache == nil:
+		log.Printf("[DEBUG] saveInternal: Cache is nil, skipping cache update for %T", value)
+	case !modelValue.IsValid():
+		log.Printf("[WARN] saveInternal: Model value invalid, skipping cache update for %T", value)
+	default: // t.cache != nil && modelValue.IsValid()
 		cacheKey := generateCacheKey(t.info.TableName, value.GetID())
-
-		// Use a lock to prevent race conditions during cache update
 		lockKey := cacheKey + ":lock"
-		err := WithLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
-			// Re-set the model in the cache with the latest data and TTL
-			if errCache := t.cache.SetModel(ctx, cacheKey, value, globalCacheTTL); errCache != nil { // USE globalCacheTTL
+
+		errLock := WithLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
+			if errCache := t.cache.SetModel(ctx, cacheKey, value, globalCacheTTL); errCache != nil {
 				log.Printf("WARN: Failed to update cache for %s after save: %v", cacheKey, errCache)
-				// Don't return error, DB succeeded, log is sufficient for cache warn
 			}
-			return nil // Lock action successful
+			return nil
 		})
-		if err != nil {
-			log.Printf("WARN: Failed to acquire lock for cache update %s: %v", lockKey, err)
-			// Log warning, but don't fail the whole save operation
+		if errLock != nil {
+			log.Printf("WARN: Failed to acquire lock for cache update %s: %v", lockKey, errLock)
 		}
 
-		// --- Update Query Caches (Incremental) ---
+		// Update Query Caches (Incremental)
+		// Pass original even if it's a zero value in CREATE case
+		// Pass value (which is the final state)
 		t.invalidateAffectedQueryCaches(ctx, value, original, isNew, false)
-		// --- End Update Query Caches ---
 	}
 
-	// --- Trigger AfterSave/AfterCreate Hooks ---
-	if isNew {
-		if err := triggerEvent(ctx, EventTypeAfterCreate, value, nil); err != nil { // Uses helper defined later
-			log.Printf("WARN: AfterCreate hook failed: %v", err)
+	// Trigger AfterSave/AfterCreate Hooks
+	if modelValue.IsValid() {
+		if isNew {
+			if err := triggerEvent(ctx, EventTypeAfterCreate, value, nil); err != nil {
+				log.Printf("WARN: AfterCreate hook failed: %v", err)
+			}
 		}
-	}
-	if err := triggerEvent(ctx, EventTypeAfterSave, value, changedFields); err != nil { // Uses helper defined later
-		log.Printf("WARN: AfterSave hook failed: %v", err)
+		if err := triggerEvent(ctx, EventTypeAfterSave, value, changedFields); err != nil {
+			log.Printf("WARN: AfterSave hook failed: %v", err)
+		}
+	} else {
+		log.Printf("[WARN] saveInternal: Model value invalid, skipping AfterSave/AfterCreate hooks for %T", value)
 	}
 
 	return nil // Success
@@ -416,8 +419,12 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 	tableName := t.info.TableName // Get table name from cached info
 
 	// --- Trigger BeforeDelete hook ---
-	if err := triggerEvent(ctx, EventTypeBeforeDelete, value, nil); err != nil { // Uses helper defined later
-		return fmt.Errorf("BeforeDelete hook failed: %w", err)
+	if reflect.ValueOf(value).IsValid() {
+		if err := triggerEvent(ctx, EventTypeBeforeDelete, value, nil); err != nil {
+			return fmt.Errorf("BeforeDelete hook failed: %w", err)
+		}
+	} else {
+		log.Printf("[WARN] deleteInternal: Model value invalid, skipping BeforeDelete hook for %T", value)
 	}
 
 	// --- DB and Cache Deletion (within a lock) ---
@@ -425,7 +432,6 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 	lockKey := cacheKey + ":lock"
 
 	err := WithLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
-		// --- DB Delete ---
 		query := t.db.Builder().BuildDeleteSQL(tableName, t.info.PkName)
 		result, err := t.db.Exec(ctx, query, id)
 		if err != nil {
@@ -434,46 +440,42 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 
 		rowsAffected, _ := result.RowsAffected()
 		if rowsAffected == 0 {
-			// Row didn't exist in DB, still need to clean up cache.
-			// But signal that the record wasn't found in the first place.
-			// We'll clear cache outside the error check.
 			log.Printf("DEBUG DB DELETE: Record %s %d not found.", tableName, id)
-			// return ErrNotFound // Don't return yet, clear cache first
 		}
 
-		// --- Object Cache Invalidate ---
 		if t.cache != nil {
-			// Delete the primary cache entry for this object
 			if errCache := t.cache.Delete(ctx, cacheKey); errCache != nil && !errors.Is(errCache, common.ErrNotFound) {
-				// Log warning but don't fail the DB delete
 				log.Printf("WARN: Failed to delete cache key %s during delete operation: %v", cacheKey, errCache)
 			}
 		}
-		// --- End Object Cache Invalidate ---
 
-		// If we got here, DB delete was attempted. Check if it actually deleted something.
 		if rowsAffected == 0 {
-			return common.ErrNotFound // Now return NotFound if DB didn't affect rows
+			return common.ErrNotFound
 		}
 
-		// --- Incremental Query Cache Update for Delete ---
-		// Requires access to the global index or passing it in.
-		// Placeholder call, assumes handleDeleteInQueryCaches exists on Thing
-		t.invalidateAffectedQueryCaches(ctx, value, value, false, true)
-		return nil // Success
+		// Incremental Query Cache Update for Delete
+		if reflect.ValueOf(value).IsValid() { // Ensure value is valid before passing
+			t.invalidateAffectedQueryCaches(ctx, value, value, false, true)
+		} else {
+			log.Printf("[WARN] deleteInternal: Model value invalid, skipping query cache invalidation for %s ID %d", tableName, id)
+		}
+		return nil
 	})
 	if err != nil {
-		// Don't trigger AfterDelete hook if the lock or DB/Cache operation failed
 		if errors.Is(err, common.ErrNotFound) {
 			log.Printf("Attempted to delete non-existent record %s %d", tableName, id)
-			return common.ErrNotFound // Propagate not found error
+			return common.ErrNotFound
 		}
 		return fmt.Errorf("delete operation failed (lock or db/cache exec): %w", err)
 	}
 
 	// --- Trigger AfterDelete hook (only if lock and DB/Cache action succeeded) ---
-	if errHook := triggerEvent(ctx, EventTypeAfterDelete, value, nil); errHook != nil { // Uses helper defined later
-		log.Printf("WARN: AfterDelete hook failed: %v", errHook)
+	if reflect.ValueOf(value).IsValid() {
+		if errHook := triggerEvent(ctx, EventTypeAfterDelete, value, nil); errHook != nil {
+			log.Printf("WARN: AfterDelete hook failed: %v", errHook)
+		}
+	} else {
+		log.Printf("[WARN] deleteInternal: Model value invalid, skipping AfterDelete hook for %T", value)
 	}
 
 	return nil // Success
@@ -522,6 +524,7 @@ func (t *Thing[T]) SoftDelete(value T) error {
 	if deletedField.IsValid() && deletedField.CanSet() {
 		deletedField.SetBool(true)
 	} else {
+		log.Printf("[ERROR] SoftDelete: could not set Deleted field via reflection for %T, val=%+v", value, val.Interface())
 		return errors.New("SoftDelete: could not set Deleted field via reflection")
 	}
 	updatedAtField := val.FieldByName("UpdatedAt")

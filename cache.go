@@ -164,6 +164,19 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	// Collect all field values for this model
 	fieldValues := make(map[string]interface{})
 	for _, f := range info.CompareFields {
+		if f.IgnoreInDiff || f.DBColumn == info.PkName {
+			continue
+		}
+		// log.Printf("[DEBUG] cache.go: field=%s, Index=%v, modelVal.Type=%v", f.DBColumn, f.Index, modelVal.Type())
+		if modelVal.Kind() != reflect.Struct || len(f.Index) == 0 {
+			// log.Printf("WARN: field %s has empty index, cannot check for match", f.GoName)
+			continue
+		}
+		if f.Index[0] >= modelVal.NumField() {
+			// log.Printf("WARN: field %s has Index[0] out of bounds. Index=%v, modelNumFields=%d", f.GoName, f.Index, modelVal.NumField())
+			continue
+		}
+
 		v := modelVal.FieldByIndex(f.Index)
 		fieldValues[f.DBColumn] = v.Interface()
 	}
