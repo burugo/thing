@@ -3,6 +3,7 @@ package thing
 import (
 	"context"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 
@@ -73,7 +74,9 @@ func AutoMigrate(models ...interface{}) error {
 			if err != nil {
 				return fmt.Errorf("AutoMigrate: failed to generate CREATE TABLE SQL for %s: %w", tableName, err)
 			}
-			fmt.Println("[AutoMigrate] Executing SQL:\n", createSQL)
+			// --- LOGGING SQL ---
+			// 使用 %+q 格式化字符串，可以更清晰地显示包含换行的 SQL
+			log.Printf("[AutoMigrate EXEC - CREATE] SQL passed to Exec: %+q", createSQL)
 			_, err = globalDB.Exec(ctx, createSQL)
 			if err != nil {
 				return fmt.Errorf("AutoMigrate: failed to execute CREATE TABLE SQL: %w\nSQL: %s", err, createSQL)
@@ -90,7 +93,9 @@ func AutoMigrate(models ...interface{}) error {
 				fmt.Println("[AutoMigrate] Skipping column drop (manual):", alterSQL)
 				continue // do not drop columns automatically
 			}
-			fmt.Println("[AutoMigrate] Executing SQL:\n", alterSQL)
+			// --- LOGGING SQL ---
+			// 使用 %+q 格式化字符串
+			log.Printf("[AutoMigrate EXEC - ALTER] SQL passed to Exec: %+q", alterSQL)
 			_, err = globalDB.Exec(ctx, alterSQL)
 			if err != nil {
 				return fmt.Errorf("AutoMigrate: failed to execute ALTER TABLE SQL: %w\nSQL: %s", err, alterSQL)

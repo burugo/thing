@@ -65,6 +65,14 @@ func (t *Thing[T]) Query(params QueryParams) *CachedResult[T] {
 	}
 }
 
+// All is a convenience method to query and fetch all records matching the default QueryParams.
+// It's equivalent to calling thingInstance.Query(QueryParams{}).All().
+func (t *Thing[T]) All() ([]T, error) {
+	// Simply call Query with empty params and then All() on the result.
+	// The CachedResult.All() method handles initialization checks and error propagation.
+	return t.Query(QueryParams{}).All()
+}
+
 // --- CachedResult Methods ---
 
 // Helper function to generate cache key for count queries.

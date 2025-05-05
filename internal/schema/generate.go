@@ -271,7 +271,15 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 			}
 			if dbCol.DataType != sqlType {
 				// 类型变更
-				sqls = append(sqls, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", tableName, col, sqlType))
+				var alterTypeSQL string
+				if dialect == "mysql" {
+					// MySQL 使用 MODIFY COLUMN
+					alterTypeSQL = fmt.Sprintf("ALTER TABLE %s MODIFY COLUMN %s %s", tableName, col, sqlType)
+				} else {
+					// PostgreSQL 等使用 ALTER COLUMN TYPE (假设为默认)
+					alterTypeSQL = fmt.Sprintf("ALTER TABLE %s ALTER COLUMN %s TYPE %s", tableName, col, sqlType)
+				}
+				sqls = append(sqls, alterTypeSQL)
 			}
 			if dbCol.IsPrimary != (col == modelInfo.PkName) {
 				// 主键变更

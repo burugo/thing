@@ -2,6 +2,7 @@ package thing_test
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -502,7 +503,8 @@ func TestAutoMigrate_SchemaDiff(t *testing.T) {
 				defer rows.Close()
 				var cols []string
 				for rows.Next() {
-					var field, ctype, null, key, def, extra string
+					var field, ctype, null, key, extra string
+					var def sql.NullString // 使用 sql.NullString 来接收可能为 NULL 的 Default 值
 					require.NoError(t, rows.Scan(&field, &ctype, &null, &key, &def, &extra))
 					cols = append(cols, field)
 				}

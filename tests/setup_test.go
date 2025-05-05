@@ -97,6 +97,11 @@ func setupMySQLTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()
 		tb.Skip("MySQL not available")
 	}
 
+	// Drop tables first to ensure clean state
+	_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS books;")
+	_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS users;")
+	_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS diff_users;") // Drop diff table specifically
+
 	// Create test tables (same schema as SQLite)
 	_, err = adapter.Exec(
 		context.Background(),
@@ -128,7 +133,11 @@ func setupMySQLTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, func()
 	mockcache := &mockCacheClient{}
 	cleanup := func() {
 		tb.Logf("--- setupMySQLTestDB: Running cleanup function ---")
+		// Drop tables after test
 		if adapter != nil {
+			_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS books;")
+			_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS users;")
+			_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS diff_users;")
 			_ = adapter.Close()
 		}
 		tb.Logf("--- setupMySQLTestDB: Cleanup finished ---")
@@ -147,6 +156,11 @@ func setupPostgresTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, fun
 		tb.Logf("PostgreSQL not available, skipping test: %v", err)
 		tb.Skip("PostgreSQL not available")
 	}
+
+	// Drop tables first to ensure clean state
+	_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS books;")
+	_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS users;")
+	_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS diff_users;") // Drop diff table specifically
 
 	// Create test tables (same schema as MySQL/SQLite)
 	_, err = adapter.Exec(
@@ -179,7 +193,11 @@ func setupPostgresTestDB(tb testing.TB) (thing.DBAdapter, thing.CacheClient, fun
 	mockcache := &mockCacheClient{}
 	cleanup := func() {
 		tb.Logf("--- setupPostgresTestDB: Running cleanup function ---")
+		// Drop tables after test
 		if adapter != nil {
+			_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS books;")
+			_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS users;")
+			_, _ = adapter.Exec(context.Background(), "DROP TABLE IF EXISTS diff_users;")
 			_ = adapter.Close()
 		}
 		tb.Logf("--- setupPostgresTestDB: Cleanup finished ---")

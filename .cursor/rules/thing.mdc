@@ -89,13 +89,12 @@ alwaysApply: false
         result := userThing.Query(params) // Returns a CachedResult
         // Fetch specific page:
         users, err := result.Fetch(0, 10) // offset 0, limit 10 (uses cache)
-        // Fetch all (use cautiously):
-        // allUsers, err := result.All()
         // Count:
         // count, err := result.Count()
         // Chainable Query
         // usersOver18, err := userThing.Where("age > ?", 18).Order("name ASC").Fetch(0, 100)
-        // allUsers, err := userThing.Where("age > ?", 18).Order("name ASC").All()
+        // Fetch all:
+        // allUsers, err := userThing.All() // This is an alias for userThing.Query(QueryParams{}).All()
         ```
 
 ## Key Features

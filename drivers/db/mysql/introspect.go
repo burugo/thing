@@ -64,7 +64,7 @@ func (mi *MySQLIntrospector) GetTableInfo(ctx context.Context, tableName string)
 	}
 
 	// 2. 获取索引信息
-	idxRows, err := mi.DB.QueryContext(ctx, "SELECT Key_name, Non_unique, Column_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ?", tableName)
+	idxRows, err := mi.DB.QueryContext(ctx, "SELECT INDEX_NAME, Non_unique, Column_name FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ?", tableName)
 	if err != nil {
 		return nil, fmt.Errorf("SHOW INDEX failed: %w", err)
 	}
