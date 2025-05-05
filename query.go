@@ -47,21 +47,22 @@ type CachedResult[T Model] struct {
 	hasLoadedCount bool
 	hasLoadedAll   bool
 	all            []T
+	Err            error // New: holds error if Query failed to initialize
 }
 
 // --- Thing Method for Querying ---
 
 // Query prepares a query based on QueryParams and returns a *CachedResult[T] for lazy execution.
 // The actual database query happens when Count() or Fetch() is called on the result.
-// It returns the CachedResult instance and a nil error, assuming basic validation passed.
 // Error handling for query execution is done within CachedResult methods.
-func (t *Thing[T]) Query(params QueryParams) (*CachedResult[T], error) {
+func (t *Thing[T]) Query(params QueryParams) *CachedResult[T] {
 	// TODO: Add validation for params if necessary?
 	return &CachedResult[T]{
 		thing:  t,
 		params: params,
 		// cachedIDs, cachedCount, hasLoadedIDs, hasLoadedCount, hasLoadedAll, all initialized to zero values
-	}, nil
+		Err: nil,
+	}
 }
 
 // --- CachedResult Methods ---
@@ -374,6 +375,9 @@ func (cr *CachedResult[T]) invalidateCache() error {
 // - It filters items using KeepItem()
 // - It dynamically calculates how many more items to fetch based on filtering results
 func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
+	if cr.Err != nil {
+		return nil, cr.Err
+	}
 	if cr.thing == nil || cr.thing.cache == nil || cr.thing.db == nil {
 		return nil, errors.New("Fetch: CachedResult not properly initialized")
 	}
@@ -599,4 +603,75 @@ func (cr *CachedResult[T]) First() (T, error) {
 
 	// 3. Return the first result
 	return results[0], nil
+}
+
+// --- Chainable Query Builder Methods ---
+
+// Where on Thing: starts a new query chain
+func (t *Thing[T]) Where(where string, args ...interface{}) *CachedResult[T] {
+	return &CachedResult[T]{
+		thing:  t,
+		params: QueryParams{Where: where, Args: args},
+	}
+}
+
+// Where on CachedResult: returns a new instance with updated Where/Args
+func (cr *CachedResult[T]) Where(where string, args ...interface{}) *CachedResult[T] {
+	newCr := *cr
+	newCr.params.Where = where
+	newCr.params.Args = args
+	// Reset loaded state
+	newCr.hasLoadedCount = false
+	newCr.hasLoadedIDs = false
+	newCr.cachedIDs = nil
+	newCr.cachedCount = 0
+	newCr.hasLoadedAll = false
+	newCr.all = nil
+	return &newCr
+}
+
+// Order on Thing: starts a new query chain
+func (t *Thing[T]) Order(order string) *CachedResult[T] {
+	return &CachedResult[T]{
+		thing:  t,
+		params: QueryParams{Order: order},
+	}
+}
+
+// Order on CachedResult: returns a new instance with updated Order
+func (cr *CachedResult[T]) Order(order string) *CachedResult[T] {
+	newCr := *cr
+	newCr.params.Order = order
+	// Reset loaded state
+	newCr.hasLoadedCount = false
+	newCr.hasLoadedIDs = false
+	newCr.cachedIDs = nil
+	newCr.cachedCount = 0
+	newCr.hasLoadedAll = false
+	newCr.all = nil
+	return &newCr
+}
+
+// Preload on Thing: starts a new query chain
+func (t *Thing[T]) Preload(preloads ...string) *CachedResult[T] {
+	return &CachedResult[T]{
+		thing:  t,
+		params: QueryParams{Preloads: preloads},
+	}
+}
+
+// Preload on CachedResult: returns a new instance with updated Preloads
+func (cr *CachedResult[T]) Preload(preloads ...string) *CachedResult[T] {
+	newCr := *cr
+	// Merge preloads
+	newCr.params.Preloads = append([]string{}, cr.params.Preloads...)
+	newCr.params.Preloads = append(newCr.params.Preloads, preloads...)
+	// Reset loaded state
+	newCr.hasLoadedCount = false
+	newCr.hasLoadedIDs = false
+	newCr.cachedIDs = nil
+	newCr.cachedCount = 0
+	newCr.hasLoadedAll = false
+	newCr.all = nil
+	return &newCr
 }

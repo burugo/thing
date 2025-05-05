@@ -55,11 +55,8 @@ func main() {
 	fmt.Println("Updated:", found)
 
 	// Query all
-	result, err := users.Query(thing.QueryParams{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	all, err := result.All()
+	result := users.Query(thing.QueryParams{})
+	all, err := result.Fetch(0, 100)
 	if err != nil {
 		log.Fatal(err)
 	}

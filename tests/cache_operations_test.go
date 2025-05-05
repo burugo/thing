@@ -185,8 +185,7 @@ func TestThing_Query_Cache(t *testing.T) {
 		Args:  []interface{}{"Alice Cache"},
 	}
 
-	queryResult, err := th.Query(params)
-	require.NoError(t, err)
+	queryResult := th.Query(params)
 	// Fetch results
 	fetchedUsers, fetchErr := queryResult.Fetch(0, 10) // Fetch up to 10
 	require.NoError(t, fetchErr)
@@ -205,8 +204,7 @@ func TestThing_Query_Cache(t *testing.T) {
 	setModelCount := mockCache.Counters["SetModel"]
 
 	// Second identical query should hit cache for query IDs
-	query2Result, err := th.Query(params)
-	require.NoError(t, err)
+	query2Result := th.Query(params)
 	// Fetch results
 	fetchedUsers2, fetchErr2 := query2Result.Fetch(0, 10) // Fetch up to 10
 	require.NoError(t, fetchErr2)
@@ -243,8 +241,7 @@ func TestThing_Query_CacheInvalidation(t *testing.T) {
 		Args:  []interface{}{"Invalidate User"},
 	}
 
-	usersResult, err := th.Query(params)
-	require.NoError(t, err)
+	usersResult := th.Query(params)
 	// Fetch results
 	usersFetched, fetchErr := usersResult.Fetch(0, 10)
 	require.NoError(t, fetchErr)
@@ -267,8 +264,7 @@ func TestThing_Query_CacheInvalidation(t *testing.T) {
 		Args:  []interface{}{"Invalidate User"},
 	}
 
-	oldNameUsersResult, err := th.Query(oldNameParams)
-	require.NoError(t, err)
+	oldNameUsersResult := th.Query(oldNameParams)
 	// Fetch results
 	oldNameUsersFetched, fetchErrOld := oldNameUsersResult.Fetch(0, 10)
 	require.NoError(t, fetchErrOld)
@@ -280,8 +276,7 @@ func TestThing_Query_CacheInvalidation(t *testing.T) {
 		Args:  []interface{}{"Updated Invalidate User"},
 	}
 
-	newNameUsersResult, err := th.Query(newNameParams)
-	require.NoError(t, err)
+	newNameUsersResult := th.Query(newNameParams)
 	// Fetch results
 	newNameUsersFetched, fetchErrNew := newNameUsersResult.Fetch(0, 10)
 	require.NoError(t, fetchErrNew)
@@ -410,8 +405,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	}
 
 	// 1. Initial query (cache miss for list & count)
-	cr1, err := thingUser.Query(params)
-	require.NoError(t, err)
+	cr1 := thingUser.Query(params)
 	initialCount, err := cr1.Count()
 	require.NoError(t, err)
 	require.Equal(t, int64(0), initialCount, "Initial count should be 0")
@@ -444,8 +438,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 
 	// Check updated cache state by re-querying (should hit cache)
 	cacheClient.ResetCalls() // Reset before verification query
-	cr2, err := thingUser.Query(params)
-	require.NoError(t, err)
+	cr2 := thingUser.Query(params)
 	count2, err := cr2.Count() // Should hit count cache
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count2, "Count from cache should be 1")
@@ -479,8 +472,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 
 	// Check updated cache state by re-querying
 	cacheClient.ResetCalls()
-	cr3, err := thingUser.Query(params)
-	require.NoError(t, err)
+	cr3 := thingUser.Query(params)
 	count3, err := cr3.Count() // Should hit cache
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count3, "Count from cache should be 0 after update")
@@ -511,8 +503,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 
 	// Check updated cache state by re-querying
 	cacheClient.ResetCalls()
-	cr4, err := thingUser.Query(params)
-	require.NoError(t, err)
+	cr4 := thingUser.Query(params)
 	count4, err := cr4.Count() // Should hit cache
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count4, "Count from cache should be 1 after second update")
@@ -541,8 +532,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 
 	// Check updated cache state by re-querying
 	cacheClient.ResetCalls()
-	cr5, err := thingUser.Query(params)
-	require.NoError(t, err)
+	cr5 := thingUser.Query(params)
 	count5, err := cr5.Count() // Should hit cache
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), count5, "Count from cache should be 0 after delete")
@@ -579,8 +569,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 
 	// Check updated cache state by re-querying
 	cacheClient.ResetCalls()
-	cr6, err := thingUser.Query(params)
-	require.NoError(t, err)
+	cr6 := thingUser.Query(params)
 	count6, err := cr6.Count() // Should hit cache
 	require.NoError(t, err)
 	// Count should be 0 because the incremental update logic removes soft-deleted items from this query's cache.
@@ -607,12 +596,11 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 
 	// Define query params for users named "Alice"
 	queryParams := thing.QueryParams{Where: "name = ?", Args: []interface{}{"Alice"}}
-	queryResult, err := thingInstance.Query(queryParams)
-	require.NoError(t, err, "Thing.Query failed")
+	queryResult := thingInstance.Query(queryParams)
 
 	// --- Cache the initial query results (list and count) ---
 	// Fetch list to cache IDs
-	_, err = queryResult.Fetch(0, 10) // Fetch first page to trigger caching
+	_, err := queryResult.Fetch(0, 10) // Fetch first page to trigger caching
 	require.NoError(t, err, "Fetch failed")
 	// Manually get list cache key (assuming internal generation logic)
 	listCacheKey := generateQueryCacheKey(t, "list", user1.TableName(), queryParams)
@@ -647,8 +635,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	assert.Equal(t, "3", countStr, "Count cache not incremented after creating matching user")
 
 	// Verify a subsequent query re-populates the list cache correctly
-	queryResult2, err := thingInstance.Query(queryParams)
-	require.NoError(t, err, "Second Query failed")
+	queryResult2 := thingInstance.Query(queryParams)
 	fetch2, err := queryResult2.Fetch(0, 10)
 	require.NoError(t, err, "Second Fetch failed")
 	require.Len(t, fetch2, 3, "Second fetch should find 3 users")
@@ -688,8 +675,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	assert.Equal(t, "4", countStr, "Count cache not incremented after update TO match")
 
 	// Verify a subsequent query re-populates the list cache correctly
-	queryResult3, err := thingInstance.Query(queryParams)
-	require.NoError(t, err, "Third Query failed")
+	queryResult3 := thingInstance.Query(queryParams)
 	fetch3, err := queryResult3.Fetch(0, 10)
 	require.NoError(t, err, "Third Fetch failed")
 	require.Len(t, fetch3, 4, "Third fetch should find 4 users")
@@ -714,8 +700,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	assert.Equal(t, "3", countStr, "Count cache not decremented after update TO NOT match")
 
 	// Verify a subsequent query re-populates the list cache correctly
-	queryResult4, err := thingInstance.Query(queryParams)
-	require.NoError(t, err, "Fourth Query failed")
+	queryResult4 := thingInstance.Query(queryParams)
 	fetch4, err := queryResult4.Fetch(0, 10)
 	require.NoError(t, err, "Fourth Fetch failed")
 	require.Len(t, fetch4, 3, "Fourth fetch should find 3 users")
@@ -754,8 +739,7 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	assert.Equal(t, "2", countStr, "Count cache not decremented after delete")
 
 	// Verify a subsequent query re-populates the list cache correctly
-	queryResult5, err := thingInstance.Query(queryParams)
-	require.NoError(t, err, "Fifth Query failed")
+	queryResult5 := thingInstance.Query(queryParams)
 	fetch5, err := queryResult5.Fetch(0, 10)
 	require.NoError(t, err, "Fifth Fetch failed")
 	require.Len(t, fetch5, 2, "Fifth fetch should find 2 users")
@@ -783,9 +767,8 @@ func TestThing_Query_IncrementalCacheUpdate_Complex(t *testing.T) {
 	}
 
 	// Prime the cache (should be empty)
-	cr, err := thingUser.Query(params)
-	require.NoError(t, err)
-	_, err = cr.Fetch(0, 10)
+	cr := thingUser.Query(params)
+	_, err := cr.Fetch(0, 10)
 	require.NoError(t, err)
 	cacheClient.ResetCalls()
 
@@ -819,9 +802,8 @@ func TestThing_Query_IncrementalCacheUpdate_IN(t *testing.T) {
 		Args:  []interface{}{[]string{"Tom", "Jerry"}},
 	}
 
-	cr, err := thingUser.Query(params)
-	require.NoError(t, err)
-	_, err = cr.Fetch(0, 10)
+	cr := thingUser.Query(params)
+	_, err := cr.Fetch(0, 10)
 	require.NoError(t, err)
 	cacheClient.ResetCalls()
 
@@ -847,9 +829,8 @@ func TestThing_Query_IncrementalCacheUpdate_Range(t *testing.T) {
 		Args:  []interface{}{100},
 	}
 
-	cr, err := thingUser.Query(params)
-	require.NoError(t, err)
-	_, err = cr.Fetch(0, 10)
+	cr := thingUser.Query(params)
+	_, err := cr.Fetch(0, 10)
 	require.NoError(t, err)
 	cacheClient.ResetCalls()
 

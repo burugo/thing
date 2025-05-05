@@ -86,7 +86,7 @@ alwaysApply: false
             OrderBy: "name ASC",
             // Preloads: []string{"RelatedModelField"}, // For relationships
         }
-        result, err := userThing.Query(params) // Returns a QueryResult
+        result := userThing.Query(params) // Returns a CachedResult
         // Fetch specific page:
         users, err := result.Fetch(0, 10) // offset 0, limit 10 (uses cache)
         // Fetch all (use cautiously):

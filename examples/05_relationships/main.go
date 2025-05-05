@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 
 	"github.com/burugo/thing"
@@ -84,49 +85,31 @@ func main() {
 	_ = userRoleThing.Save(&UserRole{UserID: user.ID, RoleID: role2.ID})
 
 	// --- Load HasMany (Books) ---
-	books, err := bookThing.Query(thing.QueryParams{Where: "user_id = ?", Args: []interface{}{user.ID}})
+	books := bookThing.Query(thing.QueryParams{Where: "user_id = ?", Args: []interface{}{user.ID}})
+	fetchedBooks, err := books.Fetch(0, 10)
 	if err != nil {
-		log.Fatalf("Failed to query books: %v", err)
+		log.Fatal(err)
 	}
-	// --- Fetch paginated results (Fetch) ---
-	bookList, _ := books.Fetch(0, 10) // Fetch first 10 books
-	log.Printf("User %s has %d books (Fetch):", user.Name, len(bookList))
-	for _, b := range bookList {
-		log.Printf("  - %s", b.Title)
-	}
-	// --- Fetch all results (All) ---
-	allBooks, _ := books.All()
-	log.Printf("User %s has %d books (All):", user.Name, len(allBooks))
-	for _, b := range allBooks {
-		log.Printf("  - %s", b.Title)
-	}
+	fmt.Printf("User's books: %+v\n", fetchedBooks)
 
 	// --- Load ManyToMany (Roles via UserRole) ---
-	userRoles, err := userRoleThing.Query(thing.QueryParams{Where: "user_id = ?", Args: []interface{}{user.ID}})
+	userRoles := userRoleThing.Query(thing.QueryParams{Where: "user_id = ?", Args: []interface{}{user.ID}})
+	fetchedUserRoles, err := userRoles.Fetch(0, 10)
 	if err != nil {
-		log.Fatalf("Failed to query user_roles: %v", err)
+		log.Fatal(err)
 	}
-	userRoleList, _ := userRoles.Fetch(0, 10)
-	roleIDs := make([]int64, 0, len(userRoleList))
-	for _, ur := range userRoleList {
+	fmt.Printf("User's roles: %+v\n", fetchedUserRoles)
+
+	roleIDs := make([]int64, 0, len(fetchedUserRoles))
+	for _, ur := range fetchedUserRoles {
 		roleIDs = append(roleIDs, ur.RoleID)
 	}
-	roles, err := roleThing.Query(thing.QueryParams{Where: "id IN (?)", Args: []interface{}{roleIDs}})
+	roles := roleThing.Query(thing.QueryParams{Where: "id IN (?)", Args: []interface{}{roleIDs}})
+	fetchedRoles, err := roles.Fetch(0, 10)
 	if err != nil {
-		log.Fatalf("Failed to query roles: %v", err)
+		log.Fatal(err)
 	}
-	// --- Fetch paginated results (Fetch) ---
-	roleList, _ := roles.Fetch(0, 10)
-	log.Printf("User %s has roles (Fetch):", user.Name)
-	for _, r := range roleList {
-		log.Printf("  - %s", r.Name)
-	}
-	// --- Fetch all results (All) ---
-	allRoles, _ := roles.All()
-	log.Printf("User %s has roles (All):", user.Name)
-	for _, r := range allRoles {
-		log.Printf("  - %s", r.Name)
-	}
+	fmt.Printf("Roles: %+v\n", fetchedRoles)
 
 	// --- JSON Serialization Example ---
 	b, _ := json.Marshal(user)

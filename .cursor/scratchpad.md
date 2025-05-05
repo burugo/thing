@@ -10,6 +10,18 @@ The primary goal of this project is to develop a high-performance, Object-Relati
 
 This project builds upon the initial goal of replicating a specific `BaseModel`, enhancing it with multi-DB support and packaging it as a reusable `thing` library, while intentionally keeping the query scope focused.
 
+The goal is to modernize the Thing ORM API for better usability and developer experience. Two main improvements are planned:
+1. Enable chainable query calls by making Query return a single value, with errors propagated via Fetch/All/First methods.
+2. Enhance ToJSON to support both single objects and collections (slices/arrays), including nested preload objects, with consistent field filtering/DSL support.
+
+These changes will simplify business code, reduce boilerplate, and align Thing ORM with modern Go ORM/library best practices. All related documentation and examples must be updated to reflect the new API.
+
+# Key Challenges and Analysis
+
+- Ensuring error propagation is robust and intuitive when Query no longer returns error directly.
+- Maintaining backward compatibility or providing clear migration guidance for existing users.
+- Ensuring ToJSON handles all relevant types (single, slice, array, nested preload) and field filtering consistently.
+- Updating all documentation, examples, and rule files to prevent confusion and ensure smooth adoption.
 
 # High-level Task Breakdown
 
@@ -36,6 +48,71 @@ This project builds upon the initial goal of replicating a specific `BaseModel`,
 - [x] Move driver packages out of internal, into public drivers directory
 - [x] Main package and drivers only depend on interfaces, never on each other's implementation
 - [x] Documentation and README update
+
+## 1. Refactor Query for Chainable Calls (Task Type: Refactoring (Functional))
+- 1.1 Change Thing.Query signature to return only *CachedResult[T] (or equivalent), not error.
+- 1.2 Add Err field to CachedResult; Query sets this on error.
+- 1.3 Update Fetch/All/First methods to return upstream error if present.
+- 1.4 Update all business code and examples to use chainable calls.
+- 1.5 Update and expand tests to cover new error handling and chaining.
+- 1.6 Update documentation (README, examples, thing.mdc) to reflect new usage and error handling.
+
+### Success Criteria
+- Query returns a single value; all calls can use chainable .Fetch(...).
+- Errors are reliably propagated via Fetch/All/First.
+- All tests pass; documentation and examples are up to date.
+
+## 2. Enhance ToJSON to Support Single and Collection Types (Task Type: New Feature)
+- 2.1 Refactor ToJSON to auto-detect and handle single objects, slices, and arrays.
+- 2.2 Ensure recursive serialization of nested preload objects, with field filtering/DSL support.
+- 2.3 Add/expand tests for single, collection, nested, and filtered serialization.
+- 2.4 Update documentation (README, examples, thing.mdc) to show new usage and capabilities.
+
+### Success Criteria
+- ToJSON works seamlessly for single objects and collections, including nested preload objects.
+- Field filtering/DSL works consistently in all cases.
+- All tests pass; documentation and examples are up to date.
+
+# Project Status Board
+
+- [x] **Define and Finalize Tag Syntax**
+- [x] **Update Metadata Parsing (`internal/schema/metadata.go`)**
+    - [x] Implement parsing logic
+    - [x] Update `ModelInfo` struct
+    - [x] Write unit tests for parsing
+- [x] **Update `AutoMigrate` Logic (DB Adapters)**
+    - [x] Modify SQLite adapter (Integration test added)
+    - [ ] (Optional/Later) Modify MySQL adapter
+    - [ ] (Optional/Later) Modify PostgreSQL adapter
+- [x] **Add Comprehensive Tests**
+    - [x] Write integration tests for `AutoMigrate` + composite indexes (SQLite)
+- [ ] **Update Documentation**
+    - [ ] Update `README.md`
+- [x] Fix golangci-lint config errors (mnd.ignored-numbers as string array, remove depguard.ignore-internal)
+- [x] Ignore funlen and gocyclo (complexity) for all test files in golangci-lint config
+- [x] Ignore errcheck (unchecked error returns) for all test files in golangci-lint config
+- [x] Ignore lll (long line linter) for all test files in golangci-lint config
+- [x] 修复 JSON DSL 解析器，移除无用 [] 分支，恢复 -field 排除逻辑，所有相关测试通过
+- [x] Remove ineffectual assignment to fkFieldFound in preloadBelongsTo and preloadHasMany (relationships.go)
+- [x] Refactor if-else chain to switch in preloadManyToMany (relationships.go, line 541)
+- [x] Remove ineffectual assignment to placeholders in saveInternal else branch (crud.go)
+- [x] Move type declarations out of generic function in cache.go for Go 1.18 compatibility
+- [ ] 1. Refactor Query for Chainable Calls (Refactoring (Functional))
+    - [ ] 1.1 Change Query signature
+    - [ ] 1.2 Add CachedResult.Err field
+    - [ ] 1.3 Update Fetch/All/First error propagation
+    - [ ] 1.4 Update business code and examples
+    - [ ] 1.5 Update tests
+    - [ ] 1.6 Update documentation (README, examples, thing.mdc)
+- [ ] 2. Enhance ToJSON for Single and Collection Types (New Feature)
+    - [ ] 2.1 Refactor ToJSON implementation
+    - [ ] 2.2 Support nested preload and field filtering
+    - [ ] 2.3 Add/expand tests
+    - [ ] 2.4 Update documentation (README, examples, thing.mdc)
+
+## Executor's Feedback or Assistance Requests
+
+- Awaiting user confirmation to proceed with execution.
 
 # Lessons
 
@@ -70,57 +147,3 @@ This project builds upon the initial goal of replicating a specific `BaseModel`,
     - [ ] Add tests for TTL configuration and expiration
     - [ ] Update documentation/comments
     - [ ] Verify all tests pass and commit
-
-## Project Status Board
-
-- [x] **Define and Finalize Tag Syntax**
-- [x] **Update Metadata Parsing (`internal/schema/metadata.go`)**
-    - [x] Implement parsing logic
-    - [x] Update `ModelInfo` struct
-    - [x] Write unit tests for parsing
-- [x] **Update `AutoMigrate` Logic (DB Adapters)**
-    - [x] Modify SQLite adapter (Integration test added)
-    - [ ] (Optional/Later) Modify MySQL adapter
-    - [ ] (Optional/Later) Modify PostgreSQL adapter
-- [x] **Add Comprehensive Tests**
-    - [x] Write integration tests for `AutoMigrate` + composite indexes (SQLite)
-- [ ] **Update Documentation**
-    - [ ] Update `README.md`
-- [x] Fix golangci-lint config errors (mnd.ignored-numbers as string array, remove depguard.ignore-internal)
-- [x] Ignore funlen and gocyclo (complexity) for all test files in golangci-lint config
-- [x] Ignore errcheck (unchecked error returns) for all test files in golangci-lint config
-- [x] Ignore lll (long line linter) for all test files in golangci-lint config
-- [x] 修复 JSON DSL 解析器，移除无用 [] 分支，恢复 -field 排除逻辑，所有相关测试通过
-- [x] Remove ineffectual assignment to fkFieldFound in preloadBelongsTo and preloadHasMany (relationships.go)
-- [x] Refactor if-else chain to switch in preloadManyToMany (relationships.go, line 541)
-- [x] Remove ineffectual assignment to placeholders in saveInternal else branch (crud.go)
-- [x] Move type declarations out of generic function in cache.go for Go 1.18 compatibility
-
-## Executor's Feedback or Assistance Requests
-
-- Paused execution.
-- Encountered persistent linter error "expected statement, found 'else'" on line 274 of `internal/schema/generate.go` after modifying `GenerateAlterTableSQL` to handle composite index diffing.
-- Requesting user review of the logic in `GenerateAlterTableSQL` (section `-- 6. 索引变更 --`) to identify the syntax error (likely brace mismatch).
-- Fixed golangci-lint config: changed mnd.ignored-numbers to a string array ['0', '1', '2', '3'] and removed unsupported depguard.ignore-internal option. Verified with golangci-lint config verify (exit code 0). Committed and pushed to github_main branch. Ready for CI re-run.
-- Updated golangci-lint config to ignore funlen and gocyclo for all test files (both _test.go and tests/ directory). Committed and pushed to github_main. Linter now ignores test complexity as expected.
-- Updated golangci-lint config to ignore errcheck for all test files (both _test.go and tests/ directory). Committed and pushed to github_main. Linter now ignores unchecked error returns in tests as expected.
-- Updated golangci-lint config to ignore lll (long line linter) for all test files (both _test.go and tests/ directory). Committed and pushed to github_main. Linter now ignores long lines in tests as expected.
-- 已根据用户需求，移除 DSL 解析器中无用的 [] 分支，并恢复了对 -field 排除字段的正确处理逻辑。
-- 相关 DSL 解析和 ToJSON 测试全部通过，主流程无回归。
-- 已提交 commit: 3b5fcb7
-- Fixed the linter warning for ineffectual assignment to fkFieldFound in both preloadBelongsTo and preloadHasMany.
-- All tests passed and the linter warning is resolved.
-- Committed the change as: fix: remove ineffectual assignment to fkFieldFound in preloadBelongsTo and preloadHasMany
-- No logic was changed; only the unnecessary assignment was removed as per linter guidance.
-- Refactored the if-else chain for relatedElemType.Kind() in preloadManyToMany to a switch statement as per gocritic suggestion.
-- Linter warning (ifElseChain) is now resolved.
-- All tests passed after the change.
-- Committed as: refactor: use switch instead of if-else for relatedElemType.Kind() in preloadManyToMany to fix gocritic ifElseChain warning
-- Removed the ineffectual assignment to placeholders in the else branch of saveInternal in crud.go.
-- Linter warning (ineffassign) is now resolved for this issue.
-- All tests passed after the change.
-- Committed as: fix: remove ineffectual assignment to placeholders in saveInternal else branch
-- Moved 'cacheTask' and 'finalWriteTask' type declarations out of the generic function in cache.go to the package level.
-- This resolves the Go 1.18 build error: 'type declarations inside generic functions are not currently supported'.
-- All code now builds and runs as expected on Go 1.18+.
-- Committed as: fix: move type declarations out of generic function for Go 1.18 compatibility

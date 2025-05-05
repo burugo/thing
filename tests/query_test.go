@@ -28,8 +28,7 @@ func TestCachedResult_Count(t *testing.T) {
 	require.NoError(t, err)
 
 	params := thing.QueryParams{ /* Define params if needed, e.g., WHERE */ }
-	result, err := th.Query(params)
-	require.NoError(t, err)
+	result := th.Query(params)
 	require.NotNil(t, result)
 
 	// --- Test Count - Cache Miss ---
@@ -51,8 +50,7 @@ func TestCachedResult_Count(t *testing.T) {
 	// --- Test Count - Zero Results & NoneResult Caching ---
 	mockCache.Reset() // Clear cache
 	paramsNone := thing.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
-	resultNone, err := th.Query(paramsNone)
-	require.NoError(t, err)
+	resultNone := th.Query(paramsNone)
 	require.NotNil(t, resultNone)
 
 	countNone, err := resultNone.Count() // DB Miss
@@ -87,8 +85,7 @@ func TestCachedResult_Fetch(t *testing.T) {
 	}
 
 	params := thing.QueryParams{Order: "id ASC"}
-	result, err := th.Query(params)
-	require.NoError(t, err)
+	result := th.Query(params)
 	require.NotNil(t, result)
 
 	// --- Test Fetch - Page 1 (Cache Miss for IDs) ---
@@ -123,8 +120,7 @@ func TestCachedResult_Fetch(t *testing.T) {
 	// --- Test Fetch - Zero Results & NoneResult Caching ---
 	mockCache.Reset()
 	paramsNone := thing.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
-	resultNone, err := th.Query(paramsNone)
-	require.NoError(t, err)
+	resultNone := th.Query(paramsNone)
 	require.NotNil(t, resultNone)
 
 	usersNone, err := resultNone.Fetch(0, 10) // DB Miss for IDs
@@ -157,10 +153,9 @@ func TestCachedResult_Fetch(t *testing.T) {
 			expectedIDs = append(expectedIDs, u.ID)
 		}
 		params := thing.QueryParams{Order: "id ASC"}
-		result, err := th.Query(params)
-		require.NoError(t, err)
+		result := th.Query(params)
 		// 预热缓存
-		_, err = result.Fetch(0, 200)
+		_, err := result.Fetch(0, 200)
 		require.NoError(t, err)
 		mockCache.ResetCounts()
 		// 触发混合补齐
@@ -192,8 +187,7 @@ func TestCachedResult_All(t *testing.T) {
 	}
 
 	params := thing.QueryParams{Order: "id ASC"}
-	result, err := th.Query(params)
-	require.NoError(t, err)
+	result := th.Query(params)
 
 	// Call Fetch instead of All
 	// Fetch a reasonable number of items expected for an "All" scenario
@@ -232,8 +226,7 @@ func TestCachedResult_First(t *testing.T) {
 	t.Run("Find First Match", func(t *testing.T) {
 		mockCache.FlushAll(context.Background())
 		params := thing.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id ASC"}
-		cr, err := thingInstance.Query(params)
-		require.NoError(t, err)
+		cr := thingInstance.Query(params)
 		firstUser, err := cr.First()
 		require.NoError(t, err)
 		require.NotNil(t, firstUser)
@@ -244,8 +237,7 @@ func TestCachedResult_First(t *testing.T) {
 	t.Run("Find First Match (Different Order)", func(t *testing.T) {
 		mockCache.FlushAll(context.Background())
 		params := thing.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id DESC"}
-		cr, err := thingInstance.Query(params)
-		require.NoError(t, err)
+		cr := thingInstance.Query(params)
 		firstUser, err := cr.First()
 		require.NoError(t, err)
 		require.NotNil(t, firstUser)
@@ -256,9 +248,8 @@ func TestCachedResult_First(t *testing.T) {
 	t.Run("Find No Match", func(t *testing.T) {
 		mockCache.FlushAll(context.Background())
 		params := thing.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
-		cr, err := thingInstance.Query(params)
-		require.NoError(t, err)
-		_, err = cr.First()
+		cr := thingInstance.Query(params)
+		_, err := cr.First()
 		require.Error(t, err)
 		assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound for no match")
 	})
@@ -283,8 +274,7 @@ func TestCachedResult_First(t *testing.T) {
 		// mockDBAdapter.ResetCounts()
 		mockCache.ResetCounts()
 
-		cr, err := thingInstance.Query(params)
-		require.NoError(t, err)
+		cr := thingInstance.Query(params)
 		firstUser, err := cr.First()
 		require.NoError(t, err)
 		require.NotNil(t, firstUser)

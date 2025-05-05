@@ -226,11 +226,8 @@ func main() {
 	fmt.Println("Updated:", found)
 
 	// Query all
-	result, err := users.Query(thing.QueryParams{})
-	if err != nil {
-		log.Fatal(err)
-	}
-	all, err := result.All()
+	result := users.Query(thing.QueryParams{})
+	all, err := result.Fetch(0, 100)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -376,7 +373,7 @@ func main() {
 		Args:     []interface{}{1}, // Assuming user with ID 1 exists
 		Preloads: []string{"Books"}, // Specify the relationship field name
 	}
-	userResult, _ := userThing.Query(userParams)
+	userResult := userThing.Query(userParams)
 	fetchedUsers, _ := userResult.Fetch(0, 1)
 	if len(fetchedUsers) > 0 {
 		fmt.Printf("User: %s, Number of Books: %d\n", fetchedUsers[0].Name, len(fetchedUsers[0].Books))
@@ -389,7 +386,7 @@ func main() {
 		Args:     []interface{}{5}, // Assuming book with ID 5 exists
 		Preloads: []string{"User"}, // Specify the relationship field name
 	}
-	bookResult, _ := bookThing.Query(bookParams)
+	bookResult := bookThing.Query(bookParams)
 	fetchedBooks, _ := bookResult.Fetch(0, 1)
 	if len(fetchedBooks) > 0 && fetchedBooks[0].User != nil {
 		fmt.Printf("Book: %s, Owner: %s\n", fetchedBooks[0].Title, fetchedBooks[0].User.Name)

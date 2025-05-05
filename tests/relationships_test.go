@@ -45,8 +45,7 @@ func TestThing_Query_Preload_BelongsTo(t *testing.T) {
 		Preloads: []string{"User"},
 	}
 
-	booksResult, err := bookThing.Query(params)
-	require.NoError(t, err)
+	booksResult := bookThing.Query(params)
 	// Fetch before len/indexing
 	fetchedBooks, fetchErr := booksResult.Fetch(0, 10)
 	require.NoError(t, fetchErr)
@@ -99,8 +98,7 @@ func TestThing_Query_Preload_HasMany(t *testing.T) {
 		Preloads: []string{"Books"},
 	}
 
-	usersResult, err := userThing.Query(params)
-	require.NoError(t, err)
+	usersResult := userThing.Query(params)
 	// Fetch before len/indexing
 	fetchedUsers, fetchErr := usersResult.Fetch(0, 10)
 	require.NoError(t, fetchErr)
@@ -120,6 +118,13 @@ func TestThing_Query_Preload_HasMany(t *testing.T) {
 	assert.True(t, titles["First Book"])
 	assert.True(t, titles["Second Book"])
 	assert.True(t, titles["Third Book"])
+
+	// --- New: Chainable Preload ---
+	fetchedUsersChained, err := userThing.Where("id = ?", user.ID).Preload("Books").Fetch(0, 10)
+	require.NoError(t, err)
+	require.Len(t, fetchedUsersChained, 1)
+	assert.NotNil(t, fetchedUsersChained[0].Books)
+	assert.Len(t, fetchedUsersChained[0].Books, 3)
 }
 
 func TestThing_Load_BelongsTo(t *testing.T) {

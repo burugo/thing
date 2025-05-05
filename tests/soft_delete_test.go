@@ -50,8 +50,7 @@ func TestThing_SoftDelete_Basic(t *testing.T) {
 
 	// 5. Verify standard Query does not find the user
 	params := thing.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
-	queryResult, err := th.Query(params)
-	require.NoError(t, err)
+	queryResult := th.Query(params)
 
 	count, err := queryResult.Count()
 	require.NoError(t, err)
@@ -79,8 +78,7 @@ func TestThing_Query_WithDeleted(t *testing.T) {
 
 	// 3. Standard Query should not find the user
 	params := thing.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
-	stdQueryResult, err := th.Query(params)
-	require.NoError(t, err)
+	stdQueryResult := th.Query(params)
 
 	stdCount, err := stdQueryResult.Count()
 	require.NoError(t, err)
@@ -91,8 +89,7 @@ func TestThing_Query_WithDeleted(t *testing.T) {
 	assert.Len(t, stdFetched, 0, "Standard query fetch should find 0")
 
 	// 4. Query with WithDeleted should find the user
-	baseQueryResult, err := th.Query(params)
-	require.NoError(t, err, "Base query for WithDeleted failed")
+	baseQueryResult := th.Query(params)
 	deletedQueryResult := baseQueryResult.WithDeleted() // Chain WithDeleted
 	require.NotNil(t, deletedQueryResult, "WithDeleted should return a new query result")
 
@@ -130,8 +127,7 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	listCacheKey := generateQueryCacheKey(t, "list", user.TableName(), params)
 	countCacheKey := generateQueryCacheKey(t, "count", user.TableName(), params)
 
-	queryResult, err := th.Query(params)
-	require.NoError(t, err)
+	queryResult := th.Query(params)
 	_, err = queryResult.Fetch(0, 1) // Fetch to populate
 	require.NoError(t, err)
 	count, err := queryResult.Count() // Count to populate
@@ -187,8 +183,7 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	assert.True(t, fetchedUserByID.Deleted, "Fetched user via ByID should have Deleted flag set")
 
 	// Standard Query should find 0
-	queryResultStd, err := th.Query(params)
-	require.NoError(t, err)
+	queryResultStd := th.Query(params)
 	countStd, err := queryResultStd.Count()
 	require.NoError(t, err)
 	assert.EqualValues(t, 0, countStd)
@@ -197,8 +192,7 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	assert.Len(t, fetchStd, 0)
 
 	// Query with WithDeleted should find 1
-	baseQueryResultDel, err := th.Query(params)
-	require.NoError(t, err, "Base query for WithDeleted failed")
+	baseQueryResultDel := th.Query(params)
 	queryResultDel := baseQueryResultDel.WithDeleted()
 	countDel, err := queryResultDel.Count()
 	require.NoError(t, err)
@@ -222,12 +216,10 @@ func TestThing_WithDeleted_Immutability(t *testing.T) {
 
 	// Original query
 	params := thing.QueryParams{Where: "id = ?", Args: []interface{}{user.ID}}
-	originalQuery, err := th.Query(params)
-	require.NoError(t, err)
+	originalQuery := th.Query(params)
 
 	// Create WithDeleted query
-	baseQueryResultDel, err := th.Query(params)
-	require.NoError(t, err, "Base query for WithDeleted failed")
+	baseQueryResultDel := th.Query(params)
 	deletedQuery := baseQueryResultDel.WithDeleted()
 	require.NotNil(t, deletedQuery)
 	require.NotEqual(t, originalQuery, deletedQuery, "WithDeleted should return a new instance")

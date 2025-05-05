@@ -133,16 +133,17 @@ func TestThing_Delete(t *testing.T) {
 
 	// --- Populate caches BEFORE delete ---
 	// Perform a count query to cache it
-	countResult, err := th.Query(countParams)
-	require.NoError(t, err, "Failed to perform count query before delete")
-	_, err = countResult.Count() // Trigger count cache population
-	require.NoError(t, err, "Failed to get count before delete")
+	countResult := th.Query(countParams)
+	count, err := countResult.Count()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), count)
 
 	// Perform a list query to cache it
-	listResult, err := th.Query(listParams)
-	require.NoError(t, err, "Failed to perform list query before delete")
-	_, err = listResult.Fetch(0, 1) // Trigger list cache population
-	require.NoError(t, err, "Failed to fetch list before delete")
+	listResult := th.Query(listParams)
+	list, err := listResult.Fetch(0, 10)
+	require.NoError(t, err)
+	assert.Len(t, list, 1)
+	assert.Equal(t, user.ID, list[0].ID)
 	// --- End cache population ---
 
 	// Reset calls *after* populating caches but *before* the action being tested (Delete)
@@ -194,27 +195,47 @@ func TestThing_Query(t *testing.T) {
 		require.NotZero(t, u.ID)
 	}
 
-	// Query for all users
+	// Query for all users (original API)
 	params := thing.QueryParams{
 		Where: "",
 	}
-	allUsersResult, err := th.Query(params)
-	require.NoError(t, err)
-	// Fetch results before using len
-	allUsersFetched, fetchErr := allUsersResult.Fetch(0, 100) // Fetch up to 100
+	allUsersResult := th.Query(params)
+	allUsersFetched, fetchErr := allUsersResult.Fetch(0, 100)
 	require.NoError(t, fetchErr)
 	assert.GreaterOrEqual(t, len(allUsersFetched), 3, "Should find at least the 3 users we created")
 
-	// Query with a filter
+	// Query with a filter (original API)
 	filterParams := thing.QueryParams{
 		Where: "name = ?",
 		Args:  []interface{}{"Bob"},
 	}
-	bobUsersResult, err := th.Query(filterParams)
-	require.NoError(t, err)
-	// Fetch results before using len or indexing
-	bobUsersFetched, fetchErrBob := bobUsersResult.Fetch(0, 10) // Fetch up to 10
+	bobUsersResult := th.Query(filterParams)
+	bobUsersFetched, fetchErrBob := bobUsersResult.Fetch(0, 10)
 	require.NoError(t, fetchErrBob)
 	assert.Equal(t, 1, len(bobUsersFetched), "Should find only Bob")
 	assert.Equal(t, "Bob", bobUsersFetched[0].Name)
+
+	// --- New: Chainable API ---
+	// All users (no filter)
+	allUsersChained, err := th.Where("").Fetch(0, 100)
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, len(allUsersChained), 3, "Chained: Should find at least the 3 users we created")
+
+	// Filtered by name
+	bobUsersChained, err := th.Where("name = ?", "Bob").Fetch(0, 10)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(bobUsersChained), "Chained: Should find only Bob")
+	assert.Equal(t, "Bob", bobUsersChained[0].Name)
+
+	// Chained Where + Order
+	orderedUsers, err := th.Where("").Order("id DESC").Fetch(0, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 3, len(orderedUsers))
+	assert.True(t, orderedUsers[0].ID > orderedUsers[1].ID)
+
+	// Chained Where + Order (filtered)
+	bobOrdered, err := th.Where("name = ?", "Bob").Order("id DESC").Fetch(0, 1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, len(bobOrdered))
+	assert.Equal(t, "Bob", bobOrdered[0].Name)
 }
