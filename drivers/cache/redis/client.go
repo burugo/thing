@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"sync"
 	"time"
@@ -17,13 +18,17 @@ import (
 // client implements thing.CacheClient using Redis.
 // The counters field tracks operation statistics for monitoring (thread-safe).
 type client struct {
-	redisClient *redis.Client  // Underlying Redis client
-	mu          sync.Mutex     // Protects counters map
-	counters    map[string]int // Operation counters for stats (e.g., "Get", "GetMiss")
+	redisClient       *redis.Client  // Underlying Redis client
+	mu                sync.Mutex     // Protects counters map
+	counters          map[string]int // Operation counters for stats (e.g., "Get", "GetMiss")
+	createdInternally bool           // 标记 redisClient 是否由本结构体创建
 }
 
-// Ensure client implements thing.CacheClient.
-var _ thing.CacheClient = (*client)(nil)
+// Ensure client implements thing.CacheClient and io.Closer.
+var (
+	_ thing.CacheClient = (*client)(nil)
+	_ io.Closer         = (*client)(nil)
+)
 
 // incrementCounter safely increments a named operation counter.
 func (c *client) incrementCounter(name string) {
@@ -42,32 +47,46 @@ type Options struct {
 	DB       int
 }
 
-// NewClient creates a new Redis cache client wrapper.
-// Changed name to NewClient and made it exported.
-func NewClient(opts Options) (thing.CacheClient, func(), error) {
-	redisOpts := &redis.Options{
-		Addr:     opts.Addr,
-		Password: opts.Password,
-		DB:       opts.DB,
+// Close implements io.Closer. 仅当 client.createdInternally 为 true 时关闭 redisClient。
+func (c *client) Close() error {
+	if c.createdInternally && c.redisClient != nil {
+		return c.redisClient.Close()
 	}
-	rdb := redis.NewClient(redisOpts)
+	return nil
+}
 
-	// Ping Redis to check connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	status := rdb.Ping(ctx)
-	if err := status.Err(); err != nil {
-		return nil, nil, fmt.Errorf("failed to ping redis: %w", err)
+// NewClient creates a new Redis cache client wrapper.
+// If client is not nil, it will be used directly. Otherwise, opts will be used to create a new client.
+func NewClient(redisCli *redis.Client, opts *Options) (thing.CacheClient, error) {
+	var rdb *redis.Client
+	var createdInternally bool
+
+	if redisCli != nil {
+		rdb = redisCli
+		createdInternally = false
+	} else {
+		if opts == nil {
+			opts = &Options{}
+		}
+		redisOpts := &redis.Options{
+			Addr:     opts.Addr,
+			Password: opts.Password,
+			DB:       opts.DB,
+		}
+		rdb = redis.NewClient(redisOpts)
+		createdInternally = true
+
+		// Ping Redis to check connection
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		status := rdb.Ping(ctx)
+		if err := status.Err(); err != nil {
+			return nil, fmt.Errorf("failed to ping redis: %w", err)
+		}
 	}
 
 	log.Println("Redis cache client initialized successfully.")
-	cleanup := func() {
-		if err := rdb.Close(); err != nil {
-			log.Printf("Error closing Redis client: %v", err)
-		}
-	}
-	// Return our internal client type which implements the interface
-	return &client{redisClient: rdb, counters: make(map[string]int)}, cleanup, nil
+	return &client{redisClient: rdb, counters: make(map[string]int), createdInternally: createdInternally}, nil
 }
 
 // Get retrieves a raw string value from Redis.

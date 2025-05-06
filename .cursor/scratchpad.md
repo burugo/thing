@@ -62,18 +62,7 @@ These changes will simplify business code, reduce boilerplate, and align Thing O
 - Errors are reliably propagated via Fetch/All/First.
 - All tests pass; documentation and examples are up to date.
 
-## 2. Enhance ToJSON to Support Single and Collection Types (Task Type: New Feature)
-- 2.1 Refactor ToJSON to auto-detect and handle single objects, slices, and arrays.
-- 2.2 Fix DSL parsing and merging logic (Task Type: Bug Fix)
-    - [ ] 2.2.1 Fix nested merge behavior in `ParseFieldsDSL`: only the first nested block is kept. (Success: 'nested merge not supported' test passes)
-    - [ ] 2.2.2 Ensure default `id` injection in nested `JSONOptions` at all levels. (Success: id default tests in `TestParseFieldsDSL_ToJsonOptions` pass)
-    - [ ] 2.2.3 Fix include/exclude merging logic in `ParseFieldsDSL` to correctly record exclude fields. (Success: exclude tests in `TestParseFieldsDSL_ToJsonOptions` pass)
-- 2.3 Fix ToJSON implementation details (Task Type: Bug Fix)
-    - [ ] 2.3.1 Fix filtering of `BaseModel` fields per DSL Include/Exclude. (Success: base field exclude tests in `TestToJSON_WithFieldsDSL` pass)
-    - [ ] 2.3.2 Fix virtual method support for `WithFields` DSL. (Success: `TestToJSON_MethodBasedVirtuals` tests pass)
-    - [ ] 2.3.3 Fix slice/array serialization ordering and nested DSL application. (Success: single and nested serialization tests in `TestToJSON_SingleAndCollection` and `TestToJSON_NestedIncludeExclude` pass)
-- 2.4 Add/expand tests for the above fixes.
-- 2.5 Update documentation (README, examples).
+
 
 ### Success Criteria
 - ToJSON works seamlessly for single objects and collections, including nested preload objects.
@@ -89,8 +78,8 @@ These changes will simplify business code, reduce boilerplate, and align Thing O
     - [x] Write unit tests for parsing
 - [x] **Update `AutoMigrate` Logic (DB Adapters)**
     - [x] Modify SQLite adapter (Integration test added)
-    - [ ] (Optional/Later) Modify MySQL adapter
-    - [ ] (Optional/Later) Modify PostgreSQL adapter
+    - [x] (Optional/Later) Modify MySQL adapter
+    - [x] (Optional/Later) Modify PostgreSQL adapter
 - [x] **Add Comprehensive Tests**
     - [x] Write integration tests for `AutoMigrate` + composite indexes (SQLite)
 - [ ] **Update Documentation**
@@ -104,18 +93,21 @@ These changes will simplify business code, reduce boilerplate, and align Thing O
 - [x] Refactor if-else chain to switch in preloadManyToMany (relationships.go, line 541)
 - [x] Remove ineffectual assignment to placeholders in saveInternal else branch (crud.go)
 - [x] Move type declarations out of generic function in cache.go for Go 1.18 compatibility
-- [ ] 1. Refactor Query for Chainable Calls (Refactoring (Functional))
-    - [ ] 1.1 Change Query signature
-    - [ ] 1.2 Add CachedResult.Err field
-    - [ ] 1.3 Update Fetch/All/First error propagation
-    - [ ] 1.4 Update business code and examples
-    - [ ] 1.5 Update tests
-    - [ ] 1.6 Update documentation (README, examples, thing.mdc)
-- [ ] 2. Enhance ToJSON for Single and Collection Types (New Feature)
-    - [ ] 2.1 Refactor ToJSON implementation
-    - [ ] 2.2 Support nested preload and field filtering
-    - [ ] 2.3 Add/expand tests
-    - [ ] 2.4 Update documentation (README, examples, thing.mdc)
+- [x] 1. Refactor Query for Chainable Calls (Refactoring (Functional))
+    - [x] 1.1 Change Query signature
+    - [x] 1.2 Add CachedResult.Err field
+    - [x] 1.3 Update Fetch/All/First error propagation
+    - [x] 1.4 Update business code and examples
+    - [x] 1.5 Update tests
+    - [x] 1.6 Update documentation (README, examples, thing.mdc)
+- [x] 2. Enhance ToJSON for Single and Collection Types (New Feature)
+    - [x] 2.1 Refactor ToJSON implementation
+    - [x] 2.2 Support nested preload and field filtering
+    - [x] 2.3 Add/expand tests
+    - [x] 2.4 Update documentation (README, examples, thing.mdc)
+- [x] Refactor NewClient signature to support *redis.Client injection (client优先，opts兜底)
+- [x] Update all call sites to new signature (examples/04_hooks/main.go)
+- [x] Run all tests to verify no regression
 
 ## Executor's Feedback or Assistance Requests
 

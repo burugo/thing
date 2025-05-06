@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
 	"log"
 	"os"
 
@@ -10,6 +11,7 @@ import (
 	// "thing/examples/models" // Old import
 	"github.com/burugo/thing/drivers/cache/redis"
 	"github.com/burugo/thing/drivers/db/sqlite"
+	goRedis "github.com/redis/go-redis/v9"
 )
 
 // User definition is now in models.go within the same package
@@ -39,12 +41,25 @@ func main() {
 	// Note: Requires a running Redis instance
 	redisAddr := "127.0.0.1:6379" // Use IP address instead of hostname
 	opts := redis.Options{Addr: redisAddr}
-	cacheClient, cacheCleanup, err := redis.NewClient(opts)
+	cacheClient, err := redis.NewClient(nil, &opts)
 	if err != nil {
-		log.Fatalf("Failed to create redis cache client: %v", err)
+		log.Fatalf("Failed to create redis cache client (opts): %v", err)
 	}
-	defer cacheCleanup() // Ensure cache client resources are released
-	log.Println("Cache client initialized (Redis).")
+	defer cacheClient.(io.Closer).Close()
+	log.Println("Cache client initialized (Redis, via opts).")
+
+	// 方式二：传入已存在的 *redis.Client
+	rdb := goRedis.NewClient(&goRedis.Options{
+		Addr:     redisAddr,
+		Password: "",
+		DB:       0,
+	})
+	cacheClient2, err := redis.NewClient(rdb, nil)
+	if err != nil {
+		log.Fatalf("Failed to create redis cache client (existing *redis.Client): %v", err)
+	}
+	defer cacheClient2.(io.Closer).Close()
+	log.Println("Cache client initialized (Redis, via existing *redis.Client).")
 
 	// --- Thing ORM Initialization ---
 	// thingOrm, err := thing.New[models.User](dbAdapter, cacheClient, nil) // Old call
