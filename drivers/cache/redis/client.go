@@ -21,7 +21,7 @@ type client struct {
 	redisClient       *redis.Client  // Underlying Redis client
 	mu                sync.Mutex     // Protects counters map
 	counters          map[string]int // Operation counters for stats (e.g., "Get", "GetMiss")
-	createdInternally bool           // 标记 redisClient 是否由本结构体创建
+	createdInternally bool           // Indicates whether redisClient was created by this struct
 }
 
 // Ensure client implements thing.CacheClient and io.Closer.
@@ -47,7 +47,7 @@ type Options struct {
 	DB       int
 }
 
-// Close implements io.Closer. 仅当 client.createdInternally 为 true 时关闭 redisClient。
+// Close implements io.Closer. Only closes redisClient if client.createdInternally is true.
 func (c *client) Close() error {
 	if c.createdInternally && c.redisClient != nil {
 		return c.redisClient.Close()
