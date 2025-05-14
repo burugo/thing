@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"testing"
 
 	"github.com/burugo/thing"
@@ -229,8 +230,10 @@ func TestUserRole_Save_TriggersCacheInvalidation(t *testing.T) {
 	// 先手动写入 user_roles:{userID} 缓存，模拟已有缓存
 	cacheKey := fmt.Sprintf("list:user_roles:%d", userID)
 	ids := []int64{999} // 假设原来缓存里有个无关的 role
-	b, _ := json.Marshal(ids)
-	_ = mockCache.Set(ctx, cacheKey, string(b), 0)
+	err = mockCache.SetQueryIDs(ctx, cacheKey, ids, 0) // New way with Gob
+	require.NoError(t, err, "mockCache.SetQueryIDs should not fail")
+
+	log.Printf("[TestUserRole_Save_TriggersCacheInvalidation] DEBUG: After SetQueryIDs, checking cacheKey: %s", cacheKey)
 	require.True(t, mockCache.Exists(cacheKey), "缓存应已存在")
 
 	// 注册值级别索引（模拟 ORM preloadManyToMany 注册的 key）

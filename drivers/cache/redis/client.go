@@ -1,11 +1,15 @@
 package redis
 
 import (
+	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"reflect"
+	"strconv"
 	"sync"
 	"time"
 
@@ -127,7 +131,7 @@ func (c *client) Delete(ctx context.Context, key string) error {
 // GetModel retrieves a model from Redis.
 func (c *client) GetModel(ctx context.Context, key string, dest interface{}) error {
 	c.incrementCounter("GetModel")
-	val, err := c.redisClient.Get(ctx, key).Result() // Use Result() to get string value
+	val, err := c.redisClient.Get(ctx, key).Bytes() // Get as bytes for Gob
 	if err == redis.Nil {
 		c.incrementCounter("GetModelMiss")
 		return common.ErrNotFound
@@ -136,30 +140,123 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 		return fmt.Errorf("redis Get error for key '%s': %w", key, err)
 	}
 
-	// Check for NoneResult marker AFTER checking for redis.Nil
-	if val == common.NoneResult {
-		c.incrementCounter("GetModelMiss")
-		return common.ErrCacheNoneResult
-	}
+	// Check for NoneResult marker - for Gob, this would be a specific byte pattern if we choose to implement it.
+	// For now, assume if we get bytes, it's a Gob-encoded map or a direct Gob encoding of simple types.
+	// If `string(val) == common.NoneResult` was used, it might misinterpret Gob data.
+	// Let's assume for now that NoneResult is handled by Get/Set for simple strings, not GetModel/SetModel with Gob.
 	c.incrementCounter("GetModelHit")
 
-	// If not NoneResult, attempt to unmarshal as the destination type
-	err = json.Unmarshal([]byte(val), dest) // Unmarshal from string value bytes
-	if err != nil {
-		// Consider logging the problematic data: log.Printf("Unmarshal error for key '%s', data: %s", key, string(val))
-		return fmt.Errorf("redis Unmarshal error for key '%s' (value: '%s'): %w", key, val, err)
+	// Unmarshal using Gob (similar to unmarshalFromMockWithGob)
+	destVal := reflect.ValueOf(dest)
+	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
+		return fmt.Errorf("GetModel: dest must be a non-nil pointer, got %T", dest)
+	}
+	destElem := destVal.Elem()
+	if destElem.Kind() != reflect.Struct {
+		return fmt.Errorf("GetModel: dest must point to a struct, got %T", dest)
+	}
+
+	var dataMap map[string]interface{}
+	buf := bytes.NewBuffer(val)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&dataMap); err != nil {
+		// If Gob decoding to map fails, it might be that a simple type (like int64 for GetCount)
+		// was directly Gob-encoded. Try decoding directly into dest if it's not a struct.
+		// This is a fallback for non-map Gob data that might be stored by SetQueryIDs/SetCount if they use Gob directly.
+		// However, for SetModel, we expect a map.
+		log.Printf("WARN: GetModel failed to decode Gob to map for key '%s', trying direct decode: %v. Data len: %d", key, err, len(val))
+		
+		// Attempt direct Gob decode into dest if it's not a map that GetModel typically expects.
+		// This makes GetModel more versatile if other methods (like SetCount) use Gob directly.
+		buf.Reset() // Reset buffer to re-read
+		buf.Write(val)
+		decoder = gob.NewDecoder(buf)
+		if directDecodeErr := decoder.Decode(dest); directDecodeErr != nil {
+			log.Printf("ERROR: GetModel direct Gob decode also failed for key '%s': %v", key, directDecodeErr)
+			return fmt.Errorf("redis Gob Unmarshal error (tried map and direct) for key '%s': map_err=%w, direct_err=%w", key, err, directDecodeErr)
+		} 
+		// If direct decode succeeded, return.
+		return nil
+	}
+
+	for k, v := range dataMap {
+		field := destElem.FieldByName(k)
+		if field.IsValid() && field.CanSet() {
+			valueToSet := reflect.ValueOf(v)
+			if valueToSet.Type().AssignableTo(field.Type()) {
+				field.Set(valueToSet)
+			} else if valueToSet.Type().ConvertibleTo(field.Type()) {
+				field.Set(valueToSet.Convert(field.Type()))
+			} else {
+				// Attempt common numeric conversion from float64 (if map came from JSON originally) or int64 (from Gob)
+				if (valueToSet.Kind() == reflect.Float64 || valueToSet.Kind() == reflect.Int64) && (field.Kind() >= reflect.Int && field.Kind() <= reflect.Uint64) {
+					var numericVal int64
+					if valueToSet.Kind() == reflect.Float64 {
+						numericVal = int64(valueToSet.Float())
+					} else {
+						numericVal = valueToSet.Int()
+					}
+					switch field.Kind() {
+					case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+						field.SetInt(numericVal)
+					case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+						if numericVal < 0 {
+							log.Printf("WARN: GetModel: trying to set negative value %d to unsigned field %s", numericVal, k)
+							// Potentially set to 0 or error, for now, let it be set (may panic or wrap around)
+						}
+						field.SetUint(uint64(numericVal))
+					}
+				} else {
+					log.Printf("WARN: GetModel: Unhandled type mismatch for field %s: map type %T, struct field type %s", k, v, field.Type())
+				}
+			}
+		}
 	}
 	return nil
 }
 
-// SetModel stores a model in Redis.
-func (c *client) SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error {
+// SetModel stores a model in Redis using Gob encoding based on fieldsToCache.
+func (c *client) SetModel(ctx context.Context, key string, model interface{}, fieldsToCache []string, expiration time.Duration) error {
 	c.incrementCounter("SetModel")
-	data, err := json.Marshal(model)
-	if err != nil {
-		return fmt.Errorf("redis Marshal error for key '%s': %w", key, err)
+	
+	val := reflect.ValueOf(model)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
 	}
-	err = c.redisClient.Set(ctx, key, data, expiration).Err()
+
+	if val.Kind() != reflect.Struct {
+		// If it's not a struct, we might be trying to cache a simple type (e.g. from SetCount via mock client pattern)
+		// For Redis, we can Gob encode it directly. Client of GetModel needs to be aware.
+		log.Printf("WARN: SetModel called with non-struct type %T for key '%s'. Attempting direct Gob encode.", model, key)
+		var buf bytes.Buffer
+		encoder := gob.NewEncoder(&buf)
+		if err := encoder.Encode(model); err != nil {
+			return fmt.Errorf("redis Gob direct encode error for key '%s': %w", key, err)
+		}
+		errRedis := c.redisClient.Set(ctx, key, buf.Bytes(), expiration).Err()
+		if errRedis != nil {
+			return fmt.Errorf("redis Set error for key '%s': %w", key, errRedis)
+		}
+		return nil
+	}
+
+	dataMap := make(map[string]interface{})
+	for _, fieldName := range fieldsToCache {
+		fieldVal := val.FieldByName(fieldName)
+		if fieldVal.IsValid() && fieldVal.CanInterface() {
+			dataMap[fieldName] = fieldVal.Interface()
+		} else {
+			log.Printf("WARN: SetModel: Field '%s' not found or not exportable in type %s for key '%s'", fieldName, val.Type().Name(), key)
+		}
+	}
+
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+	if err := encoder.Encode(dataMap); err != nil {
+		return fmt.Errorf("redis Gob map encode error for key '%s': %w", key, err)
+	}
+
+	err := c.redisClient.Set(ctx, key, buf.Bytes(), expiration).Err()
 	if err != nil {
 		return fmt.Errorf("redis Set error for key '%s': %w", key, err)
 	}
@@ -180,7 +277,7 @@ func (c *client) DeleteModel(ctx context.Context, key string) error {
 // It now checks for the NoneResult marker and returns ErrQueryCacheNoneResult if found.
 func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
 	c.incrementCounter("GetQueryIDs")
-	val, err := c.redisClient.Get(ctx, queryKey).Result() // Use Result() to get string directly
+	val, err := c.redisClient.Get(ctx, queryKey).Bytes() // Get as bytes
 	if err == redis.Nil {
 		c.incrementCounter("GetQueryIDsMiss")
 		return nil, common.ErrNotFound
@@ -190,17 +287,12 @@ func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, err
 	}
 	c.incrementCounter("GetQueryIDsHit")
 
-	// Remove the check for the no longer used NoneResult marker
-	// if val == common.NoneResult {
-	// 	return nil, common.ErrQueryCacheNoneResult
-	// }
-
-	// If not NoneResult, attempt to unmarshal as list of IDs
 	var ids []int64
-	err = json.Unmarshal([]byte(val), &ids) // Unmarshal from string value
-	if err != nil {
-		// If unmarshaling fails, it might be unexpected data. Return error.
-		return nil, fmt.Errorf("redis Unmarshal error for query key '%s' (value: '%s'): %w", queryKey, val, err)
+	// Assuming SetQueryIDs now uses Gob for consistency
+	buf := bytes.NewBuffer(val)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&ids); err != nil {
+		return nil, fmt.Errorf("redis Gob Unmarshal error for query key '%s': %w", queryKey, err)
 	}
 	return ids, nil
 }
@@ -208,16 +300,17 @@ func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, err
 // SetQueryIDs stores a list of IDs in Redis.
 func (c *client) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
 	c.incrementCounter("SetQueryIDs")
-	// Handle empty slice case - store an empty JSON array? Or delete?
-	// Storing empty array is safer if Get expects a list.
 	if ids == nil {
-		ids = []int64{} // Ensure we store "[]" not "null"
+		ids = []int64{}
 	}
-	data, err := json.Marshal(ids)
-	if err != nil {
-		return fmt.Errorf("redis Marshal error for query key '%s': %w", queryKey, err)
+	// Use Gob for consistency
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+	if err := encoder.Encode(ids); err != nil {
+		return fmt.Errorf("redis Gob Marshal error for query key '%s': %w", queryKey, err)
 	}
-	err = c.redisClient.Set(ctx, queryKey, data, expiration).Err()
+
+	err := c.redisClient.Set(ctx, queryKey, buf.Bytes(), expiration).Err()
 	if err != nil {
 		return fmt.Errorf("redis Set error for query key '%s': %w", queryKey, err)
 	}

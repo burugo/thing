@@ -1,11 +1,13 @@
 package thing_test
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"encoding/gob"
 	"fmt"
 	"log"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +18,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 )
+
+func init() {
+	gob.Register(time.Time{})
+}
 
 // --- Cache Mock Implementation ---
 
@@ -143,19 +149,27 @@ func (m *mockCacheClient) incrementCounter(name string) {
 // Exists checks if a non-expired key is present in the mock cache store.
 // Note: This doesn't check lock prefixes.
 func (m *mockCacheClient) Exists(key string) bool {
-	val, exists := m.store.Load(key)
-	log.Printf("[MOCKCACHE Exists] key=%s exists=%v type=%T value=%#v", key, exists, val, val)
-	if !exists {
+	log.Printf("[MOCKCACHE DEBUG Exists] Called for key: %s", key)
+	val, loaded := m.store.Load(key)
+	log.Printf("[MOCKCACHE DEBUG Exists] store.Load result - Key: %s, ExistsInMap: %v, ValueType: %T", key, loaded, val)
+	if !loaded {
+		log.Printf("[MOCKCACHE DEBUG Exists] Key %s NOT found in store. Returning false.", key)
 		return false
 	}
 	if expiryTime, expiryExists := m.expiryStore.Load(key); expiryExists {
 		if time.Now().After(expiryTime.(time.Time)) {
+			// Expired, delete key
+			log.Printf("[MOCKCACHE DEBUG Exists] Key %s was EXPIRED. Attempting to delete from store and expiryStore.", key)
 			m.store.Delete(key)
 			m.expiryStore.Delete(key)
-			log.Printf("[MOCKCACHE Exists] key=%s expired", key)
+			log.Printf("[MOCKCACHE DEBUG Exists] Key %s deleted due to expiry. Returning false.", key)
 			return false
 		}
+		log.Printf("[MOCKCACHE DEBUG Exists] Key %s has expiry and is NOT expired.", key)
+	} else {
+		log.Printf("[MOCKCACHE DEBUG Exists] Key %s has NO expiry.", key)
 	}
+	log.Printf("[MOCKCACHE DEBUG Exists] Key %s EXISTS and is NOT expired. Returning true.", key)
 	return true
 }
 
@@ -196,14 +210,92 @@ func (m *mockCacheClient) GetValue(key string) ([]byte, bool) {
 	return storedBytes, true
 }
 
-// Helper to marshal data for storage
-func marshalForMock(data interface{}) ([]byte, error) {
-	return json.Marshal(data)
+// Helper to marshal data for storage using GOB based on specified fields
+func marshalForMockWithGob(modelInstance interface{}, fieldsToCache []string) ([]byte, error) {
+	val := reflect.ValueOf(modelInstance)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+
+	if val.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("marshalForMockWithGob: modelInstance must be a struct or pointer to struct, got %T", modelInstance)
+	}
+
+	dataMap := make(map[string]interface{})
+	for _, fieldName := range fieldsToCache {
+		fieldVal := val.FieldByName(fieldName)
+		if fieldVal.IsValid() && fieldVal.CanInterface() {
+			dataMap[fieldName] = fieldVal.Interface()
+		} else {
+			// Log or handle fields that are not found or not exportable, though ModelInfo.Fields should only give us valid ones.
+			log.Printf("WARN: marshalForMockWithGob: Field '%s' not found or not exportable in type %s", fieldName, val.Type().Name())
+		}
+	}
+
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+	if err := encoder.Encode(dataMap); err != nil {
+		return nil, fmt.Errorf("gob encoding failed: %w", err)
+	}
+	return buf.Bytes(), nil
 }
 
-// Helper to unmarshal data from storage
-func unmarshalFromMock(stored []byte, dest interface{}) error {
-	return json.Unmarshal(stored, dest)
+// Helper to unmarshal data from storage using GOB
+func unmarshalFromMockWithGob(data []byte, destModelPtr interface{}) error {
+	destVal := reflect.ValueOf(destModelPtr)
+	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
+		return fmt.Errorf("unmarshalFromMockWithGob: destModelPtr must be a non-nil pointer, got %T", destModelPtr)
+	}
+	destElem := destVal.Elem()
+	if destElem.Kind() != reflect.Struct {
+		return fmt.Errorf("unmarshalFromMockWithGob: destModelPtr must point to a struct, got %T", destModelPtr)
+	}
+
+	var dataMap map[string]interface{}
+	buf := bytes.NewBuffer(data)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&dataMap); err != nil {
+		return fmt.Errorf("gob decoding to map failed: %w", err)
+	}
+
+	for key, val := range dataMap {
+		field := destElem.FieldByName(key)
+		if field.IsValid() && field.CanSet() {
+			// Handle type assertion/conversion carefully. Gob map might store float64 for numbers.
+			// reflect.ValueOf(val) will give the type from the map.
+			// field.Type() is the type of the struct field.
+			valueToSet := reflect.ValueOf(val)
+			if valueToSet.Type().AssignableTo(field.Type()) {
+				field.Set(valueToSet)
+			} else if valueToSet.Type().ConvertibleTo(field.Type()) {
+				field.Set(valueToSet.Convert(field.Type()))
+			} else {
+				// This can happen if e.g. a number from JSON (float64) needs to be set to an int field
+				// Gob might handle some of this better, but good to be aware.
+				// For robust solution, one might need more type switch cases here.
+				log.Printf("WARN: unmarshalFromMockWithGob: Cannot assign/convert map value type %T to field %s type %s. Value: %+v", val, key, field.Type(), val)
+
+				// Attempt common numeric conversion: float64 in map to int/int64/uint etc. in struct
+				if valueToSet.Kind() == reflect.Float64 && (field.Kind() >= reflect.Int && field.Kind() <= reflect.Uint64) {
+					floatVal := valueToSet.Float()
+					switch field.Kind() {
+					case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+						field.SetInt(int64(floatVal))
+					case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+						field.SetUint(uint64(floatVal))
+					default:
+						// Should not happen based on outer if
+					}
+				} else {
+					// Add more specific type conversions if necessary
+					log.Printf("WARN: Unhandled type mismatch for field %s: map type %T, struct field type %s", key, val, field.Type())
+				}
+			}
+		} else {
+			log.Printf("WARN: unmarshalFromMockWithGob: Field '%s' not found in destination struct %s or cannot be set", key, destElem.Type().Name())
+		}
+	}
+	return nil
 }
 
 // Get retrieves a raw string value from the mock cache.
@@ -252,46 +344,69 @@ func (m *mockCacheClient) Set(ctx context.Context, key string, value string, exp
 
 // Delete removes a key from the mock cache.
 func (m *mockCacheClient) Delete(ctx context.Context, key string) error {
+	log.Printf("[MOCKCACHE DEBUG Delete] Called for key: %s", key)
 	m.incrementCounter("Delete") // Use helper
 
 	// log.Printf("DEBUG Delete: Deleting key: %s", key)
+	_, loaded := m.store.Load(key)
+	if loaded {
+		log.Printf("[MOCKCACHE DEBUG Delete] Key %s was FOUND in store before deletion.", key)
+	} else {
+		log.Printf("[MOCKCACHE DEBUG Delete] Key %s was NOT FOUND in store before attempting deletion.", key)
+	}
 	m.store.Delete(key)
 	m.expiryStore.Delete(key)
+	_, stillExists := m.store.Load(key)
+	if stillExists {
+		log.Printf("[MOCKCACHE DEBUG Delete] Key %s STILL EXISTS in store AFTER deletion attempt. This is unexpected!", key)
+	} else {
+		log.Printf("[MOCKCACHE DEBUG Delete] Key %s successfully removed from store (or was already absent).", key)
+	}
 	return nil
 }
 
+// GetModel retrieves a model from the mock cache.
 func (m *mockCacheClient) GetModel(ctx context.Context, key string, modelPtr interface{}) error {
 	m.incrementCounter("GetModel")
-	storedBytes, ok := m.GetValue(key)
-	if !ok {
+	// log.Printf("[MOCKCACHE GetModel] key=%s", key)
+
+	storedBytes, exists := m.GetValue(key) // GetValue handles expiry
+	if !exists {
 		m.incrementCounter("GetModelMiss")
-		return common.ErrNotFound
+		// log.Printf("[MOCKCACHE GetModel] MISS for key=%s", key)
+		return common.ErrNotFound // Consistent with other cache misses
 	}
-	if string(storedBytes) == common.NoneResult {
-		m.incrementCounter("GetModelMiss")
-		return common.ErrCacheNoneResult
+
+	// log.Printf("[MOCKCACHE GetModel] HIT for key=%s, len=%d", key, len(storedBytes))
+	// err := unmarshalFromMock(storedBytes, modelPtr) // Old way
+	err := unmarshalFromMockWithGob(storedBytes, modelPtr) // New GOB way
+	if err != nil {
+		log.Printf("ERROR: mockCacheClient.GetModel failed to unmarshal for key %s: %v", key, err)
+		m.incrementCounter("GetModelError") // Or a more specific error counter
+		return fmt.Errorf("failed to unmarshal model from mock cache for key %s: %w", key, err)
 	}
 	m.incrementCounter("GetModelHit")
-	return unmarshalFromMock(storedBytes, modelPtr)
+	return nil
 }
 
-func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error {
-	data, err := marshalForMock(model)
-	if err != nil {
-		return fmt.Errorf("mock cache marshal error for key '%s': %w", key, err)
-	}
-	if string(data) == common.NoneResult {
-		if v, ok := m.store.Load(key); ok {
-			if s, ok := v.([]byte); ok && string(s) == common.NoneResult {
-				return nil
-			}
-		}
-	}
+// SetModel stores a model in the mock cache.
+func (m *mockCacheClient) SetModel(ctx context.Context, key string, model interface{}, fieldsToCache []string, expiration time.Duration) error {
 	m.incrementCounter("SetModel")
-	m.store.Store(key, data)
+	// log.Printf("[MOCKCACHE SetModel] key=%s, expiration=%v, fieldsToCache=%v", key, expiration, fieldsToCache)
+
+	// storedBytes, err := marshalForMock(model) // Old way
+	storedBytes, err := marshalForMockWithGob(model, fieldsToCache) // New GOB way
+	if err != nil {
+		log.Printf("ERROR: mockCacheClient.SetModel failed to marshal model for key %s: %v", key, err)
+		return fmt.Errorf("failed to marshal model for mock cache (key %s): %w", key, err)
+	}
+
+	m.store.Store(key, storedBytes)
 	if expiration > 0 {
-		expiryTime := time.Now().Add(expiration)
-		m.expiryStore.Store(key, expiryTime)
+		m.expiryStore.Store(key, time.Now().Add(expiration))
+	} else {
+		// If expiration is 0 or negative, remove any existing expiry to make it non-expiring
+		m.expiryStore.Delete(key)
 	}
 	return nil
 }
@@ -322,10 +437,12 @@ func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]i
 	m.lastQueryCacheHit = true
 
 	var ids []int64
-	if err := unmarshalFromMock(storedBytes, &ids); err != nil {
+	buf := bytes.NewBuffer(storedBytes)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&ids); err != nil { // Directly decode into &ids
 		// log.Printf("DEBUG GetQueryIDs: Error unmarshaling for query key %s: %v", queryKey, err)
 		m.lastQueryCacheHit = false
-		return nil, fmt.Errorf("mock cache unmarshal error for query key '%s': %w", queryKey, err)
+		return nil, fmt.Errorf("mock cache GetQueryIDs gob decoding failed for query key '%s': %w", queryKey, err)
 	}
 
 	return ids, nil
@@ -339,11 +456,13 @@ func (m *mockCacheClient) SetQueryIDs(ctx context.Context, queryKey string, ids 
 		// log.Printf("DEBUG SetQueryIDs: First few IDs: %v", ids[:min(3, len(ids))])
 	}
 
-	data, err := marshalForMock(ids)
-	if err != nil {
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+	if err := encoder.Encode(ids); err != nil { // Directly encode ids
 		// log.Printf("DEBUG SetQueryIDs: Error marshaling for query key %s: %v", queryKey, err)
-		return fmt.Errorf("mock cache marshal error for query key '%s': %w", queryKey, err)
+		return fmt.Errorf("mock cache SetQueryIDs gob encoding failed for query key '%s': %w", queryKey, err)
 	}
+	data := buf.Bytes()
 
 	m.store.Store(queryKey, data)
 	if expiration > 0 {
@@ -520,10 +639,13 @@ func (m *mockCacheClient) FlushAll(ctx context.Context) error {
 // SetCount simulates storing a count value for a key.
 func (m *mockCacheClient) SetCount(ctx context.Context, key string, count int64, expiration time.Duration) error {
 	m.incrementCounter("SetCount")
-	data, err := marshalForMock(count)
-	if err != nil {
-		return fmt.Errorf("mock SetCount marshal error: %w", err)
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+	if err := encoder.Encode(count); err != nil {
+		return fmt.Errorf("mock SetCount gob encoding failed: %w", err)
 	}
+	data := buf.Bytes()
+
 	m.store.Store(key, data)
 	if expiration > 0 {
 		m.expiryStore.Store(key, time.Now().Add(expiration))
@@ -539,9 +661,10 @@ func (m *mockCacheClient) GetCount(ctx context.Context, key string) (int64, erro
 		return 0, common.ErrNotFound
 	}
 	var count int64
-	err := unmarshalFromMock(storedBytes, &count)
-	if err != nil {
-		return 0, fmt.Errorf("mock GetCount unmarshal error: %w", err)
+	buf := bytes.NewBuffer(storedBytes)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&count); err != nil {
+		return 0, fmt.Errorf("mock GetCount gob decoding failed: %w", err)
 	}
 	return count, nil
 }

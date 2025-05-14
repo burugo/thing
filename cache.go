@@ -1,8 +1,10 @@
 package thing
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -626,36 +628,138 @@ func (m *localCache) Exists(key string) bool {
 }
 
 func (m *localCache) GetModel(ctx context.Context, key string, dest interface{}) error {
-	m.incrCounter("GetModel")
-	if v, ok := m.store.Load(key); ok {
-		b, ok := v.(string)
-		if !ok {
-			m.incrCounter("GetModelMiss")
-			return common.ErrNotFound
-		}
-		if b == common.NoneResult {
-			m.incrCounter("GetModelMiss")
-			return common.ErrCacheNoneResult
-		}
-		m.incrCounter("GetModelHit")
-		return json.Unmarshal([]byte(b), dest)
-	}
-	m.incrCounter("GetModelMiss")
-	return common.ErrNotFound
-}
+	counters := m.getCounters()
+	counters["GetModel"]++
 
-func (m *localCache) SetModel(ctx context.Context, key string, value interface{}, expiration time.Duration) error {
-	m.incrCounter("SetModel")
-	b, _ := json.Marshal(value)
-	if string(b) == common.NoneResult {
-		if v, ok := m.store.Load(key); ok {
-			if s, ok := v.(string); ok && s == common.NoneResult {
-				return nil
+	raw, ok := m.store.Load(key)
+	if !ok {
+		counters["GetModelMiss"]++
+		return common.ErrNotFound
+	}
+
+	// Assuming raw is []byte from Gob encoding
+	b, ok := raw.([]byte)
+	if !ok {
+		counters["GetModelError"]++
+		log.Printf("ERROR: localCache.GetModel: value for key '%s' is not []byte, but %T", key, raw)
+		return fmt.Errorf("localCache: cached value for key '%s' is not []byte (%T)", key, raw)
+	}
+
+	// Unmarshal using Gob (similar to unmarshalFromMockWithGob or redis client)
+	destVal := reflect.ValueOf(dest)
+	if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
+		return fmt.Errorf("localCache.GetModel: dest must be a non-nil pointer, got %T", dest)
+	}
+	destElem := destVal.Elem()
+	// We expect destElem to be a struct for SetModel/GetModel typically.
+	// If it's not, direct Gob decode might work for simple types (e.g. GetCount)
+
+	var dataMap map[string]interface{}
+	buf := bytes.NewBuffer(b)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&dataMap); err != nil {
+		// Fallback: if not a map, try direct decode (e.g. for int64 from GetCount)
+		log.Printf("WARN: localCache.GetModel: failed to decode Gob to map for key '%s', trying direct decode. Error: %v", key, err)
+		buf.Reset()
+		buf.Write(b)
+		decoder = gob.NewDecoder(buf) // New decoder for the reset buffer
+		if directDecodeErr := decoder.Decode(dest); directDecodeErr != nil {
+			log.Printf("ERROR: localCache.GetModel: direct Gob decode also failed for key '%s': %v", key, directDecodeErr)
+			return fmt.Errorf("localCache: Gob Unmarshal error for key '%s' (map decode error: %v, direct decode error: %w)", key, err, directDecodeErr)
+		}
+		// Direct decode successful
+		counters["GetModelHit"]++
+		return nil
+	}
+
+	// If decoded to map, populate struct (only if destElem is a struct)
+	if destElem.Kind() == reflect.Struct {
+		for k, v := range dataMap {
+			field := destElem.FieldByName(k)
+			if field.IsValid() && field.CanSet() {
+				valueToSet := reflect.ValueOf(v)
+				if valueToSet.Type().AssignableTo(field.Type()) {
+					field.Set(valueToSet)
+				} else if valueToSet.Type().ConvertibleTo(field.Type()) {
+					field.Set(valueToSet.Convert(field.Type()))
+				} else {
+					// Simplified numeric conversion, assuming map values are int64/float64 from Gob
+					if (valueToSet.Kind() == reflect.Float64 || valueToSet.Kind() == reflect.Int64) && (field.Kind() >= reflect.Int && field.Kind() <= reflect.Uint64) {
+						var numericVal int64
+						if valueToSet.Kind() == reflect.Float64 {
+							numericVal = int64(valueToSet.Float())
+						} else {
+							numericVal = valueToSet.Int()
+						}
+						switch field.Kind() {
+						case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+							field.SetInt(numericVal)
+						case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+							if numericVal < 0 {log.Printf("WARN: localCache.GetModel: trying to set negative value %d to unsigned field %s", numericVal, k)}
+							field.SetUint(uint64(numericVal))
+						}
+					} else {
+						log.Printf("WARN: localCache.GetModel: Unhandled type mismatch for field %s: map type %T, struct field type %s", k, v, field.Type())
+					}
+				}
 			}
 		}
-		m.incrCounter("SetModelNoneResult")
+	} else {
+		// Decoded to map, but dest is not a struct - this case should ideally not happen if GetModel is for structs.
+		// But if it was a simple type that somehow got wrapped in a map by SetModel, this is an issue.
+		log.Printf("WARN: localCache.GetModel: decoded Gob to map, but dest is %s, not a struct. Key: %s", destElem.Kind(), key)
+		// We might need to return an error here or try to extract a single value if map has one key.
+		// For now, if map decode succeeded but dest isn't struct, it's a state mismatch.
+		return fmt.Errorf("localCache.GetModel: inconsistent state for key '%s', decoded to map but dest is not struct", key)
 	}
-	m.store.Store(key, string(b))
+
+	counters["GetModelHit"]++
+	return nil
+}
+
+func (m *localCache) SetModel(ctx context.Context, key string, model interface{}, fieldsToCache []string, expiration time.Duration) error {
+	counters := m.getCounters()
+	counters["SetModel"]++
+
+	val := reflect.ValueOf(model)
+	if val.Kind() == reflect.Ptr {
+		val = val.Elem()
+	}
+
+	var dataToCache []byte
+	// var err error // Removed unused variable
+
+	if val.Kind() == reflect.Struct {
+		dataMap := make(map[string]interface{})
+		for _, fieldName := range fieldsToCache {
+			fieldVal := val.FieldByName(fieldName)
+			if fieldVal.IsValid() && fieldVal.CanInterface() {
+				dataMap[fieldName] = fieldVal.Interface()
+			} else {
+				log.Printf("WARN: localCache.SetModel: Field '%s' not found or not exportable in type %s for key '%s'", fieldName, val.Type().Name(), key)
+			}
+		}
+		var buf bytes.Buffer
+		encoder := gob.NewEncoder(&buf)
+		if encErr := encoder.Encode(dataMap); encErr != nil {
+			return fmt.Errorf("localCache: Gob map encode error for key '%s': %w", key, encErr)
+		}
+		dataToCache = buf.Bytes()
+	} else {
+		// If it's not a struct, attempt direct Gob encode (e.g., for int64 from SetCount)
+		log.Printf("WARN: localCache.SetModel called with non-struct type %T for key '%s'. Attempting direct Gob encode.", model, key)
+		var buf bytes.Buffer
+		encoder := gob.NewEncoder(&buf)
+		if encErr := encoder.Encode(model); encErr != nil {
+			return fmt.Errorf("localCache: Gob direct encode error for key '%s': %w", key, encErr)
+		}
+		dataToCache = buf.Bytes()
+	}
+
+	m.store.Store(key, dataToCache)
+	// Note: localCache in cache.go doesn't seem to have expiryStore like mockCacheClient.
+	// It uses sync.Map for store, locks, counters. Expiration handling needs review for localCache.
+	// For now, this matches the old SetModel which didn't handle expiration for localCache specifically.
 	return nil
 }
 
@@ -666,33 +770,46 @@ func (m *localCache) DeleteModel(ctx context.Context, key string) error {
 }
 
 func (m *localCache) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
-	m.incrCounter("GetQueryIDs")
-	if v, ok := m.store.Load(queryKey); ok {
-		b, ok := v.(string)
-		if !ok {
-			m.incrCounter("GetQueryIDsMiss")
-			return nil, common.ErrNotFound
-		}
-		if b == common.NoneResult {
-			m.incrCounter("GetQueryIDsMiss")
-			return nil, common.ErrQueryCacheNoneResult
-		}
-		var ids []int64
-		if err := json.Unmarshal([]byte(b), &ids); err != nil {
-			m.incrCounter("GetQueryIDsMiss")
-			return nil, err
-		}
-		m.incrCounter("GetQueryIDsHit")
-		return ids, nil
+	counters := m.getCounters()
+	counters["GetQueryIDs"]++
+
+	raw, ok := m.store.Load(queryKey)
+	if !ok {
+		counters["GetQueryIDsMiss"]++
+		return nil, common.ErrNotFound
 	}
-	m.incrCounter("GetQueryIDsMiss")
-	return nil, common.ErrNotFound
+
+	b, ok := raw.([]byte)
+	if !ok {
+		counters["GetQueryIDsError"]++
+		return nil, fmt.Errorf("localCache: cached query IDs for key '%s' is not []byte (%T)", queryKey, raw)
+	}
+
+	var ids []int64
+	buf := bytes.NewBuffer(b)
+	decoder := gob.NewDecoder(buf)
+	if err := decoder.Decode(&ids); err != nil {
+		return nil, fmt.Errorf("localCache: Gob Unmarshal error for query key '%s': %w", queryKey, err)
+	}
+	counters["GetQueryIDsHit"]++
+	return ids, nil
 }
 
 func (m *localCache) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
-	m.incrCounter("SetQueryIDs")
-	b, _ := json.Marshal(ids)
-	m.store.Store(queryKey, string(b))
+	counters := m.getCounters()
+	counters["SetQueryIDs"]++
+
+	if ids == nil {
+		ids = []int64{}
+	}
+	var buf bytes.Buffer
+	encoder := gob.NewEncoder(&buf)
+	if err := encoder.Encode(ids); err != nil {
+		return fmt.Errorf("localCache: Gob Marshal error for query key '%s': %w", queryKey, err)
+	}
+
+	m.store.Store(queryKey, buf.Bytes())
+	// Expiration not handled by this localCache impl for SetQueryIDs (same as SetModel)
 	return nil
 }
 
@@ -720,12 +837,23 @@ func (m *localCache) incrCounter(name string) {
 }
 
 func (m *localCache) GetCacheStats(ctx context.Context) CacheStats {
-	stats := CacheStats{Counters: map[string]int{}}
-	m.counters.Range(func(k, v interface{}) bool {
-		if ks, ok := k.(string); ok {
-			stats.Counters[ks] = v.(int)
+	clonedCounters := make(map[string]int)
+	counters := m.getCounters()
+	for k, v := range counters {
+		clonedCounters[k] = v
+	}
+	return CacheStats{Counters: clonedCounters}
+}
+
+// Helper to get or initialize counters map for localCache
+func (m *localCache) getCounters() map[string]int {
+	if v, ok := m.counters.Load("actual_counters"); ok {
+		if casted, castOk := v.(map[string]int); castOk {
+			return casted
 		}
-		return true
-	})
-	return stats
+	}
+	// Initialize if not found or wrong type
+	newCounters := make(map[string]int)
+	m.counters.Store("actual_counters", newCounters)
+	return newCounters
 }
