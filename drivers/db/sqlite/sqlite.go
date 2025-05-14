@@ -572,18 +572,24 @@ func getStructFieldMap(structVal reflect.Value) (map[string]reflect.Value, error
 
 	typ := structVal.Type()
 	fieldMap := make(map[string]reflect.Value)
-	// log.Printf("DEBUG: getStructFieldMap processing type: %s", typ.Name()) // Added log
+	// log.Printf("[DEBUG] getStructFieldMap: Processing type: %s", typ.Name()) // Removed log
 
 	for i := 0; i < structVal.NumField(); i++ {
 		field := structVal.Field(i)
 		structField := typ.Field(i)
+		// log.Printf("[DEBUG] getStructFieldMap: Field %s (%s)", structField.Name, field.Type().Name()) // Removed log
 
 		if !structField.IsExported() {
+			// log.Printf("[DEBUG] getStructFieldMap: Field %s is not exported, skipping.", structField.Name) // Removed log
 			continue
 		}
 
 		dbTag := structField.Tag.Get("db")
+		// jsonTag := structField.Tag.Get("json") // Removed log
+		// log.Printf("[DEBUG] getStructFieldMap: Field %s, dbTag: '%s', jsonTag: '%s'", structField.Name, dbTag, jsonTag) // Removed log
+
 		if dbTag == "-" {
+			// log.Printf("[DEBUG] getStructFieldMap: Field %s has dbTag \"-\", skipping.", structField.Name) // Removed log
 			continue
 		}
 
@@ -603,10 +609,11 @@ func getStructFieldMap(structVal reflect.Value) (map[string]reflect.Value, error
 				return nil, fmt.Errorf("error processing embedded struct field %s: %w", structField.Name, err)
 			}
 			// Merge embedded fields. Outer fields processed later will overwrite if names clash.
-			// log.Printf("DEBUG: getStructFieldMap merging %d fields from embedded %s", len(embeddedMap), structField.Name) // Added log
+			// log.Printf("DEBUG: getStructFieldMap merging %d fields from embedded %s", len(embeddedMap), structField.Name) // Removed log
 			for k, v := range embeddedMap {
 				fieldMap[k] = v
 			}
+			// log.Printf("[DEBUG] getStructFieldMap: Finished merging embedded struct %s", structField.Name) // Removed log
 			// Continue to the next field after processing the embedded struct's fields.
 			continue // Important: skip the dbTag handling below for the anonymous struct itself.
 		}
@@ -619,17 +626,19 @@ func getStructFieldMap(structVal reflect.Value) (map[string]reflect.Value, error
 			// Use only the part before the first comma as the column name
 			parts := strings.Split(mapKey, ",")
 			mapKey = parts[0]
+			// log.Printf("[DEBUG] getStructFieldMap: Field %s, dbTag part used for mapKey: '%s'", fieldName, mapKey) // Removed log
 		}
 
 		if mapKey == "" {
 			mapKey = strings.ToLower(fieldName) // Default to lower-case field name if no db tag or after splitting
+			// log.Printf("[DEBUG] getStructFieldMap: Field %s, mapKey defaulted to lowercased field name: '%s'", fieldName, mapKey) // Removed log
 		}
 
 		// Add/overwrite the field in the map. Outer fields overwrite embedded fields naturally
 		fieldMap[mapKey] = field
-		// log.Printf("DEBUG: getStructFieldMap added/updated mapKey: '%s' for field: %s", mapKey, fieldName) // Added log
+		// log.Printf("[DEBUG] getStructFieldMap: Field %s, added to fieldMap with key: '%s'", fieldName, mapKey) // Removed log
 	}
-	// log.Printf("DEBUG: getStructFieldMap finished processing type: %s, map size: %d", typ.Name(), len(fieldMap)) // Added log
+	// log.Printf("[DEBUG] getStructFieldMap: Finished processing type: %s, map size: %d, map: %v", typ.Name(), len(fieldMap), fieldMap) // Removed log
 	return fieldMap, nil
 }
 

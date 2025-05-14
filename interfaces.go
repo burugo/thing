@@ -39,7 +39,7 @@ type CacheClient interface {
 	Delete(ctx context.Context, key string) error
 
 	GetModel(ctx context.Context, key string, dest interface{}) error
-	SetModel(ctx context.Context, key string, model interface{}, expiration time.Duration) error
+	SetModel(ctx context.Context, key string, model interface{}, fieldsToCache []string, expiration time.Duration) error
 	DeleteModel(ctx context.Context, key string) error
 
 	GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error)

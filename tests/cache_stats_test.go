@@ -36,7 +36,7 @@ func TestMockCacheClient_GetCacheStats(t *testing.T) {
 
 	err = mock.GetModel(ctx, "model", &struct{ ID int }{1})
 	_ = err
-	err = mock.SetModel(ctx, "model", &struct{ ID int }{1}, time.Second)
+	err = mock.SetModel(ctx, "model", &struct{ ID int }{1}, []string{"ID"}, time.Second)
 	_ = err
 	err = mock.DeleteModel(ctx, "model")
 	_ = err

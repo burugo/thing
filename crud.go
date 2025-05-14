@@ -141,7 +141,8 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 			// Cache the model
 			if cache != nil {
 				cacheKey := generateCacheKey(modelInfo.TableName, id)
-				if errCache := cache.SetModel(ctx, cacheKey, modelPtr, globalCacheTTL); errCache != nil { // USE globalCacheTTL
+				// Pass modelInfo.Fields which contains the list of Go field names
+				if errCache := cache.SetModel(ctx, cacheKey, modelPtr, modelInfo.Fields, globalCacheTTL); errCache != nil { // USE globalCacheTTL
 					log.Printf("WARN: Failed to cache model %s:%d after batch fetch: %v", modelInfo.TableName, id, errCache)
 				}
 			}
@@ -373,7 +374,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		lockKey := cacheKey + ":lock"
 
 		errLock := WithLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
-			if errCache := t.cache.SetModel(ctx, cacheKey, value, globalCacheTTL); errCache != nil {
+			if errCache := t.cache.SetModel(ctx, cacheKey, value, t.info.Fields, globalCacheTTL); errCache != nil {
 				log.Printf("WARN: Failed to update cache for %s after save: %v", cacheKey, errCache)
 			}
 			return nil

@@ -801,3 +801,61 @@ func TestToJSON_ExcludeBooksID(t *testing.T) {
 	assert.NotContains(t, jsonStr, "\"id\":2")
 	t.Logf("[FINAL DEBUG] JSON: %s", jsonStr)
 }
+
+// UserWithPassword is used to test fetching a model with a json:"-" field via Where.Fetch.
+type UserWithPassword struct {
+	thing.BaseModel
+	Username string `db:"username,unique"`
+	Password string `db:"password" json:"-"`
+	Status   int    `db:"status"`
+}
+
+func (u *UserWithPassword) TableName() string {
+	return "users_with_passwords"
+}
+
+func TestFetch_WithJsonDashField(t *testing.T) {
+	adapter, cache, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	err := thing.Configure(adapter, cache)
+	require.NoError(t, err, "thing.Configure should not fail")
+
+	orm, err := thing.Use[*UserWithPassword]()
+	require.NoError(t, err, "thing.Use should not fail for UserWithPassword")
+
+	err = thing.AutoMigrate(&UserWithPassword{})
+	require.NoError(t, err, "AutoMigrate should not fail for UserWithPassword")
+
+	// Create and save an instance
+	testUsername := "testuser_json_dash_fetch"
+	testPassword := "Sup3rS3cr3t!"
+	originalInstance := &UserWithPassword{
+		Username: testUsername,
+		Password: testPassword,
+		Status:   1,
+	}
+	err = orm.Save(originalInstance)
+	require.NoError(t, err, "Save should not fail")
+	require.NotZero(t, originalInstance.ID, "ID should be populated after save")
+
+	// Explicitly delete the object from cache to force DB read by Fetch (via fetchModelsByIDsInternal)
+	cacheKey := fmt.Sprintf("%s:%d", originalInstance.TableName(), originalInstance.ID)
+	err = cache.Delete(context.Background(), cacheKey)
+	require.NoError(t, err, "Failed to delete model from mock cache")
+
+	// Fetch the instance using Where(...).Fetch(...)
+	fetchedUsers, err := orm.Where("username = ?", testUsername).Fetch(0, 1)
+	require.NoError(t, err, "Where.Fetch should not fail")
+	require.Len(t, fetchedUsers, 1, "Should fetch exactly one user")
+
+	fetchedUser := fetchedUsers[0]
+	require.NotNil(t, fetchedUser, "Fetched user should not be nil")
+
+	// Assert that the Password field (with json:"-") is correctly loaded from DB
+	assert.Equal(t, testPassword, fetchedUser.Password, "Password with json:\"-\" should be loaded from DB via Fetch")
+
+	// Assert other fields are also correct
+	assert.Equal(t, testUsername, fetchedUser.Username, "Username should be loaded correctly")
+	assert.Equal(t, 1, fetchedUser.Status, "Status should be loaded correctly")
+}
