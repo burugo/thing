@@ -4,12 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/gob"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"reflect"
-	"strconv"
 	"sync"
 	"time"
 
@@ -173,7 +171,7 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 		decoder = gob.NewDecoder(buf)
 		if directDecodeErr := decoder.Decode(dest); directDecodeErr != nil {
 			log.Printf("ERROR: GetModel direct Gob decode also failed for key '%s': %v", key, directDecodeErr)
-			return fmt.Errorf("redis Gob Unmarshal error (tried map and direct) for key '%s': map_err=%w, direct_err=%w", key, err, directDecodeErr)
+			return fmt.Errorf("redis Gob Unmarshal error for key '%s' (map decode error: %v, direct decode error: %w)", key, err, directDecodeErr)
 		} 
 		// If direct decode succeeded, return.
 		return nil
