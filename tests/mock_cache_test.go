@@ -265,16 +265,12 @@ func unmarshalFromMockWithGob(data []byte, destModelPtr interface{}) error {
 			// reflect.ValueOf(val) will give the type from the map.
 			// field.Type() is the type of the struct field.
 			valueToSet := reflect.ValueOf(val)
-			if valueToSet.Type().AssignableTo(field.Type()) {
+			switch {
+			case valueToSet.Type().AssignableTo(field.Type()):
 				field.Set(valueToSet)
-			} else if valueToSet.Type().ConvertibleTo(field.Type()) {
+			case valueToSet.Type().ConvertibleTo(field.Type()):
 				field.Set(valueToSet.Convert(field.Type()))
-			} else {
-				// This can happen if e.g. a number from JSON (float64) needs to be set to an int field
-				// Gob might handle some of this better, but good to be aware.
-				// For robust solution, one might need more type switch cases here.
-				log.Printf("WARN: unmarshalFromMockWithGob: Cannot assign/convert map value type %T to field %s type %s. Value: %+v", val, key, field.Type(), val)
-
+			default:
 				// Attempt common numeric conversion: float64 in map to int/int64/uint etc. in struct
 				if valueToSet.Kind() == reflect.Float64 && (field.Kind() >= reflect.Int && field.Kind() <= reflect.Uint64) {
 					floatVal := valueToSet.Float()

@@ -229,7 +229,7 @@ func TestUserRole_Save_TriggersCacheInvalidation(t *testing.T) {
 
 	// 先手动写入 user_roles:{userID} 缓存，模拟已有缓存
 	cacheKey := fmt.Sprintf("list:user_roles:%d", userID)
-	ids := []int64{999} // 假设原来缓存里有个无关的 role
+	ids := []int64{999}                                // 假设原来缓存里有个无关的 role
 	err = mockCache.SetQueryIDs(ctx, cacheKey, ids, 0) // New way with Gob
 	require.NoError(t, err, "mockCache.SetQueryIDs should not fail")
 

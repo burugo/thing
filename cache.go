@@ -678,11 +678,12 @@ func (m *localCache) GetModel(ctx context.Context, key string, dest interface{})
 			field := destElem.FieldByName(k)
 			if field.IsValid() && field.CanSet() {
 				valueToSet := reflect.ValueOf(v)
-				if valueToSet.Type().AssignableTo(field.Type()) {
+				switch {
+				case valueToSet.Type().AssignableTo(field.Type()):
 					field.Set(valueToSet)
-				} else if valueToSet.Type().ConvertibleTo(field.Type()) {
+				case valueToSet.Type().ConvertibleTo(field.Type()):
 					field.Set(valueToSet.Convert(field.Type()))
-				} else {
+				default:
 					// Simplified numeric conversion, assuming map values are int64/float64 from Gob
 					if (valueToSet.Kind() == reflect.Float64 || valueToSet.Kind() == reflect.Int64) && (field.Kind() >= reflect.Int && field.Kind() <= reflect.Uint64) {
 						var numericVal int64
@@ -695,7 +696,9 @@ func (m *localCache) GetModel(ctx context.Context, key string, dest interface{})
 						case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 							field.SetInt(numericVal)
 						case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-							if numericVal < 0 {log.Printf("WARN: localCache.GetModel: trying to set negative value %d to unsigned field %s", numericVal, k)}
+							if numericVal < 0 {
+								log.Printf("WARN: localCache.GetModel: trying to set negative value %d to unsigned field %s", numericVal, k)
+							}
 							field.SetUint(uint64(numericVal))
 						}
 					} else {

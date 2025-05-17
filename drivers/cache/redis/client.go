@@ -163,7 +163,7 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 		// This is a fallback for non-map Gob data that might be stored by SetQueryIDs/SetCount if they use Gob directly.
 		// However, for SetModel, we expect a map.
 		log.Printf("WARN: GetModel failed to decode Gob to map for key '%s', trying direct decode: %v. Data len: %d", key, err, len(val))
-		
+
 		// Attempt direct Gob decode into dest if it's not a map that GetModel typically expects.
 		// This makes GetModel more versatile if other methods (like SetCount) use Gob directly.
 		buf.Reset() // Reset buffer to re-read
@@ -172,7 +172,7 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 		if directDecodeErr := decoder.Decode(dest); directDecodeErr != nil {
 			log.Printf("ERROR: GetModel direct Gob decode also failed for key '%s': %v", key, directDecodeErr)
 			return fmt.Errorf("redis Gob Unmarshal error for key '%s' (map decode error: %v, direct decode error: %w)", key, err, directDecodeErr)
-		} 
+		}
 		// If direct decode succeeded, return.
 		return nil
 	}
@@ -181,11 +181,12 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 		field := destElem.FieldByName(k)
 		if field.IsValid() && field.CanSet() {
 			valueToSet := reflect.ValueOf(v)
-			if valueToSet.Type().AssignableTo(field.Type()) {
+			switch {
+			case valueToSet.Type().AssignableTo(field.Type()):
 				field.Set(valueToSet)
-			} else if valueToSet.Type().ConvertibleTo(field.Type()) {
+			case valueToSet.Type().ConvertibleTo(field.Type()):
 				field.Set(valueToSet.Convert(field.Type()))
-			} else {
+			default:
 				// Attempt common numeric conversion from float64 (if map came from JSON originally) or int64 (from Gob)
 				if (valueToSet.Kind() == reflect.Float64 || valueToSet.Kind() == reflect.Int64) && (field.Kind() >= reflect.Int && field.Kind() <= reflect.Uint64) {
 					var numericVal int64
@@ -204,9 +205,8 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 						}
 						field.SetUint(uint64(numericVal))
 					}
-				} else {
-					log.Printf("WARN: GetModel: Unhandled type mismatch for field %s: map type %T, struct field type %s", k, v, field.Type())
 				}
+				log.Printf("WARN: GetModel: Unhandled type mismatch for field %s: map type %T, struct field type %s", k, v, field.Type())
 			}
 		}
 	}
@@ -216,7 +216,7 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 // SetModel stores a model in Redis using Gob encoding based on fieldsToCache.
 func (c *client) SetModel(ctx context.Context, key string, model interface{}, fieldsToCache []string, expiration time.Duration) error {
 	c.incrementCounter("SetModel")
-	
+
 	val := reflect.ValueOf(model)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
