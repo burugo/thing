@@ -84,7 +84,7 @@ func parseThingTag(tag string) (opts RelationshipOpts, err error) {
 	}
 
 	// Basic validation
-	if opts.ForeignKey == "" {
+	if (opts.RelationType == "belongsTo" || opts.RelationType == "hasMany") && opts.ForeignKey == "" {
 		err = fmt.Errorf("missing 'fk' (foreignKey) in thing tag for type %s", opts.RelationType)
 		return
 	}

@@ -227,3 +227,161 @@ func TestThing_Load_HasMany(t *testing.T) {
 		assert.True(t, titles[title], "Book with title %s should be loaded", title)
 	}
 }
+
+func TestThing_Query_Preload_ManyToMany(t *testing.T) {
+	db, mockcache, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Ensure thing is configured before AutoMigrate and NewThing instances
+	require.NoError(t, thing.Configure(db, mockcache), "thing.Configure should not fail")
+
+	studentThing, err := thing.New[*Student](db, mockcache)
+	require.NoError(t, err)
+	courseThing, err := thing.New[*Course](db, mockcache)
+	require.NoError(t, err)
+	studentCourseThing, err := thing.New[*StudentCourse](db, mockcache)
+	require.NoError(t, err)
+
+	// AutoMigrate Student, Course, and StudentCourse models
+	err = thing.AutoMigrate(&Student{}, &Course{}, &StudentCourse{})
+	require.NoError(t, err)
+
+	// Create students
+	student1 := &Student{Name: "Alice"}
+	student2 := &Student{Name: "Bob"}
+	err = studentThing.Save(student1)
+	require.NoError(t, err)
+	err = studentThing.Save(student2)
+	require.NoError(t, err)
+
+	// Create courses
+	course1 := &Course{Title: "Math 101"}
+	course2 := &Course{Title: "History 202"}
+	course3 := &Course{Title: "Physics 303"}
+	err = courseThing.Save(course1)
+	require.NoError(t, err)
+	err = courseThing.Save(course2)
+	require.NoError(t, err)
+	err = courseThing.Save(course3)
+	require.NoError(t, err)
+
+	// Create associations in join table
+	// Alice takes Math 101 and History 202
+	// Bob takes History 202 and Physics 303
+	associations := []struct{ studentID, courseID int64 }{
+		{student1.ID, course1.ID},
+		{student1.ID, course2.ID},
+		{student2.ID, course2.ID},
+		{student2.ID, course3.ID},
+	}
+	for _, assoc := range associations {
+		err = studentCourseThing.Save(&StudentCourse{StudentID: assoc.studentID, CourseID: assoc.courseID})
+		require.NoError(t, err)
+	}
+
+	// Test 1: Query student and preload courses
+	paramsStudent := thing.QueryParams{
+		Where:    "id = ?",
+		Args:     []interface{}{student1.ID},
+		Preloads: []string{"Courses"},
+	}
+	fetchedStudents, fetchErr := studentThing.Query(paramsStudent).Fetch(0, 1)
+	require.NoError(t, fetchErr)
+	require.Len(t, fetchedStudents, 1)
+	require.NotNil(t, fetchedStudents[0].Courses)
+	assert.Len(t, fetchedStudents[0].Courses, 2)
+
+	student1CourseTitles := make(map[string]bool)
+	for _, c := range fetchedStudents[0].Courses {
+		student1CourseTitles[c.Title] = true
+	}
+	assert.True(t, student1CourseTitles["Math 101"])
+	assert.True(t, student1CourseTitles["History 202"])
+
+	// Test 2: Query course and preload students
+	paramsCourse := thing.QueryParams{
+		Where:    "id = ?",
+		Args:     []interface{}{course2.ID},
+		Preloads: []string{"Students"},
+	}
+	fetchedCourses, fetchErr := courseThing.Query(paramsCourse).Fetch(0, 1)
+	require.NoError(t, fetchErr)
+	require.Len(t, fetchedCourses, 1)
+	require.NotNil(t, fetchedCourses[0].Students)
+	assert.Len(t, fetchedCourses[0].Students, 2)
+
+	course2StudentNames := make(map[string]bool)
+	for _, s := range fetchedCourses[0].Students {
+		course2StudentNames[s.Name] = true
+	}
+	assert.True(t, course2StudentNames["Alice"])
+	assert.True(t, course2StudentNames["Bob"])
+}
+
+func TestThing_Load_ManyToMany(t *testing.T) {
+	db, mockcache, cleanup := setupTestDB(t)
+	defer cleanup()
+
+	// Ensure thing is configured before AutoMigrate and NewThing instances
+	require.NoError(t, thing.Configure(db, mockcache), "thing.Configure should not fail")
+
+	studentThing, err := thing.New[*Student](db, mockcache)
+	require.NoError(t, err)
+	courseThing, err := thing.New[*Course](db, mockcache)
+	require.NoError(t, err)
+	studentCourseThing, err := thing.New[*StudentCourse](db, mockcache)
+	require.NoError(t, err)
+
+	// AutoMigrate Student, Course, and StudentCourse models
+	err = thing.AutoMigrate(&Student{}, &Course{}, &StudentCourse{})
+	require.NoError(t, err)
+
+	// Create students
+	student1 := &Student{Name: "Charlie"}
+	err = studentThing.Save(student1)
+	require.NoError(t, err)
+
+	// Create courses
+	course1 := &Course{Title: "Chemistry 101"}
+	course2 := &Course{Title: "Literature 202"}
+	err = courseThing.Save(course1)
+	require.NoError(t, err)
+	err = courseThing.Save(course2)
+	require.NoError(t, err)
+
+	// Create associations in join table
+	// Charlie takes Chemistry 101 and Literature 202
+	associations := []struct{ studentID, courseID int64 }{
+		{student1.ID, course1.ID},
+		{student1.ID, course2.ID},
+	}
+	for _, assoc := range associations {
+		err = studentCourseThing.Save(&StudentCourse{StudentID: assoc.studentID, CourseID: assoc.courseID})
+		require.NoError(t, err)
+	}
+
+	// Test 1: Load courses for a student
+	fetchedStudent, err := studentThing.ByID(student1.ID)
+	require.NoError(t, err)
+	assert.Len(t, fetchedStudent.Courses, 0) // Should be empty before load
+
+	err = studentThing.Load(fetchedStudent, "Courses")
+	require.NoError(t, err)
+	assert.Len(t, fetchedStudent.Courses, 2)
+	studentCourseTitles := make(map[string]bool)
+	for _, c := range fetchedStudent.Courses {
+		studentCourseTitles[c.Title] = true
+	}
+	assert.True(t, studentCourseTitles["Chemistry 101"])
+	assert.True(t, studentCourseTitles["Literature 202"])
+
+	// Test 2: Load students for a course
+	fetchedCourse, err := courseThing.ByID(course1.ID)
+	require.NoError(t, err)
+	assert.Len(t, fetchedCourse.Students, 0) // Should be empty before load
+
+	err = courseThing.Load(fetchedCourse, "Students")
+	require.NoError(t, err)
+	assert.Len(t, fetchedCourse.Students, 1)
+	assert.Equal(t, "Charlie", fetchedCourse.Students[0].Name)
+}

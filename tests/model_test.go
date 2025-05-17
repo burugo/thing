@@ -45,6 +45,42 @@ func (b *Book) TableName() string {
 	return "books"
 }
 
+// Student represents a student for testing many-to-many relationships.
+type Student struct {
+	thing.BaseModel
+	Name    string    `db:"name"`
+	Courses []*Course `thing:"manyToMany;model:Course;joinTable:student_courses;joinLocalKey:student_id;joinRelatedKey:course_id" db:"-"`
+}
+
+// TableName specifies the table name for Student.
+func (s *Student) TableName() string {
+	return "students"
+}
+
+// Course represents a course for testing many-to-many relationships.
+type Course struct {
+	thing.BaseModel
+	Title    string     `db:"title"`
+	Students []*Student `thing:"manyToMany;model:Student;joinTable:student_courses;joinLocalKey:course_id;joinRelatedKey:student_id" db:"-"`
+}
+
+// TableName specifies the table name for Course.
+func (c *Course) TableName() string {
+	return "courses"
+}
+
+// StudentCourse represents the join table for students and courses.
+type StudentCourse struct {
+	thing.BaseModel
+	StudentID int64 `db:"student_id,unique:uq_student_course"` // Part of composite unique index
+	CourseID  int64 `db:"course_id,unique:uq_student_course"`  // Part of composite unique index
+}
+
+// TableName specifies the table name for StudentCourse.
+func (sc *StudentCourse) TableName() string {
+	return "student_courses"
+}
+
 // Index declaration test model
 // TestIndexModel is used to test AutoMigrate index/unique index
 
