@@ -495,3 +495,28 @@ func main() {
 Thing ORM provides built-in cache operation monitoring for all cache clients (including Redis and the mock client used in tests). This monitoring capability is a core, integrated feature, not an add-on.
 
 You can call `GetCacheStats(ctx)`
+
+## ⚠️ Note: Caching Custom Struct Fields and gob.Register
+
+If your model struct contains a custom struct field (such as Address) and you want it to be cached (i.e., the field is not tagged with db:"-"), **you must register that struct type with gob.Register in your main program or test code**. Otherwise, you will encounter a gob encoding error when caching:
+
+```
+gob: type not registered for interface: yourpkg.Address
+```
+
+For example:
+```go
+import (
+    "encoding/gob"
+)
+
+func init() {
+    gob.Register(Address{}) // Address is your struct type
+}
+```
+
+- This registration must be done in the same package where the struct is defined (e.g., in tests/struct_json_test.go), and the type must match the actual package path exactly.
+- If the field is a pointer type, you should also register gob.Register(&Address{}).
+- It is also recommended to always register time.Time.
+
+This ensures that the cache layer (whether in-memory or Redis) can correctly serialize and restore your struct fields.

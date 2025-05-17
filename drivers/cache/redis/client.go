@@ -17,6 +17,10 @@ import (
 	"github.com/burugo/thing/common"
 )
 
+func init() {
+	gob.Register(time.Time{})
+}
+
 // client implements thing.CacheClient using Redis.
 // The counters field tracks operation statistics for monitoring (thread-safe).
 type client struct {

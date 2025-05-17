@@ -23,6 +23,10 @@ import (
 	// "thing/internal/helpers" // Removed import
 )
 
+func init() {
+	gob.Register(time.Time{})
+}
+
 // --- Cache Constants ---
 // Represents a non-existent entry in the cache - moved to common/errors.go
 // const NoneResult = "NoneResult" // Migrated
