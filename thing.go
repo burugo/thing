@@ -10,6 +10,7 @@ import (
 
 	"github.com/burugo/thing/internal/schema"
 	"github.com/burugo/thing/internal/sqlbuilder"
+	"github.com/burugo/thing/internal/utils"
 )
 
 // --- Thing Core Struct ---
@@ -46,6 +47,9 @@ func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 		cache = DefaultLocalCache
 	}
 	modelType := reflect.TypeOf((*T)(nil)).Elem()
+	// --- Automatically register types with gob ---
+	utils.RegisterTypeRecursive(modelType)
+	// --- END ---
 	// log.Printf("DEBUG: New[T] - Getting model info for type: %s", modelType.Name())
 	info, err := schema.GetCachedModelInfo(modelType)
 	if err != nil {

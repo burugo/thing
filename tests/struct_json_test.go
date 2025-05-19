@@ -3,7 +3,6 @@ package thing_test
 import (
 	"context"
 	"database/sql/driver"
-	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -12,10 +11,6 @@ import (
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/drivers/db/sqlite"
 )
-
-func init() {
-	gob.Register(Address{})
-}
 
 type Address struct {
 	Province string `json:"province"`

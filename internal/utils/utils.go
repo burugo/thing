@@ -1,10 +1,12 @@
 package utils
 
 import (
+	"encoding/gob"
 	"reflect"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // NormalizeValue recursively normalizes a value for consistent JSON marshaling.
@@ -93,4 +95,68 @@ func ToSnakeCase(str string) string {
 	snake := matchFirstCap.ReplaceAllString(str, "${1}_${2}")
 	snake = matchAllCap.ReplaceAllString(snake, "${1}_${2}")
 	return strings.ToLower(snake)
+}
+
+// Use fully qualified type name as key: pkgPath + "." + typeName
+var registeredTypeNames sync.Map // map[string]struct{}
+
+// RegisterTypeRecursive registers the given type and all its fields recursively with gob.Register.
+// It avoids duplicate registration by using the fully qualified type name as key.
+// It also recovers from gob.Register panic to prevent test crash.
+func RegisterTypeRecursive(t reflect.Type) {
+	if t == nil {
+		return
+	}
+	// Dereference pointer
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct {
+		return // Only register struct types
+	}
+	typeKey := t.PkgPath() + "." + t.Name()
+	if typeKey == "." { // anonymous or unnamed type
+		return
+	}
+	// Avoid duplicate registration
+	if _, loaded := registeredTypeNames.LoadOrStore(typeKey, struct{}{}); loaded {
+		return
+	}
+	// Register struct and pointer to struct, recover panic if duplicate
+	safeGobRegister := func(val interface{}) {
+		defer func() {
+			if r := recover(); r != nil {
+				// Ignore duplicate registration panic
+			}
+		}()
+		gob.Register(val)
+	}
+	safeGobRegister(reflect.New(t).Elem().Interface())
+	safeGobRegister(reflect.New(t).Interface())
+	// Register fields recursively
+	n := t.NumField()
+	for i := 0; i < n; i++ {
+		f := t.Field(i)
+		ft := f.Type
+		// Dereference pointer
+		for ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+		// Handle slice/array
+		if ft.Kind() == reflect.Slice || ft.Kind() == reflect.Array {
+			et := ft.Elem()
+			RegisterTypeRecursive(et)
+			continue
+		}
+		// Handle map
+		if ft.Kind() == reflect.Map {
+			RegisterTypeRecursive(ft.Key())
+			RegisterTypeRecursive(ft.Elem())
+			continue
+		}
+		// Handle struct
+		if ft.Kind() == reflect.Struct && ft.PkgPath() != "" && ft.Name() != "Time" {
+			RegisterTypeRecursive(ft)
+		}
+	}
 }
