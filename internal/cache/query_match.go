@@ -399,7 +399,7 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 		}
 
 		// If we reach here, this condition matched. Continue to the next.
-		log.Printf("DEBUG CheckQueryMatch: Condition '%s' matched for field '%s'", condition, goFieldName)
+		// log.Printf("DEBUG CheckQueryMatch: Condition '%s' matched for field '%s'", condition, goFieldName)
 	}
 
 	// All conditions matched
