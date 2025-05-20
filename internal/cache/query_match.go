@@ -169,7 +169,7 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 					// Check if field is a nilable type AND is nil
 					fieldKind := fieldVal.Kind()
 					isFieldNilable := fieldKind == reflect.Pointer || fieldKind == reflect.Interface || fieldKind == reflect.Map || fieldKind == reflect.Slice || fieldKind == reflect.Chan || fieldKind == reflect.Func
-					log.Printf("DEBUG NIL_ARG(=): Field '%s', Kind: %s, IsNilable: %t, IsValid: %t", goFieldName, fieldKind, isFieldNilable, fieldVal.IsValid())
+					// log.Printf("DEBUG NIL_ARG(=): Field '%s', Kind: %s, IsNilable: %t, IsValid: %t", goFieldName, fieldKind, isFieldNilable, fieldVal.IsValid())
 
 					// Check if the value is actually nil BEFORE calling IsNil() if possible
 					isActuallyNil := false
@@ -181,7 +181,7 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 						isActuallyNil = true // Invalid field is considered nil
 					}
 
-					log.Printf("DEBUG NIL_ARG(=): Field '%s', isActuallyNil check result: %t", goFieldName, isActuallyNil)
+					// log.Printf("DEBUG NIL_ARG(=): Field '%s', isActuallyNil check result: %t", goFieldName, isActuallyNil)
 
 					if isActuallyNil {
 						conditionMet = true
@@ -191,9 +191,9 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 					}
 				}
 
-				if !conditionMet {
-					log.Printf("DEBUG CheckQueryMatch (= nil arg): Field '%s' (%v) is not nil.", goFieldName, modelFieldValue)
-				}
+				// if !conditionMet {
+				// 	log.Printf("DEBUG CheckQueryMatch (= nil arg): Field '%s' (%v) is not nil.", goFieldName, modelFieldValue)
+				// }
 			} else {
 				// Dereference pointer if model field is a pointer and arg is not
 				modelFieldActualValue := modelFieldValue // Start with the raw interface value
@@ -218,17 +218,17 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 				if argReflectVal.Type().ConvertibleTo(modelFieldActualVal.Type()) {
 					convertedArg := argReflectVal.Convert(modelFieldActualVal.Type()).Interface()
 					conditionMet = reflect.DeepEqual(modelFieldActualValue, convertedArg)
-					if !conditionMet {
-						log.Printf("DEBUG CheckQueryMatch (=): Field '%s' mismatch. Model: [%v] (%T), Arg: [%v] (%T, Converted: %T)",
-							goFieldName, modelFieldActualValue, modelFieldActualValue, argValue, argValue, convertedArg)
-					}
+					// if !conditionMet {
+					// 	log.Printf("DEBUG CheckQueryMatch (=): Field '%s' mismatch. Model: [%v] (%T), Arg: [%v] (%T, Converted: %T)",
+					// 		goFieldName, modelFieldActualValue, modelFieldActualValue, argValue, argValue, convertedArg)
+					// }
 				} else {
 					// If types are not directly convertible, rely on DeepEqual
 					conditionMet = reflect.DeepEqual(modelFieldActualValue, argValue)
-					if !conditionMet {
-						log.Printf("DEBUG CheckQueryMatch (=): Field '%s' mismatch (non-convertible types). Model: [%v] (%T), Arg: [%v] (%T)",
-							goFieldName, modelFieldActualValue, modelFieldActualValue, argValue, argValue)
-					}
+					// if !conditionMet {
+					// 	log.Printf("DEBUG CheckQueryMatch (=): Field '%s' mismatch (non-convertible types). Model: [%v] (%T), Arg: [%v] (%T)",
+					// 		goFieldName, modelFieldActualValue, modelFieldActualValue, argValue, argValue)
+					// }
 				}
 			}
 
@@ -244,7 +244,7 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 					// Check if field is a nilable type AND is nil
 					fieldKind := fieldVal.Kind()
 					isFieldNilable := fieldKind == reflect.Pointer || fieldKind == reflect.Interface || fieldKind == reflect.Map || fieldKind == reflect.Slice || fieldKind == reflect.Chan || fieldKind == reflect.Func
-					log.Printf("DEBUG NIL_ARG(!=): Field '%s', Kind: %s, IsNilable: %t, IsValid: %t", goFieldName, fieldKind, isFieldNilable, fieldVal.IsValid())
+					// log.Printf("DEBUG NIL_ARG(!=): Field '%s', Kind: %s, IsNilable: %t, IsValid: %t", goFieldName, fieldKind, isFieldNilable, fieldVal.IsValid())
 
 					// Check if the value is actually nil BEFORE calling IsNil() if possible
 					isActuallyNil := false
@@ -256,7 +256,7 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 						isActuallyNil = true // Invalid field is considered nil
 					}
 
-					log.Printf("DEBUG NIL_ARG(!=): Field '%s', isActuallyNil check result: %t", goFieldName, isActuallyNil)
+					// log.Printf("DEBUG NIL_ARG(!=): Field '%s', isActuallyNil check result: %t", goFieldName, isActuallyNil)
 
 					if isActuallyNil { // field is nil, arg is nil
 						conditionMet = false // nil != nil -> false
@@ -265,9 +265,9 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 					}
 				}
 
-				if !conditionMet {
-					log.Printf("DEBUG CheckQueryMatch (!= nil arg): Field '%s' (%v) is also nil.", goFieldName, modelFieldValue)
-				}
+				// if !conditionMet {
+				// 	log.Printf("DEBUG CheckQueryMatch (!= nil arg): Field '%s' (%v) is also nil.", goFieldName, modelFieldValue)
+				// }
 			} else {
 				// Dereference pointer if model field is a pointer and arg is not
 				modelFieldActualValue := modelFieldValue // Start with the raw interface value
@@ -298,10 +298,10 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 				}
 				conditionMet = !equal // != is the inverse of ==
 
-				if !conditionMet {
-					log.Printf("DEBUG CheckQueryMatch (!=): Field '%s' matched arg. Model: [%v] (%T), Arg: [%v] (%T)",
-						goFieldName, modelFieldActualValue, modelFieldActualValue, argValue, argValue)
-				}
+				// if !conditionMet {
+				// 	log.Printf("DEBUG CheckQueryMatch (!=): Field '%s' matched arg. Model: [%v] (%T), Arg: [%v] (%T)",
+				// 		goFieldName, modelFieldActualValue, modelFieldActualValue, argValue, argValue)
+				// }
 			}
 
 		case "LIKE":
@@ -315,9 +315,10 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 				conditionMet, matchErr = matchLike(modelStr, patternStr)
 				if matchErr != nil {
 					matchErr = fmt.Errorf("error matching LIKE for field '%s': %w", goFieldName, matchErr)
-				} else if !conditionMet {
-					log.Printf("DEBUG CheckQueryMatch (LIKE): Field '%s' ('%s') did not match pattern '%s'", goFieldName, modelStr, patternStr)
 				}
+				// else if !conditionMet {
+				// 	log.Printf("DEBUG CheckQueryMatch (LIKE): Field '%s' ('%s') did not match pattern '%s'", goFieldName, modelStr, patternStr)
+				// }
 			}
 
 		case "NOT LIKE":
@@ -332,44 +333,45 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 				conditionMet = !likeMet // Invert the result of LIKE
 				if matchErr != nil {
 					matchErr = fmt.Errorf("error matching NOT LIKE for field '%s': %w", goFieldName, matchErr)
-				} else if !conditionMet {
-					// This log means the LIKE condition *was* met, so NOT LIKE is false.
-					log.Printf("DEBUG CheckQueryMatch (NOT LIKE): Field '%s' ('%s') matched pattern '%s', failing NOT LIKE", goFieldName, modelStr, patternStr)
 				}
+				// else if !conditionMet {
+				// 	// This log means the LIKE condition *was* met, so NOT LIKE is false.
+				// 	log.Printf("DEBUG CheckQueryMatch (NOT LIKE): Field '%s' ('%s') matched pattern '%s', failing NOT LIKE", goFieldName, modelStr, patternStr)
+				// }
 			}
 
 		case ">":
 			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
-			if !conditionMet && matchErr == nil {
-				log.Printf("DEBUG CheckQueryMatch (>): Field '%s' (%v) not greater than arg (%v)", goFieldName, modelFieldValue, argValue)
-			}
+			// if !conditionMet && matchErr == nil {
+			// 	log.Printf("DEBUG CheckQueryMatch (>): Field '%s' (%v) not greater than arg (%v)", goFieldName, modelFieldValue, argValue)
+			// }
 
 		case "<":
 			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
-			if !conditionMet && matchErr == nil {
-				log.Printf("DEBUG CheckQueryMatch (<): Field '%s' (%v) not less than arg (%v)", goFieldName, modelFieldValue, argValue)
-			}
+			// if !conditionMet && matchErr == nil {
+			// 	log.Printf("DEBUG CheckQueryMatch (<): Field '%s' (%v) not less than arg (%v)", goFieldName, modelFieldValue, argValue)
+			// }
 
 		case ">=":
 			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
-			if !conditionMet && matchErr == nil {
-				log.Printf("DEBUG CheckQueryMatch (>=): Field '%s' (%v) not greater than or equal to arg (%v)", goFieldName, modelFieldValue, argValue)
-			}
+			// if !conditionMet && matchErr == nil {
+			// 	log.Printf("DEBUG CheckQueryMatch (>=): Field '%s' (%v) not greater than or equal to arg (%v)", goFieldName, modelFieldValue, argValue)
+			// }
 
 		case "<=":
 			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
-			if !conditionMet && matchErr == nil {
-				log.Printf("DEBUG CheckQueryMatch (<=): Field '%s' (%v) not less than or equal to arg (%v)", goFieldName, modelFieldValue, argValue)
-			}
+			// if !conditionMet && matchErr == nil {
+			// 	log.Printf("DEBUG CheckQueryMatch (<=): Field '%s' (%v) not less than or equal to arg (%v)", goFieldName, modelFieldValue, argValue)
+			// }
 
 		case "IN":
 			conditionMet, matchErr = checkInOperator(fieldVal, argReflectVal)
 			if matchErr != nil {
 				return false, matchErr
 			}
-			if !conditionMet && matchErr == nil {
-				log.Printf("DEBUG CheckQueryMatch (IN): Field '%s' (%v) not in arg slice (%v)", goFieldName, modelFieldValue, argValue)
-			}
+			// if !conditionMet && matchErr == nil {
+			// 	log.Printf("DEBUG CheckQueryMatch (IN): Field '%s' (%v) not in arg slice (%v)", goFieldName, modelFieldValue, argValue)
+			// }
 
 		case "NOT IN":
 			var inMet bool
@@ -378,10 +380,10 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 				return false, matchErr
 			}
 			conditionMet = !inMet // Invert the result of IN
-			if !conditionMet && matchErr == nil {
-				// This log means the IN condition *was* met, so NOT IN is false.
-				log.Printf("DEBUG CheckQueryMatch (NOT IN): Field '%s' (%v) was found in arg slice (%v), failing NOT IN", goFieldName, modelFieldValue, argValue)
-			}
+			// if !conditionMet && matchErr == nil {
+			// 	// This log means the IN condition *was* met, so NOT IN is false.
+			// 	log.Printf("DEBUG CheckQueryMatch (NOT IN): Field '%s' (%v) was found in arg slice (%v), failing NOT IN", goFieldName, modelFieldValue, argValue)
+			// }
 
 		default:
 			matchErr = fmt.Errorf("unsupported operator '%s' in condition '%s'", operator, condition)
