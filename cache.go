@@ -585,9 +585,10 @@ func (t *Thing[T]) CacheStats(ctx context.Context) CacheStats {
 
 // localCache implements CacheClient using in-memory sync.Map.
 type localCache struct {
-	store    sync.Map // map[string]string
-	locks    sync.Map // map[string]struct{}
-	counters sync.Map // map[string]int
+	store      sync.Map   // map[string]string
+	locks      sync.Map   // map[string]struct{}
+	counters   sync.Map   // map[string]int, now each counter is a separate key
+	countersMu sync.Mutex // protects counters increment
 }
 
 // DefaultLocalCache is the default in-memory cache client for Thing ORM.
@@ -632,19 +633,18 @@ func (m *localCache) Exists(key string) bool {
 }
 
 func (m *localCache) GetModel(ctx context.Context, key string, dest interface{}) error {
-	counters := m.getCounters()
-	counters["GetModel"]++
+	m.incrCounter("GetModel")
 
 	raw, ok := m.store.Load(key)
 	if !ok {
-		counters["GetModelMiss"]++
+		m.incrCounter("GetModelMiss")
 		return common.ErrNotFound
 	}
 
 	// Assuming raw is []byte from Gob encoding
 	b, ok := raw.([]byte)
 	if !ok {
-		counters["GetModelError"]++
+		m.incrCounter("GetModelError")
 		log.Printf("ERROR: localCache.GetModel: value for key '%s' is not []byte, but %T", key, raw)
 		return fmt.Errorf("localCache: cached value for key '%s' is not []byte (%T)", key, raw)
 	}
@@ -672,7 +672,7 @@ func (m *localCache) GetModel(ctx context.Context, key string, dest interface{})
 			return fmt.Errorf("localCache: Gob Unmarshal error for key '%s' (map decode error: %v, direct decode error: %w)", key, err, directDecodeErr)
 		}
 		// Direct decode successful
-		counters["GetModelHit"]++
+		m.incrCounter("GetModelHit")
 		return nil
 	}
 
@@ -720,13 +720,12 @@ func (m *localCache) GetModel(ctx context.Context, key string, dest interface{})
 		return fmt.Errorf("localCache.GetModel: inconsistent state for key '%s', decoded to map but dest is not struct", key)
 	}
 
-	counters["GetModelHit"]++
+	m.incrCounter("GetModelHit")
 	return nil
 }
 
 func (m *localCache) SetModel(ctx context.Context, key string, model interface{}, fieldsToCache []string, expiration time.Duration) error {
-	counters := m.getCounters()
-	counters["SetModel"]++
+	m.incrCounter("SetModel")
 
 	val := reflect.ValueOf(model)
 	if val.Kind() == reflect.Ptr {
@@ -777,18 +776,17 @@ func (m *localCache) DeleteModel(ctx context.Context, key string) error {
 }
 
 func (m *localCache) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
-	counters := m.getCounters()
-	counters["GetQueryIDs"]++
+	m.incrCounter("GetQueryIDs")
 
 	raw, ok := m.store.Load(queryKey)
 	if !ok {
-		counters["GetQueryIDsMiss"]++
+		m.incrCounter("GetQueryIDsMiss")
 		return nil, common.ErrNotFound
 	}
 
 	b, ok := raw.([]byte)
 	if !ok {
-		counters["GetQueryIDsError"]++
+		m.incrCounter("GetQueryIDsError")
 		return nil, fmt.Errorf("localCache: cached query IDs for key '%s' is not []byte (%T)", queryKey, raw)
 	}
 
@@ -798,13 +796,12 @@ func (m *localCache) GetQueryIDs(ctx context.Context, queryKey string) ([]int64,
 	if err := decoder.Decode(&ids); err != nil {
 		return nil, fmt.Errorf("localCache: Gob Unmarshal error for query key '%s': %w", queryKey, err)
 	}
-	counters["GetQueryIDsHit"]++
+	m.incrCounter("GetQueryIDsHit")
 	return ids, nil
 }
 
 func (m *localCache) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
-	counters := m.getCounters()
-	counters["SetQueryIDs"]++
+	m.incrCounter("SetQueryIDs")
 
 	if ids == nil {
 		ids = []int64{}
@@ -839,28 +836,21 @@ func (m *localCache) ReleaseLock(ctx context.Context, lockKey string) error {
 }
 
 func (m *localCache) incrCounter(name string) {
+	m.countersMu.Lock()
+	defer m.countersMu.Unlock()
 	val, _ := m.counters.LoadOrStore(name, 0)
 	m.counters.Store(name, val.(int)+1)
 }
 
 func (m *localCache) GetCacheStats(ctx context.Context) CacheStats {
 	clonedCounters := make(map[string]int)
-	counters := m.getCounters()
-	for k, v := range counters {
-		clonedCounters[k] = v
-	}
-	return CacheStats{Counters: clonedCounters}
-}
-
-// Helper to get or initialize counters map for localCache
-func (m *localCache) getCounters() map[string]int {
-	if v, ok := m.counters.Load("actual_counters"); ok {
-		if casted, castOk := v.(map[string]int); castOk {
-			return casted
+	m.counters.Range(func(key, value any) bool {
+		k, ok1 := key.(string)
+		v, ok2 := value.(int)
+		if ok1 && ok2 {
+			clonedCounters[k] = v
 		}
-	}
-	// Initialize if not found or wrong type
-	newCounters := make(map[string]int)
-	m.counters.Store("actual_counters", newCounters)
-	return newCounters
+		return true
+	})
+	return CacheStats{Counters: clonedCounters}
 }
