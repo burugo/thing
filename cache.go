@@ -211,6 +211,10 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	for _, k := range cache.GlobalCacheIndex.GetFullTableListKeys(tableName) {
 		cacheKeySet[k] = struct{}{}
 	}
+	// Always union full-table count cache keys (where is empty)
+	for _, k := range cache.GlobalCacheIndex.GetFullTableCountKeys(tableName) {
+		cacheKeySet[k] = struct{}{}
+	}
 	// Convert set to slice
 	queryCacheKeys := make([]string, 0, len(cacheKeySet))
 	for k := range cacheKeySet {

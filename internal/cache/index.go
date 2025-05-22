@@ -318,3 +318,16 @@ func (idx *CacheIndex) GetFullTableListKeys(tableName string) []string {
 	}
 	return keys
 }
+
+// GetFullTableCountKeys returns all count cache keys for the table with empty where clause (i.e., full table count cache)
+func (idx *CacheIndex) GetFullTableCountKeys(tableName string) []string {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	var keys []string
+	for k, params := range idx.keyToParams {
+		if params.Where == "" && strings.HasPrefix(k, "count:") && strings.Contains(k, ":"+tableName+":") {
+			keys = append(keys, k)
+		}
+	}
+	return keys
+}
