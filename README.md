@@ -41,6 +41,7 @@
   - [Usage Overview](#usage-overview)
   - [Index Declaration](#index-declaration)
   - [Auto Migration Example](#auto-migration-example-1)
+  - [Controlling Column Deletion](#controlling-column-deletion)
 - [Multi-Database Testing](#multi-database-testing)
 - [FAQ](#faq)
 - [Contributing](#contributing)
@@ -495,3 +496,230 @@ func main() {
 Thing ORM provides built-in cache operation monitoring for all cache clients (including Redis and the mock client used in tests). This monitoring capability is a core, integrated feature, not an add-on.
 
 You can call `GetCacheStats(ctx)`
+
+## Advanced Usage
+
+### Raw SQL Execution
+
+While Thing ORM focuses on abstracting common database interactions, there are times when you need to execute raw SQL queries for complex operations, database-specific features, or bulk updates/deletions not directly covered by the ORM's primary API.
+
+Thing ORM provides two main ways to execute raw SQL:
+
+1.  **Using `DBAdapter` Methods (Recommended for most cases):**
+    The `DBAdapter` interface (accessible via `thingInstance.DBAdapter()` or `thing.GlobalDB()` if globally configured) provides convenient methods for raw SQL execution that are integrated with Thing ORM's error handling and type scanning:
+
+    -   `Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error)`: For SQL statements that don't return rows (e.g., `INSERT`, `UPDATE`, `DELETE`, DDL statements).
+    -   `Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error`: For queries that return a single row. `dest` should be a pointer to a struct or a primitive type slice. Thing ORM will scan the row into `dest`.
+    -   `Select(ctx context.Context, dest interface{}, query string, args ...interface{}) error`: For queries that return multiple rows. `dest` should be a pointer to a slice of structs or a slice of primitive types.
+
+    ```go
+    package main
+
+    import (
+    	"context"
+    	"fmt"
+    	"log"
+
+    	"github.com/burugo/thing"
+    	// Assume User model and dbAdapter are set up
+    )
+
+    func main() {
+    	// Assume userThing is an initialized *thing.Thing[*User] instance
+    	// or thing.Configure() has been called.
+        
+        var dbAdapter thing.DBAdapter
+        // Get the adapter, e.g., from a Thing instance or global config
+        userThing, err := thing.Use[*User]() // if globally configured
+        if err != nil {
+            log.Fatal(err)
+        }
+        dbAdapter = userThing.DBAdapter()
+
+    	ctx := context.Background()
+
+    	// Example: Exec for an UPDATE statement
+    	result, err := dbAdapter.Exec(ctx, "UPDATE users SET age = ? WHERE name = ?", 35, "Alice")
+    	if err != nil {
+    		log.Fatal("Raw Exec failed:", err)
+    	}
+    	rowsAffected, _ := result.RowsAffected()
+    	fmt.Printf("Raw Exec updated %d rows\n", rowsAffected)
+
+    	// Example: Get for a single row
+    	type UserAgeStats struct {
+    		AverageAge float64 `db:"average_age"`
+    		MaxAge     int       `db:"max_age"`
+    	}
+    	var stats UserAgeStats
+    	err = dbAdapter.Get(ctx, &stats, "SELECT AVG(age) as average_age, MAX(age) as max_age FROM users")
+    	if err != nil {
+    		log.Fatal("Raw Get failed:", err)
+    	}
+    	fmt.Printf("User Stats: Average Age: %.2f, Max Age: %d\n", stats.AverageAge, stats.MaxAge)
+
+    	// Example: Select for multiple rows (scanning into a slice of structs)
+    	var activeUsers []*User // Assuming User struct is defined elsewhere
+    	err = dbAdapter.Select(ctx, &activeUsers, "SELECT id, name, age FROM users WHERE age > ?", 30)
+    	if err != nil {
+    		log.Fatal("Raw Select failed:", err)
+    	}
+    	fmt.Printf("Found %d active users over 30 via raw SQL:\n", len(activeUsers))
+    	for _, u := range activeUsers {
+    		fmt.Printf("- ID: %d, Name: %s, Age: %d\n", u.ID, u.Name, u.Age)
+    	}
+    }
+    ```
+
+2.  **Accessing the Underlying `*sql.DB` (For Advanced Use):**
+    If you need even lower-level control or want to use features of the standard `database/sql` package directly (like transactions not managed by `DBAdapter`), you can get the raw `*sql.DB` object:
+
+    -   From a `thing.Thing[T]` instance: `sqlDB := thingInstance.DB()`
+    -   From a `thing.DBAdapter` instance: `sqlDB := dbAdapter.DB()`
+
+    Once you have the `*sql.DB` object, you can use its methods like `Prepare`, `QueryRow`, `Query`, `Exec`, `BeginTx`, etc., as you normally would with the standard library.
+
+    ```go
+    // ... (imports and setup as above)
+
+    func main() {
+        // Assume userThing is an initialized *thing.Thing[*User] instance
+        userThing, err := thing.Use[*User]()
+        if err != nil {
+            log.Fatal(err)
+        }
+        sqlDB := userThing.DB() // Get the *sql.DB object
+        ctx := context.Background()
+
+        // Example: Using standard library's QueryRow
+        var totalUsers int
+        err = sqlDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM users").Scan(&totalUsers)
+        if err != nil {
+            log.Fatal("sql.DB QueryRowContext failed:", err)
+        }
+        fmt.Printf("Total users from sql.DB: %d\n", totalUsers)
+
+        // Remember to handle errors and resources (like sql.Rows) appropriately.
+    }
+    ```
+
+**Choosing the Right Method:**
+
+- For most common raw SQL needs, including transaction management, using the `Exec`, `Get`, `Select`, and `BeginTx` (followed by `Commit` or `Rollback` on the returned `thing.Tx` object) methods on the `DBAdapter` is recommended. These methods are integrated with Thing ORM's type scanning and error handling.
+- Accessing the underlying `*sql.DB` object is appropriate if you need to use very specific features of the standard `database/sql` package that are not directly exposed or wrapped by the `DBAdapter` interface, or if you require an even lower level of control over database interactions than what `DBAdapter` provides.
+
+## Schema/Migration Tools
+
+### Usage Overview
+
+Thing ORM provides a powerful migration tool that can create, modify, and drop tables, columns, indexes, and constraints based on your model structs.
+
+### Index Declaration
+
+You can declare indexes on your model structs using struct tags. Thing ORM will automatically create and manage these indexes in your database.
+
+```go
+package models // assuming models are in a separate package
+
+import "github.com/burugo/thing"
+
+// User has many Books
+type User struct {
+	thing.BaseModel
+	Name  string `db:"name"`
+	Email string `db:"email,unique"` // Will create a unique index on email
+	Age   int    `db:"age"`
+}
+
+type Post struct {
+	thing.BaseModel
+	UserID  uint   `db:"user_id,index"` // Will create an index on user_id
+	Title   string `db:"title"`
+	Content string `db:"content"`
+}
+```
+
+### Auto Migration Example
+
+```go
+package main
+
+import (
+	"log"
+
+	"github.com/burugo/thing"
+	"github.com/burugo/thing/drivers/db/sqlite" // Or any other supported driver
+)
+
+type User struct {
+	thing.BaseModel
+	Name  string `db:"name"`
+	Email string `db:"email,unique"` // Will create a unique index on email
+	Age   int    `db:"age"`
+}
+
+type Post struct {
+	thing.BaseModel
+	UserID  uint   `db:"user_id,index"` // Will create an index on user_id
+	Title   string `db:"title"`
+	Content string `db:"content"`
+}
+
+func main() {
+	// 1. Setup DB Adapter (e.g., SQLite)
+	db, err := sqlite.NewSQLiteAdapter(":memory:")
+	if err != nil {
+		log.Fatal("Failed to connect to database:", err)
+	}
+	defer db.Close()
+
+	// 2. Configure Thing ORM globally (optional, can also use thing.New per model)
+	if err := thing.Configure(db, nil); err != nil { // Using nil for default in-memory cache
+		log.Fatal("Failed to configure Thing ORM:", err)
+	}
+
+	// 3. Run AutoMigrate for your models
+	// This will create tables if they don't exist, or add/modify columns/indexes.
+	// By default, it will NOT drop columns from existing tables unless `thing.AllowDropColumn` is true.
+	// thing.AllowDropColumn = true // Uncomment to allow dropping columns
+	if err := thing.AutoMigrate(&User{}, &Post{}); err != nil {
+		log.Fatal("AutoMigrate failed:", err)
+	}
+
+	log.Println("Migration successful!")
+}
+```
+
+### Controlling Column Deletion
+
+By default, `thing.AutoMigrate` will add new columns and modify existing ones to match your model structs, but it **will not automatically delete columns** from your database tables if they are removed from your model structs. This is a safety measure to prevent accidental data loss.
+
+To enable automatic column deletion during migration, you can set the global boolean variable `thing.AllowDropColumn` to `true` *before* calling `thing.AutoMigrate`:
+
+```go
+// Enable automatic column deletion
+thing.AllowDropColumn = true
+
+// Now, if a model struct is updated to remove a field (and its `db` tag),
+// AutoMigrate will attempt to generate and execute a `DROP COLUMN` statement.
+if err := thing.AutoMigrate(&MyModelWithRemovedField{}); err != nil {
+    log.Fatal("AutoMigrate failed:", err)
+}
+
+// It's good practice to reset it to false after migrations if needed elsewhere.
+thing.AllowDropColumn = false
+```
+
+**Caution:** Enabling `thing.AllowDropColumn` can lead to data loss if columns are removed inadvertently. Use this feature with care, especially in production environments. It's often safer to manage column deletions manually via dedicated migration scripts for more control.
+
+## Multi-Database Testing
+
+Thing ORM is designed to work with multiple databases, allowing you to seamlessly switch between MySQL, PostgreSQL, and SQLite with a unified API and automatic SQL dialect adaptation.
+
+## FAQ
+
+## Contributing
+
+## Performance
+
+## License
