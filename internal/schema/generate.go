@@ -247,14 +247,12 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 	// 4. 删除列
 	for col := range dbCols {
 		if _, ok := targetCols[col]; !ok {
-			// 删除列（部分数据库不支持，需手动处理）
-			// if dialect == "sqlite" {
-			// 	sqls = append(sqls, fmt.Sprintf("-- [manual] DROP COLUMN %s from %s (SQLite needs table rebuild)", col, tableName))
-			// } else {
-			// 	sqls = append(sqls, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s", tableName, col))
-			// }
-			// 禁止自动 DROP COLUMN，统一输出注释
-			sqls = append(sqls, fmt.Sprintf("-- [manual] DROP COLUMN %s from %s (column exists in DB but not in struct)", col, tableName))
+			switch dialect {
+			case "mysql", "postgres", "sqlite":
+				sqls = append(sqls, fmt.Sprintf("ALTER TABLE %s DROP COLUMN %s;", tableName, col))
+			default:
+				sqls = append(sqls, fmt.Sprintf("-- [manual] DROP COLUMN %s from %s (unsupported dialect)", col, tableName))
+			}
 		}
 	}
 

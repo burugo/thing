@@ -11,6 +11,10 @@ import (
 	internalSchema "github.com/burugo/thing/internal/schema"
 )
 
+// AllowDropColumn controls whether AutoMigrate will execute 'DROP COLUMN' statements.
+// Defaults to false (columns will not be dropped).
+var AllowDropColumn = false
+
 // GenerateMigrationSQL 生成建表 SQL，但不执行，支持批量模型
 func GenerateMigrationSQL(models ...interface{}) ([]string, error) {
 	if globalDB == nil {
@@ -89,9 +93,12 @@ func AutoMigrate(models ...interface{}) error {
 			return fmt.Errorf("AutoMigrate: failed to generate ALTER TABLE SQL for %s: %w", tableName, err)
 		}
 		for _, alterSQL := range alterSQLs {
-			if strings.HasPrefix(alterSQL, "-- [manual] DROP COLUMN") {
-				fmt.Println("[AutoMigrate] Skipping column drop (manual):", alterSQL)
-				continue // do not drop columns automatically
+			isDropColumnSQL := strings.Contains(strings.ToUpper(alterSQL), "DROP COLUMN") // 更通用的检查
+
+			if isDropColumnSQL && !AllowDropColumn {
+				// 如果是 DROP COLUMN 语句，并且 AllowDropColumn 为 false，则跳过
+				log.Printf("[AutoMigrate] Skipping actual column drop (AllowDropColumn is false): %s", alterSQL)
+				continue
 			}
 			// --- LOGGING SQL ---
 			// 使用 %+q 格式化字符串
