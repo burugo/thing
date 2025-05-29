@@ -3,6 +3,7 @@ package schema
 import (
 	"fmt"
 	"log"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -65,6 +66,58 @@ var TypeMapping = map[string]map[string]string{
 	},
 }
 
+// formatDefaultValueForSQL formats a string default value from the tag into a SQL literal string.
+// It handles basic Go types and applies dialect-specific formatting for booleans.
+// Strings are wrapped in single quotes, and internal single quotes are escaped.
+func formatDefaultValueForSQL(defaultValue string, goKind reflect.Kind, dialect string) (string, error) {
+	switch goKind {
+	case reflect.String:
+		// Escape single quotes within the string by doubling them (standard SQL)
+		escapedValue := strings.ReplaceAll(defaultValue, "'", "''")
+		return "'" + escapedValue + "'", nil
+	case reflect.Bool:
+		lowerVal := strings.ToLower(defaultValue)
+		switch lowerVal {
+		case "true", "1":
+			switch dialect {
+			case "sqlite", "mysql": // MySQL also supports TRUE/FALSE literals
+				return "1", nil
+			case "postgres":
+				return "TRUE", nil
+			default:
+				return "1", nil // Fallback for other potential dialects
+			}
+		case "false", "0":
+			switch dialect {
+			case "sqlite", "mysql": // MySQL also supports TRUE/FALSE literals
+				return "0", nil
+			case "postgres":
+				return "FALSE", nil
+			default:
+				return "0", nil // Fallback
+			}
+		default:
+			return "", fmt.Errorf("invalid boolean default value: %s", defaultValue)
+		}
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		// TODO: Add validation to ensure defaultValue is a valid number for these types.
+		// For now, trust the user-provided string if the Go type is numeric.
+		return defaultValue, nil // Numbers are used as-is
+	case reflect.Float32, reflect.Float64:
+		// TODO: Add validation for float numbers.
+		return defaultValue, nil // Floats are used as-is
+	default:
+		// For other types (e.g., time.Time, []byte, complex types, custom structs),
+		// supporting literal defaults from tags is complex and often not standard.
+		// Users might intend DB-specific functions (e.g., CURRENT_TIMESTAMP), which this basic formatter doesn't handle.
+		// Returning an error or a clear indication of unsupported type might be best.
+		// For now, we'll log a warning and not apply a default, effectively making it an error for this formatter.
+		log.Printf("Warning: Default value for Go kind %s (value: '%s') is not directly supported by formatDefaultValueForSQL. Default will not be applied.", goKind.String(), defaultValue)
+		return "", fmt.Errorf("unsupported Go kind for default value: %s", goKind.String())
+	}
+}
+
 // GenerateCreateTableSQL 生成单表 CREATE TABLE 语句及后续的 CREATE INDEX 语句
 func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 	typeMap, ok := TypeMapping[dialect]
@@ -109,6 +162,18 @@ func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 		if !f.IsEmbedded && !strings.HasSuffix(col, "_at") && col != pkCol {
 			constraints = append(constraints, "NOT NULL")
 		}
+
+		// Default Value Handling
+		if f.DefaultValue != nil {
+			formattedDefault, err := formatDefaultValueForSQL(*f.DefaultValue, f.Kind, dialect)
+			if err == nil {
+				constraints = append(constraints, "DEFAULT "+formattedDefault)
+			} else {
+				// Log the error but continue, the column will be created without default
+				log.Printf("Warning: Failed to format default value for column %s ('%s'): %v. Column will be created without this default.", col, *f.DefaultValue, err)
+			}
+		}
+
 		// 唯一（可扩展：解析 tag）
 		// 默认值、索引、外键等后续扩展
 		colDef := fmt.Sprintf("%s %s %s", col, sqlType, strings.Join(constraints, " "))
@@ -235,12 +300,28 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 					sqlType = "TEXT"
 				}
 			}
-			addCol := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", tableName, col, sqlType)
-			if col == modelInfo.PkName {
-				addCol += " PRIMARY KEY"
+			addColStmt := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", tableName, col, sqlType)
+			var colConstraints []string
+			if col == modelInfo.PkName { // Should not happen for ADD COLUMN if PK already exists, but defensive
+				colConstraints = append(colConstraints, "PRIMARY KEY")
 			}
-			// 可扩展: NOT NULL, DEFAULT, UNIQUE
-			sqls = append(sqls, addCol)
+
+			// Default Value Handling for ADD COLUMN
+			if f.DefaultValue != nil {
+				formattedDefault, err := formatDefaultValueForSQL(*f.DefaultValue, f.Kind, dialect)
+				if err == nil {
+					colConstraints = append(colConstraints, "DEFAULT "+formattedDefault)
+				} else {
+					log.Printf("Warning: Failed to format default value for new column %s ('%s'): %v. Column will be added without this default.", col, *f.DefaultValue, err)
+				}
+			}
+			// TODO: Consider NOT NULL constraints for new columns. If NOT NULL and no DEFAULT, DB might error or require specific handling.
+			// For now, new columns are nullable unless explicitly handled otherwise (e.g. via tags not yet implemented for ADD COLUMN constraints).
+
+			if len(colConstraints) > 0 {
+				addColStmt += " " + strings.Join(colConstraints, " ")
+			}
+			sqls = append(sqls, addColStmt)
 		}
 	}
 

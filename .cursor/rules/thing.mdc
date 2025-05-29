@@ -49,7 +49,7 @@ alwaysApply: false
     type User struct {
         thing.BaseModel // Includes ID, CreatedAt, UpdatedAt, DeletedAt
         Name string `db:"name"` // Explicitly maps Name field to 'name' column
-        UserAge int // db tag omitted, defaults to 'user_age' column
+        UserAge int `db:"user_age,default:21"` // db tag defaults to 'user_age', now with default value
     }
     // Optional: Define TableName() method if different from snake_case plural struct name.
     // func (u *User) TableName() string { return "custom_users_table" }

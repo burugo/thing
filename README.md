@@ -190,7 +190,7 @@ import (
 type User struct {
 	thing.BaseModel
 	Name string `db:"name"`
-	Age  int    `db:"age"`
+	Age  int    `db:"age,default:18"`
 }
 
 func main() {

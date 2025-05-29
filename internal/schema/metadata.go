@@ -24,6 +24,7 @@ type ComparableFieldInfo struct {
 	Type         reflect.Type               // Field type (for more detailed type checking)
 	IsEmbedded   bool                       // Whether this is from an embedded struct
 	IgnoreInDiff bool                       // Whether to ignore this field during diffing (e.g., tags like db:"-")
+	DefaultValue *string                    // Parsed default value from db tag
 }
 
 // TableInfo holds the actual schema info introspected from the database (internal use only).
@@ -116,9 +117,25 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 			var currentFieldName string
 			var fieldType reflect.Type
 			var dbTagParts []string
+			var defaultValuePart *string
+
 			if dbTag != "" {
-				dbTagParts = strings.Split(dbTag, ",")
+				rawParts := strings.Split(dbTag, ",")
+				dbTagParts = make([]string, 0, len(rawParts))
+				for _, part := range rawParts {
+					if strings.HasPrefix(strings.ToLower(strings.TrimSpace(part)), "default:") {
+						valStr := strings.TrimPrefix(strings.TrimSpace(part), "default:")
+						if len(valStr) >= 2 && valStr[0] == '\'' && valStr[len(valStr)-1] == '\'' {
+							valStr = valStr[1 : len(valStr)-1]
+						}
+						tempValStr := valStr // Create a new variable for the pointer
+						defaultValuePart = &tempValStr
+					} else {
+						dbTagParts = append(dbTagParts, part)
+					}
+				}
 			}
+
 			switch {
 			case field.Anonymous && field.Type.Kind() == reflect.Struct && field.Type.Name() == "BaseModel":
 				// Robust check: ensure structType.Field(i) exists, is struct, and is BaseModel
@@ -132,9 +149,25 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 					baseDbTag := baseField.Tag.Get("db")
 					baseDiffTag := baseField.Tag.Get("diff")
 					var baseDbTagParts []string
+					var baseDefaultValuePart *string
+
 					if baseDbTag != "" {
-						baseDbTagParts = strings.Split(baseDbTag, ",")
+						rawBaseParts := strings.Split(baseDbTag, ",")
+						baseDbTagParts = make([]string, 0, len(rawBaseParts))
+						for _, part := range rawBaseParts {
+							if strings.HasPrefix(strings.ToLower(strings.TrimSpace(part)), "default:") {
+								valStr := strings.TrimPrefix(strings.TrimSpace(part), "default:")
+								if len(valStr) >= 2 && valStr[0] == '\'' && valStr[len(valStr)-1] == '\'' {
+									valStr = valStr[1 : len(valStr)-1]
+								}
+								tempValStr := valStr
+								baseDefaultValuePart = &tempValStr
+							} else {
+								baseDbTagParts = append(baseDbTagParts, part)
+							}
+						}
 					}
+
 					if len(baseDbTagParts) > 0 && baseDbTagParts[0] == "-" || !baseField.IsExported() {
 						continue
 					}
@@ -170,6 +203,7 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 						Type:         fieldType,
 						IsEmbedded:   true,
 						IgnoreInDiff: baseDiffTag == "-",
+						DefaultValue: baseDefaultValuePart,
 					})
 					if isPk && pkDbName == "" {
 						pkDbName = columnName
@@ -223,6 +257,7 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 					Type:         fieldType,
 					IsEmbedded:   isEmbedded,
 					IgnoreInDiff: diffTag == "-",
+					DefaultValue: defaultValuePart,
 				})
 				if isPk && pkDbName == "" {
 					pkDbName = columnName
