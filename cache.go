@@ -75,11 +75,8 @@ func WithLock(ctx context.Context, cache CacheClient, lockKey string, action fun
 		releaseErr := cache.ReleaseLock(ctx, lockKey)
 		if releaseErr != nil {
 			log.Printf("Warning: Failed to release lock '%s': %v", lockKey, releaseErr)
-		} else {
-			log.Printf("Lock released for key '%s'", lockKey)
 		}
 	}()
-	log.Printf("Lock acquired for key '%s'", lockKey)
 	return action(ctx)
 }
 
