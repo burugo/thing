@@ -98,8 +98,8 @@ func (t *Thing[T]) WithContext(ctx context.Context) *Thing[T] { // Returns *Thin
 }
 
 // Cache returns the underlying CacheClient associated with this Thing instance.
-func (t *Thing[T]) Cache() CacheClient {
-	return t.cache
+func Cache() CacheClient {
+	return globalCache
 }
 
 // GlobalDB returns the global DBAdapter (for internal use, e.g., AutoMigrate)
