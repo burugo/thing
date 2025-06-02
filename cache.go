@@ -279,7 +279,8 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 				continue
 			}
 			matchesOriginal := false
-			if !isCreate && !reflect.ValueOf(originalModel).IsNil() {
+			originalReflect := reflect.ValueOf(originalModel)
+			if !isCreate && originalReflect.Kind() == reflect.Ptr && !originalReflect.IsNil() {
 				matchesOriginal, err = cache.CheckQueryMatch(originalModel, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 				if err != nil {
 					log.Printf("ERROR CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)

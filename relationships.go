@@ -711,7 +711,9 @@ func (t *Thing[T]) preloadManyToMany(ctx context.Context, resultsVal reflect.Val
 // model must be a pointer to a struct of type T.
 // relations are the string names of the fields representing the relationships to load.
 func (t *Thing[T]) loadInternal(ctx context.Context, model T, relations ...string) error {
-	if reflect.ValueOf(model).IsNil() {
+	modelReflect := reflect.ValueOf(model)
+	// Check if model can be nil before calling IsNil()
+	if modelReflect.Kind() == reflect.Ptr && modelReflect.IsNil() {
 		return errors.New("model cannot be nil")
 	}
 	if len(relations) == 0 {

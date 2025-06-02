@@ -100,29 +100,115 @@ func ToSnakeCase(str string) string {
 // Use fully qualified type name as key: pkgPath + "." + typeName
 var registeredTypeNames sync.Map // map[string]struct{}
 
-// RegisterTypeRecursive registers the given type and all its fields recursively with gob.Register.
-// It avoids duplicate registration by using the fully qualified type name as key.
-// It also recovers from gob.Register panic to prevent test crash.
-func RegisterTypeRecursive(t reflect.Type) {
+// registerNamedType registers any named type (including type aliases) with gob.
+// It skips anonymous types and built-in types that don't need explicit registration.
+func registerNamedType(t reflect.Type) {
 	if t == nil {
 		return
 	}
-	// Dereference pointer
-	for t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	if t.Kind() != reflect.Struct {
-		return // Only register struct types
-	}
-	typeKey := t.PkgPath() + "." + t.Name()
-	if typeKey == "." { // anonymous or unnamed type
+
+	// Skip if anonymous or built-in type (no package path means built-in)
+	if t.PkgPath() == "" || t.Name() == "" {
 		return
 	}
+
+	typeKey := t.PkgPath() + "." + t.Name()
+	if typeKey == "." { // safety check for malformed key
+		return
+	}
+
 	// Avoid duplicate registration
 	if _, loaded := registeredTypeNames.LoadOrStore(typeKey, struct{}{}); loaded {
 		return
 	}
-	// Register struct and pointer to struct, recover panic if duplicate
+
+	// Register the type with gob, using safe registration to handle panics
+	safeGobRegister := func(val interface{}) {
+		defer func() {
+			if r := recover(); r != nil {
+				// Ignore duplicate registration panic
+			}
+		}()
+		gob.Register(val)
+	}
+
+	// Register both the value and pointer versions
+	safeGobRegister(reflect.New(t).Elem().Interface())
+	if t.Kind() != reflect.Ptr {
+		safeGobRegister(reflect.New(t).Interface()) // pointer version
+	}
+}
+
+// registerFieldTypeRecursive recursively registers field types, including named types,
+// slices, maps, and nested structs.
+func registerFieldTypeRecursive(ft reflect.Type) {
+	if ft == nil {
+		return
+	}
+
+	// First, try to register the type itself if it's a named type
+	registerNamedType(ft)
+
+	// Dereference pointer types
+	for ft.Kind() == reflect.Ptr {
+		ft = ft.Elem()
+		// Register the dereferenced type as well if it's named
+		registerNamedType(ft)
+	}
+
+	// Handle different kinds of types
+	switch ft.Kind() {
+	case reflect.Slice, reflect.Array:
+		// Recursively register element type
+		registerFieldTypeRecursive(ft.Elem())
+
+	case reflect.Map:
+		// Recursively register both key and value types
+		registerFieldTypeRecursive(ft.Key())
+		registerFieldTypeRecursive(ft.Elem())
+
+	case reflect.Struct:
+		// Only recurse into non-Time structs to avoid infinite recursion
+		if ft.PkgPath() != "" && ft.Name() != "Time" {
+			RegisterTypeRecursive(ft)
+		}
+	}
+}
+
+// RegisterTypeRecursive registers the given type and all its fields recursively with gob.Register.
+// It avoids duplicate registration by using the fully qualified type name as key.
+// It also recovers from gob.Register panic to prevent test crash.
+// Enhanced to register named type aliases found in struct fields.
+func RegisterTypeRecursive(t reflect.Type) {
+	if t == nil {
+		return
+	}
+
+	// First, register the type itself if it's a named type
+	registerNamedType(t)
+
+	// Dereference pointer for field processing
+	for t.Kind() == reflect.Ptr {
+		t = t.Elem()
+	}
+
+	// Only process struct fields if it's a struct
+	if t.Kind() != reflect.Struct {
+		return
+	}
+
+	// Generate type key for struct registration tracking
+	typeKey := t.PkgPath() + "." + t.Name()
+	if typeKey == "." { // anonymous or unnamed type
+		return
+	}
+
+	// Avoid duplicate struct processing
+	if _, loaded := registeredTypeNames.LoadOrStore(typeKey+"_processed", struct{}{}); loaded {
+		return
+	}
+
+	// Register struct and pointer to struct using existing logic
 	safeGobRegister := func(val interface{}) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -133,30 +219,14 @@ func RegisterTypeRecursive(t reflect.Type) {
 	}
 	safeGobRegister(reflect.New(t).Elem().Interface())
 	safeGobRegister(reflect.New(t).Interface())
-	// Register fields recursively
+
+	// Register all field types recursively
 	n := t.NumField()
 	for i := 0; i < n; i++ {
 		f := t.Field(i)
 		ft := f.Type
-		// Dereference pointer
-		for ft.Kind() == reflect.Ptr {
-			ft = ft.Elem()
-		}
-		// Handle slice/array
-		if ft.Kind() == reflect.Slice || ft.Kind() == reflect.Array {
-			et := ft.Elem()
-			RegisterTypeRecursive(et)
-			continue
-		}
-		// Handle map
-		if ft.Kind() == reflect.Map {
-			RegisterTypeRecursive(ft.Key())
-			RegisterTypeRecursive(ft.Elem())
-			continue
-		}
-		// Handle struct
-		if ft.Kind() == reflect.Struct && ft.PkgPath() != "" && ft.Name() != "Time" {
-			RegisterTypeRecursive(ft)
-		}
+
+		// Register the field type and all its nested types
+		registerFieldTypeRecursive(ft)
 	}
 }

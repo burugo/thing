@@ -208,7 +208,9 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
 	}
 
-	if reflect.ValueOf(value).IsNil() {
+	valueReflect := reflect.ValueOf(value)
+	// Check if value can be nil before calling IsNil()
+	if valueReflect.Kind() == reflect.Ptr && valueReflect.IsNil() {
 		return errors.New("saveInternal: value (model pointer) is nil")
 	}
 
@@ -247,7 +249,6 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		setUpdatedAtTimestamp(value, now) // Uses helper defined later
 
 		colsToInsert := []string{}
-		placeholders := []string{}
 		vals := []interface{}{}
 
 		// Iterate through known columns from cached info
@@ -264,7 +265,6 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 				continue
 			}
 			colsToInsert = append(colsToInsert, colName)
-			placeholders = append(placeholders, "?")
 			vals = append(vals, fieldVal.Interface())
 		}
 
