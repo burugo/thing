@@ -53,14 +53,13 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 			case err == nil:
 				// Found in cache
 				setNewRecordFlagIfBaseModel(instancePtr, false)
-				resultMap[id] = reflect.ValueOf(instancePtr)   // Store the pointer
-				log.Printf("DEBUG CACHE HIT for %s", cacheKey) // Added log
+				resultMap[id] = reflect.ValueOf(instancePtr) // Store the pointer
 			case errors.Is(err, common.ErrCacheNoneResult):
 				// Found NoneResult marker - this ID is handled, DO NOT add to missingIDs.
-				log.Printf("DEBUG CACHE HIT (NoneResult) for %s", cacheKey) // Added log
+				// No action needed, just continue
 			case errors.Is(err, common.ErrNotFound):
 				// True cache miss
-				log.Printf("DEBUG CACHE MISS for %s", cacheKey) // Added log
+				missingIDs = append(missingIDs, id)
 				missingIDs = append(missingIDs, id)
 			default:
 				// Unexpected cache error

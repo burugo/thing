@@ -105,9 +105,9 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 	cacheValStr, cacheErr := cr.thing.cache.Get(cr.thing.ctx, cacheKey)
 	if cacheErr == nil {
 		// Cache hit
+		// log.Printf("CACHE HIT: Count Key: %s", cacheKey)
 		count, convErr := strconv.ParseInt(cacheValStr, 10, 64)
 		if convErr == nil {
-			log.Printf("CACHE HIT: Count Key: %s", cacheKey)
 			cr.cachedCount = count
 			cr.hasLoadedCount = true
 			return count, nil
@@ -119,7 +119,7 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 		}
 	} else if errors.Is(cacheErr, common.ErrNotFound) {
 		// Cache Miss
-		log.Printf("CACHE MISS (Count): Key %s not found.", cacheKey)
+		// log.Printf("CACHE MISS (Count): Key %s not found.", cacheKey)
 		// Fall through to DB fetch
 	}
 
@@ -141,7 +141,7 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 	}
 
 	// 5. Store result in memory and cache
-	log.Printf("DB HIT: Count Key: %s, Count: %d", cacheKey, dbCount)
+	// log.Printf("DB HIT: Count Key: %s, Count: %d", cacheKey, dbCount)
 	cr.cachedCount = dbCount
 	cr.hasLoadedCount = true
 
@@ -238,14 +238,15 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	// 2. Check Cache directly using GetQueryIDs
 	cachedIDs, idsCacheErr := cr.thing.cache.GetQueryIDs(cr.thing.ctx, listCacheKey)
 	if idsCacheErr == nil {
-		log.Printf("CACHE HIT: List Key: %s (%d IDs)", listCacheKey, len(cachedIDs))
+		// Cache hit
+		// log.Printf("CACHE HIT: List Key: %s (%d IDs)", listCacheKey, len(cachedIDs))
 		return cachedIDs, nil // Cache hit with actual IDs or empty slice
 	}
 
 	// 3. Handle Cache Miss or Error
 	if errors.Is(idsCacheErr, common.ErrNotFound) || errors.Is(idsCacheErr, common.ErrQueryCacheNoneResult) {
 		// Normal cache miss or explicit none result found
-		log.Printf("CACHE MISS/NoneResult: List Key: %s (Error: %v)", listCacheKey, idsCacheErr)
+		// log.Printf("CACHE MISS/NoneResult: List Key: %s (Error: %v)", listCacheKey, idsCacheErr)
 	} else { // Handle unexpected errors
 		// Log unexpected errors but treat as cache miss
 		log.Printf("WARN: Cache GetQueryIDs error for list key %s: %v. Proceeding to DB query.", listCacheKey, idsCacheErr)
@@ -314,7 +315,7 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	}
 
 	// 5. Handle filtered DB results and cache appropriately
-	log.Printf("DB HIT: List Key: %s, Found %d valid IDs after filtering. Caching IDs.", listCacheKey, len(validIDs))
+	// log.Printf("DB HIT: List Key: %s, Found %d valid IDs after filtering. Caching IDs.", listCacheKey, len(validIDs))
 	// Use the helper function to store the list (works for empty lists too)
 	// cacheSetErr := cache.SetCachedListIDs(cr.thing.ctx, cr.thing.cache, listCacheKey, validIDs, globalCacheTTL) // Use helper
 	cacheSetErr := cr.thing.cache.SetQueryIDs(cr.thing.ctx, listCacheKey, validIDs, globalCacheTTL)
@@ -571,7 +572,7 @@ func (cr *CachedResult[T]) All() ([]T, error) {
 
 	// 2. If count is zero, return empty slice
 	if count == 0 {
-		log.Printf("All: Count is zero, returning empty slice.")
+		// log.Printf("All: Count is zero, returning empty slice.")
 		return []T{}, nil
 	}
 

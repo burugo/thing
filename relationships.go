@@ -372,12 +372,12 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 			switch {
 			case queryIDsErr == nil:
 				// Cache hit with actual IDs
-				log.Printf("CACHE HIT (Query IDs): Found %d related IDs for key %s", len(cachedIDs), listCacheKey)
+				// log.Printf("CACHE HIT (Query IDs): Found %d related IDs for key %s", len(cachedIDs), listCacheKey)
 				relatedIDs = cachedIDs
 				cacheHit = true // Got the IDs from cache
 			case errors.Is(queryIDsErr, common.ErrNotFound):
 				// Cache miss
-				log.Printf("CACHE MISS (Query IDs): Key %s not found.", listCacheKey)
+				// log.Printf("CACHE MISS (Query IDs): Key %s not found.", listCacheKey)
 				// cacheHit remains false
 			default:
 				// Other cache error
