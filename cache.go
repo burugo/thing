@@ -585,10 +585,20 @@ func (t *Thing[T]) CacheStats(ctx context.Context) CacheStats {
 
 // --- Default Local Cache Implementation ---
 
+// ChannelLock implements a mutex using channel semantics
+type ChannelLock struct {
+	ch chan struct{}
+}
+
+// NewChannelLock creates a new channel-based lock
+func NewChannelLock() *ChannelLock {
+	return &ChannelLock{ch: make(chan struct{}, 1)}
+}
+
 // localCache implements CacheClient using in-memory sync.Map.
 type localCache struct {
 	store      sync.Map   // map[string]string
-	locks      sync.Map   // map[string]struct{}
+	lockPool   sync.Map   // map[string]*ChannelLock
 	counters   sync.Map   // map[string]int, now each counter is a separate key
 	countersMu sync.Mutex // protects counters increment
 }
@@ -825,15 +835,98 @@ func (m *localCache) DeleteQueryIDs(ctx context.Context, queryKey string) error 
 	return nil
 }
 
+// getLock retrieves or creates a channel lock for the given key
+func (m *localCache) getLock(key string) *ChannelLock {
+	actual, _ := m.lockPool.LoadOrStore(key, NewChannelLock())
+	return actual.(*ChannelLock)
+}
+
 func (m *localCache) AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error) {
 	m.incrCounter("AcquireLock")
-	_, loaded := m.locks.LoadOrStore(lockKey, struct{}{})
-	return !loaded, nil
+	lock := m.getLock(lockKey)
+
+	// Create a timeout context based on expiration
+	timeoutCtx := ctx
+	if expiration > 0 {
+		var cancel context.CancelFunc
+		timeoutCtx, cancel = context.WithTimeout(ctx, expiration)
+		defer cancel()
+	}
+
+	select {
+	case lock.ch <- struct{}{}:
+		// Successfully acquired the lock
+		return true, nil
+	case <-timeoutCtx.Done():
+		// Context canceled or timeout while waiting for lock
+		if timeoutCtx.Err() == context.DeadlineExceeded {
+			return false, nil // Timeout is not an error, just couldn't acquire lock
+		}
+		return false, timeoutCtx.Err()
+	}
 }
 
 func (m *localCache) ReleaseLock(ctx context.Context, lockKey string) error {
 	m.incrCounter("ReleaseLock")
-	m.locks.Delete(lockKey)
+	lock := m.getLock(lockKey)
+
+	select {
+	case <-lock.ch:
+		// Successfully released the lock
+		return nil
+	case <-ctx.Done():
+		// Context canceled while trying to release
+		return ctx.Err()
+	default:
+		// Lock was not held, this is a warning but not an error
+		log.Printf("WARN: Attempted to release lock '%s' that was not held", lockKey)
+		return nil
+	}
+}
+
+func (m *localCache) Incr(ctx context.Context, key string) (int64, error) {
+	m.incrCounter("Incr")
+
+	// Use dedicated lock for this key to ensure atomicity
+	lockKey := "incr:" + key
+	lock := m.getLock(lockKey)
+
+	// Block until we get the lock (like Redis INCR which is always atomic)
+	select {
+	case lock.ch <- struct{}{}:
+		// Lock acquired, proceed with atomic increment
+		defer func() {
+			// Release lock
+			<-lock.ch
+		}()
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+
+	// Now we have the lock, perform the increment atomically
+	val, loaded := m.store.Load(key)
+	var currentVal int64
+
+	if loaded {
+		if strVal, ok := val.(string); ok {
+			if parsed, err := strconv.ParseInt(strVal, 10, 64); err == nil {
+				currentVal = parsed
+			}
+		}
+	}
+
+	newVal := currentVal + 1
+	newValStr := strconv.FormatInt(newVal, 10)
+	m.store.Store(key, newValStr)
+
+	return newVal, nil
+}
+
+func (m *localCache) Expire(ctx context.Context, key string, expiration time.Duration) error {
+	m.incrCounter("Expire")
+	// For localCache (in-memory), we don't implement expiration mechanism
+	// This is a no-op for the local cache implementation
+	// In a production environment, you might want to implement a proper expiration mechanism
 	return nil
 }
 

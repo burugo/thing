@@ -354,6 +354,31 @@ func (c *client) ReleaseLock(ctx context.Context, lockKey string) error {
 	return nil
 }
 
+// Incr atomically increments the value of a key by 1 and returns the new value.
+// If the key does not exist, it is set to 0 before performing the operation.
+func (c *client) Incr(ctx context.Context, key string) (int64, error) {
+	c.incrementCounter("Incr")
+	val, err := c.redisClient.Incr(ctx, key).Result()
+	if err != nil {
+		return 0, fmt.Errorf("redis Incr error for key '%s': %w", key, err)
+	}
+	return val, nil
+}
+
+// Expire sets a timeout on a key. After the timeout has expired, the key will automatically be deleted.
+func (c *client) Expire(ctx context.Context, key string, expiration time.Duration) error {
+	c.incrementCounter("Expire")
+	success, err := c.redisClient.Expire(ctx, key, expiration).Result()
+	if err != nil {
+		return fmt.Errorf("redis Expire error for key '%s': %w", key, err)
+	}
+	if !success {
+		// Key does not exist or timeout could not be set
+		log.Printf("WARN: Redis Expire failed for key '%s' - key may not exist", key)
+	}
+	return nil
+}
+
 // DeleteByPrefix removes all cache entries whose keys match the given prefix.
 // Uses SCAN for safe iteration over keys.
 func (c *client) DeleteByPrefix(ctx context.Context, prefix string) error {

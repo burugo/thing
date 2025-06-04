@@ -49,6 +49,9 @@ type CacheClient interface {
 	AcquireLock(ctx context.Context, lockKey string, expiration time.Duration) (bool, error)
 	ReleaseLock(ctx context.Context, lockKey string) error
 
+	Incr(ctx context.Context, key string) (int64, error)
+	Expire(ctx context.Context, key string, expiration time.Duration) error
+
 	GetCacheStats(ctx context.Context) CacheStats
 }
 
