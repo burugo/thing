@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -682,11 +683,82 @@ func (m *mockCacheClient) GetModelCount() int {
 // The returned map is a copy and safe for concurrent use.
 // Typical keys: "Get", "GetMiss", "GetModel", "GetModelMiss", etc.
 func (m *mockCacheClient) GetCacheStats(ctx context.Context) thing.CacheStats {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	stats := make(map[string]int, len(m.Counters))
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Return a copy of the counters
+	stats := make(map[string]int)
 	for k, v := range m.Counters {
 		stats[k] = v
 	}
 	return thing.CacheStats{Counters: stats}
 }
+
+// Incr is a mock implementation for CacheClient.Incr
+func (m *mockCacheClient) Incr(ctx context.Context, key string) (int64, error) {
+	m.incrementCounter("Incr")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.isExpired(ctx, key) { // Check expiry under full lock
+		m.store.Delete(key)
+		m.expiryStore.Delete(key)
+	}
+
+	val, _ := m.store.LoadOrStore(key, "0")
+	valStr, ok := val.(string)
+	if !ok {
+		// Should not happen if LoadOrStore stores "0" or if existing value was string
+		m.store.Store(key, "1") // Initialize to 1 if type was wrong
+		return 1, nil
+	}
+
+	currentVal, err := strconv.ParseInt(valStr, 10, 64)
+	if err != nil {
+		// If parsing fails (e.g., value was not a number), start from 1
+		log.Printf("mockCacheClient: Incr: ParseInt error for key '%s' value '%s': %v. Setting to 1.", key, valStr, err)
+		m.store.Store(key, "1")
+		return 1, nil
+	}
+
+	currentVal++
+	m.store.Store(key, strconv.FormatInt(currentVal, 10))
+	return currentVal, nil
+}
+
+// Expire is a mock implementation for CacheClient.Expire
+func (m *mockCacheClient) Expire(ctx context.Context, key string, expiration time.Duration) error {
+	m.incrementCounter("Expire")
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if expiration <= 0 {
+		m.expiryStore.Delete(key)
+		// log.Printf("mockCacheClient: Expire called for key '%s' with non-positive duration, removing expiry.", key)
+		return nil
+	}
+	m.expiryStore.Store(key, time.Now().Add(expiration))
+	// log.Printf("mockCacheClient: Expire called for key '%s' with duration %v, new expiry set.", key, expiration)
+	return nil
+}
+
+// isExpired checks if a key is expired and deletes it if so.
+// It expects m.mu (RLock or Lock) to be held by the caller if necessary for atomicity with the Load.
+// Returns true if expired.
+func (m *mockCacheClient) isExpired(ctx context.Context, key string) bool {
+	if exp, ok := m.expiryStore.Load(key); ok {
+		if time.Now().After(exp.(time.Time)) {
+			// To avoid deadlock if Delete calls this or acquires full lock,
+			// we must release the RLock before calling Delete.
+			// This implies callers of isExpired need to handle locking carefully.
+			// For simplicity in mock, let's assume Delete can be called.
+			// A more robust way would be for Delete to handle its own locks
+			// and for this function to just return expiry status.
+			// Let's make Delete handle its own lock and this just check.
+			// The caller of Get/GetModel/etc. will then call Delete.
+			return true
+		}
+	}
+	return false
+}
+
+var _ thing.CacheClient = (*mockCacheClient)(nil) // Compile-time check

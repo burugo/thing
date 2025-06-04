@@ -887,37 +887,36 @@ func (m *localCache) ReleaseLock(ctx context.Context, lockKey string) error {
 func (m *localCache) Incr(ctx context.Context, key string) (int64, error) {
 	m.incrCounter("Incr")
 
-	// Use dedicated lock for this key to ensure atomicity
-	lockKey := "incr:" + key
-	lock := m.getLock(lockKey)
+	lockKey := "incr:" + key // Incr method uses specific lock prefix
 
-	// Block until we get the lock (like Redis INCR which is always atomic)
-	select {
-	case lock.ch <- struct{}{}:
-		// Lock acquired, proceed with atomic increment
-		defer func() {
-			// Release lock
-			<-lock.ch
-		}()
-	case <-ctx.Done():
-		return 0, ctx.Err()
+	// Call AcquireLock to get the lock, expiration=0 means wait indefinitely until ctx is canceled
+	acquired, err := m.AcquireLock(ctx, lockKey, 0)
+	if err != nil {
+		return 0, err // Error occurred while acquiring lock
+	}
+	if !acquired {
+		// If expiration=0, AcquireLock should block until success or ctx.Done()
+		// So theoretically if err is nil, acquired should be true. This is more of a defensive check.
+		return 0, fmt.Errorf("could not acquire lock for Incr on key '%s' (context: %v)", key, ctx.Err())
 	}
 
-	// Now we have the lock, perform the increment atomically
+	// Successfully acquired lock
+	defer m.ReleaseLock(ctx, lockKey) // Ensure lock is released
+
+	// --- Original atomic increment logic here ---
 	val, loaded := m.store.Load(key)
 	var currentVal int64
-
 	if loaded {
 		if strVal, ok := val.(string); ok {
-			if parsed, err := strconv.ParseInt(strVal, 10, 64); err == nil {
+			if parsed, pErr := strconv.ParseInt(strVal, 10, 64); pErr == nil {
 				currentVal = parsed
 			}
 		}
 	}
-
 	newVal := currentVal + 1
 	newValStr := strconv.FormatInt(newVal, 10)
 	m.store.Store(key, newValStr)
+	// --- End of atomic increment logic ---
 
 	return newVal, nil
 }
