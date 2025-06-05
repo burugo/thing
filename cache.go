@@ -89,7 +89,12 @@ func GenerateQueryHash(params QueryParams) string {
 	}
 	hasher := sha256.New()
 	hasher.Write(paramsJson)
-	return hex.EncodeToString(hasher.Sum(nil))
+	fullHash := hex.EncodeToString(hasher.Sum(nil))
+	// Return only first 8 characters for shorter cache keys (32-bit hex = 8 chars)
+	if len(fullHash) >= 8 {
+		return fullHash[:8]
+	}
+	return fullHash
 }
 
 // GenerateCacheKey generates a cache key for list or count queries with normalized arguments.
