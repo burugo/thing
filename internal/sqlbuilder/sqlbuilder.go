@@ -118,7 +118,10 @@ func (b *SQLBuilder) expandInClauses(where string, args []interface{}) (string, 
 			coreCond += ")"
 		}
 		newWhere.WriteString(coreCond)
-		if argIdx < len(args) {
+
+		// Count the number of ? placeholders in this condition and consume that many args
+		questionMarkCount := strings.Count(coreCond, "?")
+		for j := 0; j < questionMarkCount && argIdx < len(args); j++ {
 			newArgs = append(newArgs, args[argIdx])
 			argIdx++
 		}

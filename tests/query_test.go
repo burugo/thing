@@ -310,3 +310,87 @@ func testGenerateCountCacheKey[T thing.Model](t *testing.T, instance *thing.Thin
 	require.NoError(t, err)
 	return thing.GenerateCacheKey("count", info.TableName, params)
 }
+
+// TestExpandInClausesBug tests the bug where expandInClauses doesn't handle
+// complex WHERE clauses with multiple ? placeholders in parentheses correctly
+func TestExpandInClausesBug(t *testing.T) {
+	db, cacheClient, cleanup := setupTestDB(t)
+	defer cleanup()
+	thingInstance, err := thing.New[*User](db, cacheClient)
+	require.NoError(t, err)
+
+	// Setup test data
+	users := []*User{
+		{Name: "John Doe", Email: "john@example.com"},
+		{Name: "Jane Smith", Email: "jane@example.com"},
+		{Name: "Bob Johnson", Email: "bob@example.com"},
+	}
+
+	for _, user := range users {
+		require.NoError(t, thingInstance.Save(user))
+	}
+
+	t.Run("Complex WHERE with multiple OR conditions in parentheses", func(t *testing.T) {
+		// This is the problematic WHERE clause that triggers the bug
+		where := "(id = ? OR name LIKE ? OR email LIKE ? OR name LIKE ?) AND id > ?"
+		args := []interface{}{users[0].ID, "John%", "john%", "Jane%", int64(0)}
+
+		// Test through CachedResult.Fetch which calls BuildSelectIDsSQL -> expandInClauses
+		params := thing.QueryParams{
+			Where: where,
+			Args:  args,
+			Order: "id ASC",
+		}
+
+		result := thingInstance.Query(params)
+		require.NotNil(t, result)
+
+		// This should work but currently fails due to the bug
+		// The bug causes expandInClauses to only pass 2 args instead of 5
+		fetchedUsers, err := result.Fetch(0, 10)
+
+		// If the bug exists, this will fail with a SQL parameter mismatch error
+		// If fixed, it should succeed and return the matching users
+		require.NoError(t, err, "Fetch should succeed with complex WHERE clause")
+		require.GreaterOrEqual(t, len(fetchedUsers), 1, "Should find at least one matching user")
+
+		// Verify we got the expected results
+		found := false
+		for _, user := range fetchedUsers {
+			if user.ID == users[0].ID || user.Name == "Jane Smith" {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Should find John Doe or Jane Smith based on the query conditions")
+	})
+
+	t.Run("Simple WHERE clause should still work", func(t *testing.T) {
+		// Ensure we don't break existing functionality
+		params := thing.QueryParams{
+			Where: "name = ?",
+			Args:  []interface{}{"John Doe"},
+		}
+
+		result := thingInstance.Query(params)
+		fetchedUsers, err := result.Fetch(0, 10)
+
+		require.NoError(t, err)
+		require.Len(t, fetchedUsers, 1)
+		assert.Equal(t, "John Doe", fetchedUsers[0].Name)
+	})
+
+	t.Run("IN clause should still work", func(t *testing.T) {
+		// Ensure IN clause expansion still works
+		params := thing.QueryParams{
+			Where: "id IN (?)",
+			Args:  []interface{}{[]int64{users[0].ID, users[1].ID}},
+		}
+
+		result := thingInstance.Query(params)
+		fetchedUsers, err := result.Fetch(0, 10)
+
+		require.NoError(t, err)
+		require.Len(t, fetchedUsers, 2)
+	})
+}
