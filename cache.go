@@ -602,10 +602,12 @@ func NewChannelLock() *ChannelLock {
 
 // localCache implements CacheClient using in-memory sync.Map.
 type localCache struct {
-	store      sync.Map   // map[string]string
-	lockPool   sync.Map   // map[string]*ChannelLock
-	counters   sync.Map   // map[string]int, now each counter is a separate key
-	countersMu sync.Mutex // protects counters increment
+	store       sync.Map   // map[string]string
+	lockPool    sync.Map   // map[string]*ChannelLock
+	counters    sync.Map   // map[string]int, now each counter is a separate key
+	countersMu  sync.Mutex // protects counters increment
+	expiryStore sync.Map   // map[string]time.Time, stores expiration times
+	cleanupOnce sync.Once  // ensures cleanup goroutine starts only once
 }
 
 // DefaultLocalCache is the default in-memory cache client for Thing ORM.
@@ -613,12 +615,28 @@ var DefaultLocalCache CacheClient = &localCache{}
 
 func (m *localCache) Get(ctx context.Context, key string) (string, error) {
 	m.incrCounter("Get")
-	if v, ok := m.store.Load(key); ok {
-		if s, ok := v.(string); ok {
-			m.incrCounter("GetHit")
-			return s, nil
-		}
+
+	// Check if key exists
+	v, ok := m.store.Load(key)
+	if !ok {
+		m.incrCounter("GetMiss")
+		return "", common.ErrNotFound
 	}
+
+	// Check if key has expired
+	if m.isExpired(key) {
+		// Remove expired key
+		m.store.Delete(key)
+		m.expiryStore.Delete(key)
+		m.incrCounter("GetExpired")
+		return "", common.ErrNotFound
+	}
+
+	if s, ok := v.(string); ok {
+		m.incrCounter("GetHit")
+		return s, nil
+	}
+
 	m.incrCounter("GetMiss")
 	return "", common.ErrNotFound
 }
@@ -633,20 +651,93 @@ func (m *localCache) Set(ctx context.Context, key, value string, expiration time
 		}
 		m.incrCounter("SetNoneResult")
 	}
+
 	m.store.Store(key, value)
+
+	// Set expiration if specified
+	if expiration > 0 {
+		expiryTime := time.Now().Add(expiration)
+		m.expiryStore.Store(key, expiryTime)
+		// Start cleanup goroutine if not already started
+		m.startCleanupGoroutine()
+	} else {
+		// Remove any existing expiration
+		m.expiryStore.Delete(key)
+	}
+
 	return nil
 }
 
 func (m *localCache) Delete(ctx context.Context, key string) error {
 	m.incrCounter("Delete")
 	m.store.Delete(key)
+	m.expiryStore.Delete(key) // Also remove expiration
 	return nil
 }
 
 func (m *localCache) Exists(key string) bool {
 	m.incrCounter("Exists")
 	_, ok := m.store.Load(key)
+	if ok && m.isExpired(key) {
+		// Remove expired key
+		m.store.Delete(key)
+		m.expiryStore.Delete(key)
+		return false
+	}
 	return ok
+}
+
+// isExpired checks if a key has expired
+func (m *localCache) isExpired(key string) bool {
+	expiry, ok := m.expiryStore.Load(key)
+	if !ok {
+		// No expiration set
+		return false
+	}
+
+	expiryTime, ok := expiry.(time.Time)
+	if !ok {
+		// Invalid expiry data, consider it expired and clean up
+		m.expiryStore.Delete(key)
+		return true
+	}
+
+	return time.Now().After(expiryTime)
+}
+
+// startCleanupGoroutine starts a background goroutine to clean up expired keys
+func (m *localCache) startCleanupGoroutine() {
+	m.cleanupOnce.Do(func() {
+		go m.cleanupExpiredKeys()
+	})
+}
+
+// cleanupExpiredKeys runs in background to periodically clean up expired keys
+func (m *localCache) cleanupExpiredKeys() {
+	ticker := time.NewTicker(1 * time.Minute) // Clean up every minute
+	defer ticker.Stop()
+
+	for range ticker.C {
+		now := time.Now()
+		keysToDelete := make([]string, 0)
+
+		// Collect expired keys
+		m.expiryStore.Range(func(key, value interface{}) bool {
+			k, ok1 := key.(string)
+			expiryTime, ok2 := value.(time.Time)
+			if ok1 && ok2 && now.After(expiryTime) {
+				keysToDelete = append(keysToDelete, k)
+			}
+			return true
+		})
+
+		// Delete expired keys
+		for _, key := range keysToDelete {
+			m.store.Delete(key)
+			m.expiryStore.Delete(key)
+			log.Printf("DEBUG: localCache cleaned up expired key: %s", key)
+		}
+	}
 }
 
 func (m *localCache) GetModel(ctx context.Context, key string, dest interface{}) error {
@@ -655,6 +746,15 @@ func (m *localCache) GetModel(ctx context.Context, key string, dest interface{})
 	raw, ok := m.store.Load(key)
 	if !ok {
 		m.incrCounter("GetModelMiss")
+		return common.ErrNotFound
+	}
+
+	// Check if key has expired
+	if m.isExpired(key) {
+		// Remove expired key
+		m.store.Delete(key)
+		m.expiryStore.Delete(key)
+		m.incrCounter("GetModelExpired")
 		return common.ErrNotFound
 	}
 
@@ -780,15 +880,25 @@ func (m *localCache) SetModel(ctx context.Context, key string, model interface{}
 	}
 
 	m.store.Store(key, dataToCache)
-	// Note: localCache in cache.go doesn't seem to have expiryStore like mockCacheClient.
-	// It uses sync.Map for store, locks, counters. Expiration handling needs review for localCache.
-	// For now, this matches the old SetModel which didn't handle expiration for localCache specifically.
+
+	// Set expiration if specified
+	if expiration > 0 {
+		expiryTime := time.Now().Add(expiration)
+		m.expiryStore.Store(key, expiryTime)
+		// Start cleanup goroutine if not already started
+		m.startCleanupGoroutine()
+	} else {
+		// Remove any existing expiration
+		m.expiryStore.Delete(key)
+	}
+
 	return nil
 }
 
 func (m *localCache) DeleteModel(ctx context.Context, key string) error {
 	m.incrCounter("DeleteModel")
 	m.store.Delete(key)
+	m.expiryStore.Delete(key) // Also remove expiration
 	return nil
 }
 
@@ -798,6 +908,15 @@ func (m *localCache) GetQueryIDs(ctx context.Context, queryKey string) ([]int64,
 	raw, ok := m.store.Load(queryKey)
 	if !ok {
 		m.incrCounter("GetQueryIDsMiss")
+		return nil, common.ErrNotFound
+	}
+
+	// Check if key has expired
+	if m.isExpired(queryKey) {
+		// Remove expired key
+		m.store.Delete(queryKey)
+		m.expiryStore.Delete(queryKey)
+		m.incrCounter("GetQueryIDsExpired")
 		return nil, common.ErrNotFound
 	}
 
@@ -830,13 +949,25 @@ func (m *localCache) SetQueryIDs(ctx context.Context, queryKey string, ids []int
 	}
 
 	m.store.Store(queryKey, buf.Bytes())
-	// Expiration not handled by this localCache impl for SetQueryIDs (same as SetModel)
+
+	// Set expiration if specified
+	if expiration > 0 {
+		expiryTime := time.Now().Add(expiration)
+		m.expiryStore.Store(queryKey, expiryTime)
+		// Start cleanup goroutine if not already started
+		m.startCleanupGoroutine()
+	} else {
+		// Remove any existing expiration
+		m.expiryStore.Delete(queryKey)
+	}
+
 	return nil
 }
 
 func (m *localCache) DeleteQueryIDs(ctx context.Context, queryKey string) error {
 	m.incrCounter("DeleteQueryIDs")
 	m.store.Delete(queryKey)
+	m.expiryStore.Delete(queryKey) // Also remove expiration
 	return nil
 }
 
@@ -928,9 +1059,22 @@ func (m *localCache) Incr(ctx context.Context, key string) (int64, error) {
 
 func (m *localCache) Expire(ctx context.Context, key string, expiration time.Duration) error {
 	m.incrCounter("Expire")
-	// For localCache (in-memory), we don't implement expiration mechanism
-	// This is a no-op for the local cache implementation
-	// In a production environment, you might want to implement a proper expiration mechanism
+
+	// Check if the key exists
+	if _, ok := m.store.Load(key); !ok {
+		return common.ErrNotFound
+	}
+
+	if expiration > 0 {
+		expiryTime := time.Now().Add(expiration)
+		m.expiryStore.Store(key, expiryTime)
+		// Start cleanup goroutine if not already started
+		m.startCleanupGoroutine()
+	} else {
+		// Remove expiration if duration is 0 or negative
+		m.expiryStore.Delete(key)
+	}
+
 	return nil
 }
 
