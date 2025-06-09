@@ -5,6 +5,7 @@ import (
 	"log"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -268,18 +269,34 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 					}
 				}
 			}
-			for name, idxInfo := range compositeIndexes {
-				if idxInfo.Unique {
-					rootInfo.UniqueIndexes = append(rootInfo.UniqueIndexes, *idxInfo)
-				} else {
-					rootInfo.Indexes = append(rootInfo.Indexes, *idxInfo)
-				}
-				delete(compositeIndexes, name)
-			}
 		}
 	}
 
-	processFields(modelType, []int{}, false, make(map[string]*IndexInfo), &info)
+	// Create a map to collect named indexes during field processing
+	compositeIndexes := make(map[string]*IndexInfo)
+	processFields(modelType, []int{}, false, compositeIndexes, &info)
+
+	// --- Consolidate Indexes from compositeIndexes map into ModelInfo ---
+	// After processFields completes, compositeIndexes contains all named indexes
+	// with their columns properly merged. Now append them to info.Indexes/UniqueIndexes.
+	for _, compositeIdx := range compositeIndexes {
+		// Sort columns for consistent ordering
+		sort.Strings(compositeIdx.Columns)
+
+		if compositeIdx.Unique {
+			info.UniqueIndexes = append(info.UniqueIndexes, *compositeIdx)
+		} else {
+			info.Indexes = append(info.Indexes, *compositeIdx)
+		}
+	}
+
+	// Sort index slices for deterministic ordering
+	sort.Slice(info.Indexes, func(i, j int) bool {
+		return info.Indexes[i].Name < info.Indexes[j].Name
+	})
+	sort.Slice(info.UniqueIndexes, func(i, j int) bool {
+		return info.UniqueIndexes[i].Name < info.UniqueIndexes[j].Name
+	})
 
 	if pkDbName == "" {
 		pkDbName = "id" // Default to "id" if no pk tag found

@@ -895,3 +895,56 @@ func TestFetch_WithJsonDashField(t *testing.T) {
 	assert.Equal(t, testUsername, fetchedUser.Username, "Username should be loaded correctly")
 	assert.Equal(t, 1, fetchedUser.Status, "Status should be loaded correctly")
 }
+
+// Model for first migration: single column index
+type ReproduceCompositeBugV1 struct {
+	thing.BaseModel
+	FieldA string `db:"field_a,index:idx_repro_comp_bug"`
+	FieldB int    `db:"field_b"`
+}
+
+func (m *ReproduceCompositeBugV1) TableName() string { return "repro_comp_bug_models" }
+
+// Model for second migration: attempts to make it composite
+type ReproduceCompositeBugV2 struct {
+	thing.BaseModel
+	FieldA string `db:"field_a,index:idx_repro_comp_bug"`
+	FieldB int    `db:"field_b,index:idx_repro_comp_bug"` // Now composite
+}
+
+func (m *ReproduceCompositeBugV2) TableName() string { return "repro_comp_bug_models" }
+
+func TestAutoMigrate_ReproduceCompositeIndexAlterBug(t *testing.T) {
+	db, cache, cleanup := setupTestDB(t) // Using existing test setup helper
+	defer cleanup()
+	err := thing.Configure(db, cache)
+	require.NoError(t, err)
+
+	// Migration 1: AutoMigrate with ReproduceCompositeBugV1
+	err = thing.AutoMigrate(&ReproduceCompositeBugV1{})
+	require.NoError(t, err)
+
+	// Verification 1: Check that idx_repro_comp_bug exists and is on (field_a)
+	indexesV1 := getSQLiteIndexes(t, db, "repro_comp_bug_models")
+	require.Contains(t, indexesV1, "idx_repro_comp_bug", "Index idx_repro_comp_bug should exist after V1 migration")
+	// Columns are sorted by getSQLiteIndexColumns, field_a is fine
+	assert.Equal(t, []string{"field_a"}, indexesV1["idx_repro_comp_bug"], "Index idx_repro_comp_bug should be on (field_a) after V1 migration")
+
+	// Migration 2: AutoMigrate with ReproduceCompositeBugV2
+	// This tests the fix: the ORM should detect the column difference and properly
+	// DROP the old index and CREATE the new composite index.
+	err = thing.AutoMigrate(&ReproduceCompositeBugV2{})
+	require.NoError(t, err)
+
+	// Verification 2 (CORRECT BEHAVIOR AFTER FIX):
+	// Check that idx_repro_comp_bug is now correctly on (field_a, field_b)
+	// as defined in ReproduceCompositeBugV2.
+	indexesV2 := getSQLiteIndexes(t, db, "repro_comp_bug_models")
+	require.Contains(t, indexesV2, "idx_repro_comp_bug", "Index idx_repro_comp_bug should exist after V2 migration")
+
+	// After the fix, the index should be correctly created as composite
+	expectedColumnsAfterFix := []string{"field_a", "field_b"} // Columns get sorted by helper
+
+	assert.Equal(t, expectedColumnsAfterFix, indexesV2["idx_repro_comp_bug"],
+		"FIXED: Index idx_repro_comp_bug should now be correctly on (field_a, field_b).")
+}
