@@ -190,7 +190,7 @@ func (cr *CachedResult[T]) _fetch() error {
 
 	cr.cachedIDs = ids
 	cr.hasLoadedIDs = true
-	log.Printf("Internal fetch completed. Loaded %d IDs.", len(ids))
+	// log.Printf("Internal fetch completed. Loaded %d IDs.", len(ids))
 	return nil
 }
 
@@ -333,7 +333,7 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 		if countSetErr != nil {
 			log.Printf("WARN: Failed to update count cache (key: %s) after list fetch: %v", countCacheKey, countSetErr)
 		} else {
-			log.Printf("Updated count cache (key: %s) with count %d after list fetch", countCacheKey, len(validIDs))
+			// log.Printf("Updated count cache (key: %s) with count %d after list fetch", countCacheKey, len(validIDs))
 		}
 		// Register the count key
 		cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, toInternalQueryParams(cr.params))
@@ -355,7 +355,7 @@ func (cr *CachedResult[T]) invalidateCache() error {
 		log.Printf("WARN: Failed to invalidate list cache for key %s: %v", listCacheKey, deleteErr)
 		// Continue despite error, try to invalidate count cache as well
 	} else {
-		log.Printf("Cache invalidated for list key: %s", listCacheKey)
+		// log.Printf("Cache invalidated for list key: %s", listCacheKey)
 	}
 
 	// 2. Invalidate count cache
@@ -365,7 +365,7 @@ func (cr *CachedResult[T]) invalidateCache() error {
 	if deleteErr != nil && !errors.Is(deleteErr, common.ErrNotFound) {
 		log.Printf("WARN: Failed to invalidate count cache for key %s: %v", countCacheKey, deleteErr)
 	} else {
-		log.Printf("Cache invalidated for count key: %s", countCacheKey)
+		// log.Printf("Cache invalidated for count key: %s", countCacheKey)
 	}
 
 	// 3. Reset in-memory cache state to trigger reload on next access
@@ -398,7 +398,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 
 	// Handle case where query yielded no results initially
 	if len(cr.cachedIDs) == 0 {
-		log.Printf("Fetch: No cached IDs found for query.")
+		// log.Printf("Fetch: No cached IDs found for query.")
 		return []T{}, nil
 	}
 
@@ -438,8 +438,8 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 
 			endOffset := nextFetchOffset + actualFetchLimit
 			idsToCheck = cr.cachedIDs[nextFetchOffset:endOffset]
-			log.Printf("Fetch Iteration: Using %d cached IDs [%d:%d], need %d more results (source: %s)",
-				len(idsToCheck), nextFetchOffset, endOffset, remainingNeeded, fetchSource)
+			// log.Printf("Fetch Iteration: Using %d cached IDs [%d:%d], need %d more results (source: %s)",
+			// 	len(idsToCheck), nextFetchOffset, endOffset, remainingNeeded, fetchSource)
 
 		case int64(nextFetchOffset) < totalCount:
 			// Still have more data in the database according to total count
@@ -454,16 +454,16 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 
 			if len(idsToCheck) == 0 {
 				// No more results in DB despite what count says
-				log.Printf("Fetch Iteration: No more IDs from database (source: %s)", fetchSource)
+				// log.Printf("Fetch Iteration: No more IDs from database (source: %s)", fetchSource)
 				break
 			}
 
-			log.Printf("Fetch Iteration: Fetched %d IDs from database, need %d more results (source: %s)",
-				len(idsToCheck), remainingNeeded, fetchSource)
+			// log.Printf("Fetch Iteration: Fetched %d IDs from database, need %d more results (source: %s)",
+			// 	len(idsToCheck), remainingNeeded, fetchSource)
 
 		default:
 			// Reached the end of total records
-			log.Printf("Fetch Iteration: Reached end of all results (%d total)", totalCount)
+			// log.Printf("Fetch Iteration: Reached end of all results (%d total)", totalCount)
 			break
 		}
 
@@ -479,10 +479,10 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 
 			// If fetching from cache failed, invalidate cache
 			if fetchSource == "Cache" && !cacheInvalidated {
-				log.Printf("Invalidating cache due to ByIDs failure for cached IDs")
+				// log.Printf("Invalidating cache due to ByIDs failure for cached IDs")
 				invErr := cr.invalidateCache()
 				if invErr != nil {
-					log.Printf("WARN: Failed to invalidate cache: %v", invErr)
+					// log.Printf("WARN: Failed to invalidate cache: %v", invErr)
 				}
 				cacheInvalidated = true
 
@@ -524,10 +524,10 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 
 		// If any issues found with cached IDs and cache hasn't been invalidated yet
 		if fetchSource == "Cache" && anyIssueFound && !cacheInvalidated {
-			log.Printf("Invalidating cache due to inconsistencies found in cached IDs")
+			// log.Printf("Invalidating cache due to inconsistencies found in cached IDs")
 			invErr := cr.invalidateCache()
 			if invErr != nil {
-				log.Printf("WARN: Failed to invalidate cache: %v", invErr)
+				// log.Printf("WARN: Failed to invalidate cache: %v", invErr)
 			}
 			cacheInvalidated = true
 
@@ -544,12 +544,12 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 
 		// checks if we need more and if there's anything left to fetch
 		if remainingNeeded == 0 {
-			log.Printf("Fetch Iteration: Collected all %d needed items", limit)
+			// log.Printf("Fetch Iteration: Collected all %d needed items", limit)
 			break
 		}
 
-		log.Printf("Fetch Iteration: Got %d/%d items so far, need %d more. Next fetch: offset=%d, limit=%d",
-			len(finalResults), limit, remainingNeeded, nextFetchOffset, nextFetchLimit)
+		// log.Printf("Fetch Iteration: Got %d/%d items so far, need %d more. Next fetch: offset=%d, limit=%d",
+		// 	len(finalResults), limit, remainingNeeded, nextFetchOffset, nextFetchLimit)
 	}
 
 	log.Printf("Fetch: Returning %d/%d requested results", len(finalResults), limit)
@@ -577,13 +577,13 @@ func (cr *CachedResult[T]) All() ([]T, error) {
 	}
 
 	// 3. Fetch all records using Fetch(0, count)
-	log.Printf("All: Fetching %d records...", count)
+	// log.Printf("All: Fetching %d records...", count)
 	results, err := cr.Fetch(0, int(count))
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch %d records for All(): %w", count, err)
 	}
 
-	log.Printf("All: Successfully fetched %d records.", len(results))
+	// log.Printf("All: Successfully fetched %d records.", len(results))
 	// Store the results and mark as loaded
 	cr.all = results
 	cr.hasLoadedAll = true
