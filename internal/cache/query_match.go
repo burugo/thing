@@ -7,6 +7,7 @@ import (
 	"math"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/burugo/thing/internal/types"
 	// Import regexp for potential future use or complex LIKE
@@ -410,10 +411,43 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 
 // compareValues compares two values using >, <, >=, <= operators, handling numeric and string types.
 func compareValues(modelVal, argVal interface{}, operator string) (bool, error) {
+	// Dereference pointers to get actual values
 	mVal := reflect.ValueOf(modelVal)
-	aVal := reflect.ValueOf(argVal)
+	if mVal.Kind() == reflect.Pointer {
+		if mVal.IsNil() {
+			return false, errors.New("cannot compare a nil model value")
+		}
+		mVal = mVal.Elem()
+	}
 
-	// Handle basic types: ints, floats, strings
+	aVal := reflect.ValueOf(argVal)
+	if aVal.Kind() == reflect.Pointer {
+		if aVal.IsNil() {
+			return false, errors.New("cannot compare against a nil argument value")
+		}
+		aVal = aVal.Elem()
+	}
+
+	// Handle time.Time comparison BEFORE other types
+	modelTime, modelIsTime := mVal.Interface().(time.Time)
+	argTime, argIsTime := aVal.Interface().(time.Time)
+
+	if modelIsTime && argIsTime {
+		switch operator {
+		case ">":
+			return modelTime.After(argTime), nil
+		case "<":
+			return modelTime.Before(argTime), nil
+		case ">=":
+			return modelTime.After(argTime) || modelTime.Equal(argTime), nil
+		case "<=":
+			return modelTime.Before(argTime) || modelTime.Equal(argTime), nil
+		default:
+			return false, fmt.Errorf("unsupported operator %s for time.Time comparison", operator)
+		}
+	}
+
+	// Existing numeric and string comparison logic
 	switch mVal.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		aInt, ok := convertToInt64(aVal)
