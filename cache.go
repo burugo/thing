@@ -98,6 +98,7 @@ func GenerateQueryHash(params QueryParams) string {
 }
 
 // GenerateCacheKey generates a cache key for list or count queries with normalized arguments.
+// Includes cache version to isolate keys across application restarts.
 func GenerateCacheKey(prefix, tableName string, params QueryParams) string {
 	normalizedParams := params
 	normalizedArgs := make([]interface{}, len(params.Args))
@@ -107,7 +108,8 @@ func GenerateCacheKey(prefix, tableName string, params QueryParams) string {
 	normalizedParams.Args = normalizedArgs
 
 	hash := GenerateQueryHash(normalizedParams)
-	return fmt.Sprintf("%s:%s:%s", prefix, tableName, hash)
+	version := GetCacheVersion()
+	return fmt.Sprintf("%s:v%d:%s:%s", prefix, version, tableName, hash)
 }
 
 // ClearCacheByID removes the cache entry for a specific model instance by its ID.

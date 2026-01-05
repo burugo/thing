@@ -16,6 +16,8 @@ var (
 	configMutex  sync.RWMutex
 	// Global cache TTL, determined at startup
 	globalCacheTTL time.Duration
+	// Cache version for query cache key isolation across restarts
+	cacheVersion int64
 )
 
 // Config holds configuration for the Thing ORM.
@@ -36,6 +38,12 @@ type Config struct {
 func Configure(args ...interface{}) error {
 	configMutex.Lock()
 	defer configMutex.Unlock()
+
+	// Set cache version only on first configuration (survives multiple Configure calls)
+	if !isConfigured {
+		cacheVersion = time.Now().Unix()
+		log.Printf("thing.Configure: cacheVersion set to %d", cacheVersion)
+	}
 
 	defaultTTL := 8 * time.Hour
 	var db DBAdapter
@@ -102,4 +110,12 @@ func ConfigureWithConfig(cfg Config) error {
 		return Configure(cfg.DB, cfg.Cache, cfg.TTL)
 	}
 	return Configure(cfg.DB, cfg.Cache)
+}
+
+// GetCacheVersion returns the current cache version for query cache key generation.
+// This version changes on each application restart, ensuring stale cache keys are ignored.
+func GetCacheVersion() int64 {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+	return cacheVersion
 }
