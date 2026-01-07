@@ -60,7 +60,6 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 			case errors.Is(err, common.ErrNotFound):
 				// True cache miss
 				missingIDs = append(missingIDs, id)
-				missingIDs = append(missingIDs, id)
 			default:
 				// Unexpected cache error
 				log.Printf("WARN: Cache error during batch fetch for key %s: %v", cacheKey, err)
