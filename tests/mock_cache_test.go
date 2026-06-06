@@ -552,6 +552,7 @@ type mockDBAdapter struct {
 	*sqlite.SQLiteAdapter
 	SelectCount   int // Counts calls to Select
 	GetCountCalls int // Counts calls to GetCount
+	ExecCount     int // Counts calls to Exec
 }
 
 func (m *mockDBAdapter) Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error {
@@ -564,6 +565,7 @@ func (m *mockDBAdapter) Select(ctx context.Context, dest interface{}, query stri
 }
 
 func (m *mockDBAdapter) Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error) {
+	m.ExecCount++
 	return m.SQLiteAdapter.Exec(ctx, query, args...)
 }
 
@@ -584,6 +586,7 @@ func (m *mockDBAdapter) Close() error {
 func (m *mockDBAdapter) ResetCounts() {
 	m.SelectCount = 0
 	m.GetCountCalls = 0
+	m.ExecCount = 0
 }
 
 // --- Mock SQL Result ---
