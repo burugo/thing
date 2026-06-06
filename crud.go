@@ -220,7 +220,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 	// --- Prepare state ---
 	id := value.GetID()
 	isNew := id == 0
-	now := time.Now()
+	now := time.Now().Round(0)
 	// Set the internal flag *before* hooks are called
 	setNewRecordFlagIfBaseModel(value, isNew)
 
@@ -295,24 +295,33 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		err = t.byIDInternal(ctx, id, &original)
 		if err != nil {
 			// If not found, use a non-nil zero value pointer for original
-			original = utils.NewPtr[T]() // Ensure original is a non-nil pointer
-			setUpdatedAtTimestamp(value, now)
+			original = utils.NewPtr[T]()
 			changedFields, err = utils.FindChangedFieldsSimple(&original, utils.ToPtr(value), t.info) // Use utils package
 			if err != nil {
 				return fmt.Errorf("failed to find changed fields: %w", err)
 			}
 			// Proceed with update as if all fields changed (or skip, depending on policy)
 		} else {
-			setUpdatedAtTimestamp(value, now)
 			changedFields, err = utils.FindChangedFieldsSimple(&original, utils.ToPtr(value), t.info) // Use utils package
 			if err != nil {
 				return fmt.Errorf("failed to find changed fields: %w", err)
 			}
 		}
+		if updatedAtCol, updatedAtExists := t.info.FieldToColumnMap["UpdatedAt"]; updatedAtExists {
+			delete(changedFields, updatedAtCol)
+		}
 
 		if len(changedFields) == 0 {
 			log.Printf("No fields changed for %s ID %d, skipping update.", t.info.TableName, id)
 			return nil // Nothing to update
+		}
+
+		setUpdatedAtTimestamp(value, now)
+		if updatedAtCol, updatedAtExists := t.info.FieldToColumnMap["UpdatedAt"]; updatedAtExists {
+			updatedAtField := modelValue.Elem().FieldByName("UpdatedAt")
+			if updatedAtField.IsValid() {
+				changedFields[updatedAtCol] = updatedAtField.Interface()
+			}
 		}
 
 		// Build UPDATE query

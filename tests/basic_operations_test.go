@@ -2,6 +2,7 @@ package thing_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
@@ -105,6 +106,48 @@ func TestThing_Save_Update(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Updated Name", foundUser.Name)
 	assert.Equal(t, "updated@example.com", foundUser.Email)
+}
+
+func TestThing_Save_UnchangedExistingDoesNotTouchUpdatedAt(t *testing.T) {
+	th, _, db, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	mockDB := db.(*mockDBAdapter)
+	user := &User{Name: "Stable User", Email: "stable@example.com"}
+	err := th.Save(user)
+	require.NoError(t, err)
+	originalUpdatedAt := user.UpdatedAt
+	require.False(t, originalUpdatedAt.IsZero(), "create should set UpdatedAt")
+
+	mockDB.ResetCounts()
+	time.Sleep(time.Millisecond)
+	err = th.Save(user)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, mockDB.ExecCount, "unchanged existing Save should not execute SQL")
+	assert.Equal(t, 0, mockDB.SelectCount, "unchanged existing Save should not execute SQL")
+	assert.Equal(t, originalUpdatedAt, user.UpdatedAt, "unchanged existing Save should not change UpdatedAt")
+}
+
+func TestThing_Save_ChangedExistingRefreshesUpdatedAt(t *testing.T) {
+	th, _, db, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	mockDB := db.(*mockDBAdapter)
+	user := &User{Name: "Changing User", Email: "changing@example.com"}
+	err := th.Save(user)
+	require.NoError(t, err)
+	originalUpdatedAt := user.UpdatedAt
+	require.False(t, originalUpdatedAt.IsZero(), "create should set UpdatedAt")
+
+	mockDB.ResetCounts()
+	time.Sleep(time.Millisecond)
+	user.Name = "Changed User"
+	err = th.Save(user)
+	require.NoError(t, err)
+
+	assert.Equal(t, 1, mockDB.ExecCount, "changed existing Save should execute SQL")
+	assert.True(t, user.UpdatedAt.After(originalUpdatedAt), "changed existing Save should refresh UpdatedAt")
 }
 
 func TestThing_Delete(t *testing.T) {
