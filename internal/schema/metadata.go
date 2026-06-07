@@ -2,13 +2,14 @@ package schema
 
 import (
 	"fmt"
-	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	log "github.com/burugo/thing/internal/logging"
 
 	driversSchema "github.com/burugo/thing/drivers/schema"
 )

@@ -2,9 +2,10 @@ package cache
 
 import (
 	"fmt"
-	log "github.com/burugo/thing/internal/logging"
 	"strings"
 	"sync"
+
+	log "github.com/burugo/thing/internal/logging"
 
 	"github.com/burugo/thing/internal/types"
 )

@@ -2,10 +2,11 @@ package schema
 
 import (
 	"fmt"
-	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 	"sort"
 	"strings"
+
+	log "github.com/burugo/thing/internal/logging"
 )
 
 // TypeMapping 定义 Go 类型到 SQL 类型的映射表

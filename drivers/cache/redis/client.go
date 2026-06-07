@@ -5,16 +5,16 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
-	log "github.com/burugo/thing/internal/logging"
 	"io"
 	"reflect"
 	"sync"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	redislib "github.com/redis/go-redis/v9"
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
+	log "github.com/burugo/thing/internal/logging"
 )
 
 func init() {
@@ -24,10 +24,10 @@ func init() {
 // client implements thing.CacheClient using Redis.
 // The counters field tracks operation statistics for monitoring (thread-safe).
 type client struct {
-	redisClient       *redis.Client  // Underlying Redis client
-	mu                sync.Mutex     // Protects counters map
-	counters          map[string]int // Operation counters for stats (e.g., "Get", "GetMiss")
-	createdInternally bool           // Indicates whether redisClient was created by this struct
+	redisClient       *redislib.Client // Underlying Redis client
+	mu                sync.Mutex       // Protects counters map
+	counters          map[string]int   // Operation counters for stats (e.g., "Get", "GetMiss")
+	createdInternally bool             // Indicates whether redisClient was created by this struct
 }
 
 // Ensure client implements thing.CacheClient and io.Closer.
@@ -63,8 +63,8 @@ func (c *client) Close() error {
 
 // NewClient creates a new Redis cache client wrapper.
 // If client is not nil, it will be used directly. Otherwise, opts will be used to create a new client.
-func NewClient(redisCli *redis.Client, opts *Options) (thing.CacheClient, error) {
-	var rdb *redis.Client
+func NewClient(redisCli *redislib.Client, opts *Options) (thing.CacheClient, error) {
+	var rdb *redislib.Client
 	var createdInternally bool
 
 	if redisCli != nil {
@@ -74,12 +74,12 @@ func NewClient(redisCli *redis.Client, opts *Options) (thing.CacheClient, error)
 		if opts == nil {
 			opts = &Options{}
 		}
-		redisOpts := &redis.Options{
+		redisOpts := &redislib.Options{
 			Addr:     opts.Addr,
 			Password: opts.Password,
 			DB:       opts.DB,
 		}
-		rdb = redis.NewClient(redisOpts)
+		rdb = redislib.NewClient(redisOpts)
 		createdInternally = true
 
 		// Ping Redis to check connection
@@ -99,7 +99,7 @@ func NewClient(redisCli *redis.Client, opts *Options) (thing.CacheClient, error)
 func (c *client) Get(ctx context.Context, key string) (string, error) {
 	c.incrementCounter("Get") // total calls
 	val, err := c.redisClient.Get(ctx, key).Result()
-	if err == redis.Nil {
+	if err == redislib.Nil {
 		c.incrementCounter("GetMiss")
 		return "", common.ErrNotFound
 	} else if err != nil {
@@ -124,7 +124,7 @@ func (c *client) Set(ctx context.Context, key string, value string, expiration t
 func (c *client) Delete(ctx context.Context, key string) error {
 	c.incrementCounter("Delete")
 	err := c.redisClient.Del(ctx, key).Err()
-	if err != nil && err != redis.Nil { // Don't error if key didn't exist
+	if err != nil && err != redislib.Nil { // Don't error if key didn't exist
 		return fmt.Errorf("redis Del error for key '%s': %w", key, err)
 	}
 	return nil
@@ -134,7 +134,7 @@ func (c *client) Delete(ctx context.Context, key string) error {
 func (c *client) GetModel(ctx context.Context, key string, dest interface{}) error {
 	c.incrementCounter("GetModel")
 	val, err := c.redisClient.Get(ctx, key).Bytes() // Get as bytes for Gob
-	if err == redis.Nil {
+	if err == redislib.Nil {
 		c.incrementCounter("GetModelMiss")
 		return common.ErrNotFound
 	} else if err != nil {
@@ -269,7 +269,7 @@ func (c *client) SetModel(ctx context.Context, key string, model interface{}, fi
 func (c *client) DeleteModel(ctx context.Context, key string) error {
 	c.incrementCounter("DeleteModel")
 	err := c.redisClient.Del(ctx, key).Err()
-	if err != nil && err != redis.Nil { // Don't error if key didn't exist
+	if err != nil && err != redislib.Nil { // Don't error if key didn't exist
 		return fmt.Errorf("redis Del error for key '%s': %w", key, err)
 	}
 	return nil
@@ -280,7 +280,7 @@ func (c *client) DeleteModel(ctx context.Context, key string) error {
 func (c *client) GetQueryIDs(ctx context.Context, queryKey string) ([]int64, error) {
 	c.incrementCounter("GetQueryIDs")
 	val, err := c.redisClient.Get(ctx, queryKey).Bytes() // Get as bytes
-	if err == redis.Nil {
+	if err == redislib.Nil {
 		c.incrementCounter("GetQueryIDsMiss")
 		return nil, common.ErrNotFound
 	} else if err != nil {
@@ -323,7 +323,7 @@ func (c *client) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, 
 func (c *client) DeleteQueryIDs(ctx context.Context, queryKey string) error {
 	c.incrementCounter("DeleteQueryIDs")
 	err := c.redisClient.Del(ctx, queryKey).Err()
-	if err != nil && err != redis.Nil {
+	if err != nil && err != redislib.Nil {
 		return fmt.Errorf("redis Del error for query key '%s': %w", queryKey, err)
 	}
 	return nil
@@ -347,8 +347,8 @@ func (c *client) AcquireLock(ctx context.Context, lockKey string, expiration tim
 func (c *client) ReleaseLock(ctx context.Context, lockKey string) error {
 	c.incrementCounter("ReleaseLock")
 	err := c.redisClient.Del(ctx, lockKey).Err()
-	// Ignore redis.Nil error, as it means the lock might have expired or already released.
-	if err != nil && err != redis.Nil {
+	// Ignore redislib.Nil error, as it means the lock might have expired or already released.
+	if err != nil && err != redislib.Nil {
 		return fmt.Errorf("redis Del error for lock key '%s': %w", lockKey, err)
 	}
 	return nil
@@ -412,7 +412,7 @@ func (c *client) DeleteByPrefix(ctx context.Context, prefix string) error {
 	if len(keysToDelete) > 0 {
 		log.Printf("REDIS CACHE: Deleting %d keys with prefix '%s'", len(keysToDelete), prefix)
 		err := c.redisClient.Del(ctx, keysToDelete...).Err()
-		if err != nil && err != redis.Nil {
+		if err != nil && err != redislib.Nil {
 			log.Printf("ERROR: Redis DEL error during DeleteByPrefix (prefix: %s): %v", prefix, err)
 			return fmt.Errorf("redis DEL error for prefix '%s': %w", prefix, err)
 		}

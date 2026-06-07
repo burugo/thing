@@ -2,8 +2,9 @@ package utils
 
 import (
 	"errors"
-	log "github.com/burugo/thing/internal/logging"
 	"reflect"
+
+	log "github.com/burugo/thing/internal/logging"
 
 	"github.com/burugo/thing/internal/schema"
 )

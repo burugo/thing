@@ -2,9 +2,10 @@ package sqlbuilder
 
 import (
 	"fmt"
-	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 	"strings"
+
+	log "github.com/burugo/thing/internal/logging"
 )
 
 // Dialector defines how to quote identifiers and bind variables for a specific SQL dialect.

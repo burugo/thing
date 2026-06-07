@@ -8,10 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 	"strings"
 	"time"
+
+	log "github.com/burugo/thing/internal/logging"
 
 	"github.com/burugo/thing/common"
 	"github.com/burugo/thing/internal/cache"

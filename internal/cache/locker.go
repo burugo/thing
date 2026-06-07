@@ -1,8 +1,9 @@
 package cache
 
 import (
-	log "github.com/burugo/thing/internal/logging"
 	"sync"
+
+	log "github.com/burugo/thing/internal/logging"
 )
 
 // CacheKeyLockManagerInternal manages a map of mutexes, one for each cache key.
