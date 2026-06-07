@@ -3,7 +3,7 @@ package thing
 import (
 	"errors"
 	"fmt"
-	"log"
+	log "github.com/burugo/thing/internal/logging"
 	"strconv"
 
 	"github.com/burugo/thing/common"

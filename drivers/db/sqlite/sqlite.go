@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"reflect"
 	"strings"
 	"sync"
@@ -14,6 +13,7 @@ import (
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
 	"github.com/burugo/thing/drivers/schema"
+	log "github.com/burugo/thing/internal/logging"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
@@ -90,7 +90,7 @@ func (a *SQLiteAdapter) Get(ctx context.Context, dest interface{}, query string,
 	rows, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Query): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Get Error (Query) (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Get query error: %w", err)
 	}
 	defer rows.Close()
@@ -98,7 +98,7 @@ func (a *SQLiteAdapter) Get(ctx context.Context, dest interface{}, query string,
 	cols, err := rows.Columns()
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Columns): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Get Error (Columns) (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Get failed fetching columns: %w", err)
 	}
 
@@ -112,7 +112,7 @@ func (a *SQLiteAdapter) Get(ctx context.Context, dest interface{}, query string,
 	scanDest, err := prepareScanDest(structVal, cols) // Pass struct value
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Prepare Scan): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Get Error (Prepare Scan) (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Get setup error: %w", err)
 	}
 
@@ -122,20 +122,20 @@ func (a *SQLiteAdapter) Get(ctx context.Context, dest interface{}, query string,
 		rowCount++
 		if rowCount > 1 {
 			duration := time.Since(start)
-			log.Printf("DB Get Error (Multiple Rows): %s [%v] (%s)", query, args, duration)
+			log.Errorf("DB Get Error (Multiple Rows) (%s)", duration)
 			return fmt.Errorf("sqlite Get error: expected 1 row, got multiple")
 		}
 		err = rows.Scan(scanDest...)
 		if err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Get Error (Scan): %s [%v] (%s) - %v", query, args, duration, err)
+			log.Errorf("DB Get Error (Scan) (%s): %v", duration, err)
 			return fmt.Errorf("sqlite Get scan error: %w", err)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Rows Iteration): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Get Error (Rows Iteration) (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Get rows error: %w", err)
 	}
 
@@ -171,14 +171,14 @@ func (a *SQLiteAdapter) Select(ctx context.Context, dest interface{}, query stri
 	rows, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Select Query Error: %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Select Query Error (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Select query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		log.Printf("DB Select Error (Fetching Columns): %s [%v] - %v", query, args, err)
+		log.Errorf("DB Select Error (Fetching Columns): %v", err)
 		return fmt.Errorf("sqlite Select failed fetching columns: %w", err)
 	}
 
@@ -210,14 +210,14 @@ func (a *SQLiteAdapter) Select(ctx context.Context, dest interface{}, query stri
 			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols) // Pass struct value
 			if setupErr != nil {
 				duration := time.Since(start)
-				log.Printf("DB Select Error (Prepare Scan): %s [%v] (%s) - %v", query, args, duration, setupErr)
+				log.Errorf("DB Select Error (Prepare Scan) (%s): %v", duration, setupErr)
 				return fmt.Errorf("sqlite Select row setup error: %w", setupErr)
 			}
 		}
 
 		if err := rows.Scan(scanDest...); err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Select Scan Error: %s [%v] (%s) - %v", query, args, duration, err)
+			log.Errorf("DB Select Scan Error (%s): %v", duration, err)
 			return fmt.Errorf("sqlite Select scan error: %w", err)
 		}
 
@@ -237,7 +237,7 @@ func (a *SQLiteAdapter) Select(ctx context.Context, dest interface{}, query stri
 
 	if err = rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Select Rows Error: %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Select Rows Error (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Select rows error: %w", err)
 	}
 
@@ -256,7 +256,7 @@ func (a *SQLiteAdapter) Exec(ctx context.Context, query string, args ...interfac
 	result, err := a.db.ExecContext(ctx, query, args...)
 	duration := time.Since(start)
 	if err != nil {
-		log.Printf("DB Exec Error: %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Exec Error (%s): %v", duration, err)
 		return nil, fmt.Errorf("sqlite ExecContext error: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()
@@ -330,7 +330,7 @@ func (t *SQLiteTx) Get(ctx context.Context, dest interface{}, query string, args
 	rows, err := t.tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Query): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Get Error (Query) (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Tx Get query error: %w", err)
 	}
 	defer rows.Close()
@@ -338,7 +338,7 @@ func (t *SQLiteTx) Get(ctx context.Context, dest interface{}, query string, args
 	cols, err := rows.Columns()
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Columns): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Get Error (Columns) (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Tx Get failed fetching columns: %w", err)
 	}
 
@@ -352,7 +352,7 @@ func (t *SQLiteTx) Get(ctx context.Context, dest interface{}, query string, args
 	scanDest, err := prepareScanDest(structVal, cols) // Pass struct value
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Prepare Scan): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Get Error (Prepare Scan) (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Tx Get setup error: %w", err)
 	}
 
@@ -362,20 +362,20 @@ func (t *SQLiteTx) Get(ctx context.Context, dest interface{}, query string, args
 		rowCount++
 		if rowCount > 1 {
 			duration := time.Since(start)
-			log.Printf("DB Tx Get Error (Multiple Rows): %s [%v] (%s)", query, args, duration)
+			log.Errorf("DB Tx Get Error (Multiple Rows) (%s)", duration)
 			return fmt.Errorf("sqlite Tx Get error: expected 1 row, got multiple")
 		}
 		err = rows.Scan(scanDest...)
 		if err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Tx Get Error (Scan): %s [%v] (%s) - %v", query, args, duration, err)
+			log.Errorf("DB Tx Get Error (Scan) (%s): %v", duration, err)
 			return fmt.Errorf("sqlite Tx Get scan error: %w", err)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Rows Iteration): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Get Error (Rows Iteration) (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Tx Get rows error: %w", err)
 	}
 
@@ -407,14 +407,14 @@ func (t *SQLiteTx) Select(ctx context.Context, dest interface{}, query string, a
 	rows, err := t.tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Select Query Error: %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Select Query Error (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Tx Select query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		log.Printf("DB Tx Select Error (Fetching Columns): %s [%v] - %v", query, args, err)
+		log.Errorf("DB Tx Select Error (Fetching Columns): %v", err)
 		return fmt.Errorf("sqlite Tx Select failed fetching columns: %w", err)
 	}
 
@@ -446,14 +446,14 @@ func (t *SQLiteTx) Select(ctx context.Context, dest interface{}, query string, a
 			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols) // Pass struct value
 			if setupErr != nil {
 				duration := time.Since(start)
-				log.Printf("DB Tx Select Error (Prepare Scan): %s [%v] (%s) - %v", query, args, duration, setupErr)
+				log.Errorf("DB Tx Select Error (Prepare Scan) (%s): %v", duration, setupErr)
 				return fmt.Errorf("sqlite Tx Select row setup error: %w", setupErr)
 			}
 		}
 
 		if err := rows.Scan(scanDest...); err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Tx Select Scan Error: %s [%v] (%s) - %v", query, args, duration, err)
+			log.Errorf("DB Tx Select Scan Error (%s): %v", duration, err)
 			return fmt.Errorf("sqlite Tx Select scan error: %w", err)
 		}
 
@@ -473,7 +473,7 @@ func (t *SQLiteTx) Select(ctx context.Context, dest interface{}, query string, a
 
 	if err = rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Select Rows Error: %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Select Rows Error (%s): %v", duration, err)
 		return fmt.Errorf("sqlite Tx Select rows error: %w", err)
 	}
 
@@ -488,7 +488,7 @@ func (t *SQLiteTx) Exec(ctx context.Context, query string, args ...interface{}) 
 	result, err := t.tx.ExecContext(ctx, query, args...)
 	duration := time.Since(start)
 	if err != nil {
-		log.Printf("DB Tx Exec Error: %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Exec Error (%s): %v", duration, err)
 		return nil, fmt.Errorf("sqlite Tx ExecContext error: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()
@@ -501,7 +501,7 @@ func (t *SQLiteTx) Exec(ctx context.Context, query string, args ...interface{}) 
 func (t *SQLiteTx) Commit() error {
 	err := t.tx.Commit()
 	if err != nil {
-		log.Printf("DB Transaction Commit Error: %v", err)
+		log.Errorf("DB Transaction Commit Error: %v", err)
 		return fmt.Errorf("sqlite commit error: %w", err)
 	}
 	log.Println("DB Transaction Committed")
@@ -517,7 +517,7 @@ func (t *SQLiteTx) Rollback() error {
 			log.Printf("DB Transaction Rollback Warning: %v", err)
 			return err // Return original error
 		}
-		log.Printf("DB Transaction Rollback Error: %v", err)
+		log.Errorf("DB Transaction Rollback Error: %v", err)
 		return fmt.Errorf("sqlite rollback error: %w", err)
 	}
 	log.Println("DB Transaction Rolled Back")

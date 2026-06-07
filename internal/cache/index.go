@@ -2,7 +2,7 @@ package cache
 
 import (
 	"fmt"
-	"log"
+	log "github.com/burugo/thing/internal/logging"
 	"strings"
 	"sync"
 

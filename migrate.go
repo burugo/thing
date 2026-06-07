@@ -3,11 +3,11 @@ package thing
 import (
 	"context"
 	"fmt"
-	"log"
 	"reflect"
 	"strings"
 
 	"github.com/burugo/thing/drivers/schema"
+	log "github.com/burugo/thing/internal/logging"
 	internalSchema "github.com/burugo/thing/internal/schema"
 )
 

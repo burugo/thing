@@ -3,9 +3,10 @@ package thing
 import (
 	"context"
 	"fmt"
-	"log"
 	"reflect"
 	"sync"
+
+	log "github.com/burugo/thing/internal/logging"
 )
 
 // --- Event System ---

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 	"strings"
 	"time"

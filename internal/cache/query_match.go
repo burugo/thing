@@ -3,12 +3,12 @@ package cache
 import (
 	"errors"
 	"fmt"
-	"log"
 	"math"
 	"reflect"
 	"strings"
 	"time"
 
+	log "github.com/burugo/thing/internal/logging"
 	"github.com/burugo/thing/internal/types"
 	// Import regexp for potential future use or complex LIKE
 	// "thing" // REMOVED import of root package

@@ -2,7 +2,7 @@ package utils
 
 import (
 	"errors"
-	"log"
+	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 
 	"github.com/burugo/thing/internal/schema"

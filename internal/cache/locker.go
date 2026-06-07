@@ -1,7 +1,7 @@
 package cache
 
 import (
-	"log"
+	log "github.com/burugo/thing/internal/logging"
 	"sync"
 )
 

@@ -2,7 +2,7 @@ package sqlbuilder
 
 import (
 	"fmt"
-	"log"
+	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 	"strings"
 )

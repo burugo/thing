@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 	"strings"
 	"time"
@@ -109,7 +109,7 @@ func (a *MySQLAdapter) Get(ctx context.Context, dest interface{}, query string, 
 	rows, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Query - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Get Error (Query - MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Get query error: %w", err)
 	}
 	defer rows.Close()
@@ -117,7 +117,7 @@ func (a *MySQLAdapter) Get(ctx context.Context, dest interface{}, query string, 
 	cols, err := rows.Columns()
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Columns - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Get Error (Columns - MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Get failed fetching columns: %w", err)
 	}
 
@@ -131,7 +131,7 @@ func (a *MySQLAdapter) Get(ctx context.Context, dest interface{}, query string, 
 	scanDest, err := prepareScanDest(structVal, cols) // Reusable helper
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Prepare Scan - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Get Error (Prepare Scan - MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Get setup error: %w", err)
 	}
 
@@ -141,20 +141,20 @@ func (a *MySQLAdapter) Get(ctx context.Context, dest interface{}, query string, 
 		rowCount++
 		if rowCount > 1 {
 			duration := time.Since(start)
-			log.Printf("DB Get Error (Multiple Rows - MySQL): %s [%v] (%s)", query, args, duration)
+			log.Errorf("DB Get Error (Multiple Rows - MySQL) (%s)", duration)
 			return fmt.Errorf("mysql Get error: expected 1 row, got multiple")
 		}
 		err = rows.Scan(scanDest...)
 		if err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Get Error (Scan - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+			log.Errorf("DB Get Error (Scan - MySQL) (%s): %v", duration, err)
 			return fmt.Errorf("mysql Get scan error: %w", err)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Rows Iteration - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Get Error (Rows Iteration - MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Get rows error: %w", err)
 	}
 
@@ -186,14 +186,14 @@ func (a *MySQLAdapter) Select(ctx context.Context, dest interface{}, query strin
 	rows, err := a.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Select Query Error (MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Select Query Error (MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Select query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		log.Printf("DB Select Error (Fetching Columns - MySQL): %s [%v] - %v", query, args, err)
+		log.Errorf("DB Select Error (Fetching Columns - MySQL): %v", err)
 		return fmt.Errorf("mysql Select failed fetching columns: %w", err)
 	}
 
@@ -213,7 +213,7 @@ func (a *MySQLAdapter) Select(ctx context.Context, dest interface{}, query strin
 		err := a.scanAndAppendRowForSelect(rows, &sliceVal, isBasicTypeSlice, elemType, baseElemType, isPtrElem, cols)
 		if err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Select Error (Scan Row - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+			log.Errorf("DB Select Error (Scan Row - MySQL) (%s): %v", duration, err)
 			return fmt.Errorf("mysql Select scan row error: %w", err)
 		}
 		rowCount++
@@ -221,7 +221,7 @@ func (a *MySQLAdapter) Select(ctx context.Context, dest interface{}, query strin
 
 	if err = rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Select Rows Error (MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Select Rows Error (MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Select rows error: %w", err)
 	}
 
@@ -278,7 +278,7 @@ func (a *MySQLAdapter) Exec(ctx context.Context, query string, args ...interface
 	result, err := a.db.ExecContext(ctx, query, args...)
 	duration := time.Since(start)
 	if err != nil {
-		log.Printf("DB Exec Error (MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Exec Error (MySQL) (%s): %v", duration, err)
 		return nil, fmt.Errorf("mysql ExecContext error: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()
@@ -315,7 +315,7 @@ func (a *MySQLAdapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.
 	log.Println("DB Transaction Started (MySQL)")
 	tx, err := a.db.BeginTx(ctx, opts)
 	if err != nil {
-		log.Printf("DB BeginTx Error (MySQL): %v", err)
+		log.Errorf("DB BeginTx Error (MySQL): %v", err)
 		return nil, fmt.Errorf("mysql BeginTx error: %w", err)
 	}
 	return &MySQLTx{tx: tx}, nil
@@ -331,7 +331,7 @@ func (tx *MySQLTx) Commit() error {
 	log.Println("DB Transaction Committing (MySQL)")
 	err := tx.tx.Commit()
 	if err != nil {
-		log.Printf("DB Tx Commit Error (MySQL): %v", err)
+		log.Errorf("DB Tx Commit Error (MySQL): %v", err)
 		return fmt.Errorf("mysql Tx Commit error: %w", err)
 	}
 	log.Println("DB Transaction Committed (MySQL)")
@@ -346,7 +346,7 @@ func (tx *MySQLTx) Rollback() error {
 	log.Println("DB Transaction Rolling Back (MySQL)")
 	err := tx.tx.Rollback()
 	if err != nil && !errors.Is(err, sql.ErrTxDone) {
-		log.Printf("DB Tx Rollback Error (MySQL): %v", err)
+		log.Errorf("DB Tx Rollback Error (MySQL): %v", err)
 		return fmt.Errorf("mysql Tx Rollback error: %w", err)
 	}
 	log.Println("DB Transaction Rolled Back (MySQL)")
@@ -365,7 +365,7 @@ func (tx *MySQLTx) Get(ctx context.Context, dest interface{}, query string, args
 	rows, err := tx.tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Query - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Get Error (Query - MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Tx Get query error: %w", err)
 	}
 	defer rows.Close()
@@ -373,7 +373,7 @@ func (tx *MySQLTx) Get(ctx context.Context, dest interface{}, query string, args
 	cols, err := rows.Columns()
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Columns - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Get Error (Columns - MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Tx Get failed fetching columns: %w", err)
 	}
 
@@ -386,7 +386,7 @@ func (tx *MySQLTx) Get(ctx context.Context, dest interface{}, query string, args
 	scanDest, err := prepareScanDest(structVal, cols)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Prepare Scan - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Get Error (Prepare Scan - MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Tx Get setup error: %w", err)
 	}
 
@@ -395,20 +395,20 @@ func (tx *MySQLTx) Get(ctx context.Context, dest interface{}, query string, args
 		rowCount++
 		if rowCount > 1 {
 			duration := time.Since(start)
-			log.Printf("DB Tx Get Error (Multiple Rows - MySQL): %s [%v] (%s)", query, args, duration)
+			log.Errorf("DB Tx Get Error (Multiple Rows - MySQL) (%s)", duration)
 			return fmt.Errorf("mysql Tx Get error: expected 1 row, got multiple")
 		}
 		err = rows.Scan(scanDest...)
 		if err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Tx Get Error (Scan - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+			log.Errorf("DB Tx Get Error (Scan - MySQL) (%s): %v", duration, err)
 			return fmt.Errorf("mysql Tx Get scan error: %w", err)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Rows Iteration - MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Get Error (Rows Iteration - MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Tx Get rows error: %w", err)
 	}
 
@@ -442,14 +442,14 @@ func (tx *MySQLTx) Select(ctx context.Context, dest interface{}, query string, a
 	rows, err := tx.tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Select Query Error (MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Select Query Error (MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Tx Select query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		log.Printf("DB Tx Select Error (Fetching Columns - MySQL): %s [%v] - %v", query, args, err)
+		log.Errorf("DB Tx Select Error (Fetching Columns - MySQL): %v", err)
 		return fmt.Errorf("mysql Tx Select failed fetching columns: %w", err)
 	}
 
@@ -480,14 +480,14 @@ func (tx *MySQLTx) Select(ctx context.Context, dest interface{}, query string, a
 			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols)
 			if setupErr != nil {
 				duration := time.Since(start)
-				log.Printf("DB Tx Select Error (Prepare Scan - MySQL): %s [%v] (%s) - %v", query, args, duration, setupErr)
+				log.Errorf("DB Tx Select Error (Prepare Scan - MySQL) (%s): %v", duration, setupErr)
 				return fmt.Errorf("mysql Tx Select row setup error: %w", setupErr)
 			}
 		}
 
 		if err := rows.Scan(scanDest...); err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Tx Select Scan Error (MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+			log.Errorf("DB Tx Select Scan Error (MySQL) (%s): %v", duration, err)
 			return fmt.Errorf("mysql Tx Select scan error: %w", err)
 		}
 
@@ -507,7 +507,7 @@ func (tx *MySQLTx) Select(ctx context.Context, dest interface{}, query string, a
 
 	if err = rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Select Rows Error (MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Select Rows Error (MySQL) (%s): %v", duration, err)
 		return fmt.Errorf("mysql Tx Select rows error: %w", err)
 	}
 
@@ -526,7 +526,7 @@ func (tx *MySQLTx) Exec(ctx context.Context, query string, args ...interface{}) 
 	result, err := tx.tx.ExecContext(ctx, query, args...)
 	duration := time.Since(start)
 	if err != nil {
-		log.Printf("DB Tx Exec Error (MySQL): %s [%v] (%s) - %v", query, args, duration, err)
+		log.Errorf("DB Tx Exec Error (MySQL) (%s): %v", duration, err)
 		return nil, fmt.Errorf("mysql Tx ExecContext error: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()

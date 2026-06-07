@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
+	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 	"strings"
 	"time"
@@ -113,7 +113,7 @@ func (a *Adapter) Get(ctx context.Context, dest interface{}, query string, args 
 	rows, err := a.db.QueryContext(ctx, reboundQuery, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Query - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Get Error (Query - PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Get query error: %w", err)
 	}
 	defer rows.Close()
@@ -121,7 +121,7 @@ func (a *Adapter) Get(ctx context.Context, dest interface{}, query string, args 
 	cols, err := rows.Columns()
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Columns - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Get Error (Columns - PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Get failed fetching columns: %w", err)
 	}
 
@@ -133,7 +133,7 @@ func (a *Adapter) Get(ctx context.Context, dest interface{}, query string, args 
 	scanDest, err := prepareScanDest(structVal, cols) // Reusable helper
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Prepare Scan - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Get Error (Prepare Scan - PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Get setup error: %w", err)
 	}
 
@@ -142,20 +142,20 @@ func (a *Adapter) Get(ctx context.Context, dest interface{}, query string, args 
 		rowCount++
 		if rowCount > 1 {
 			duration := time.Since(start)
-			log.Printf("DB Get Error (Multiple Rows - PostgreSQL): %s [%v] (%s)", reboundQuery, args, duration)
+			log.Errorf("DB Get Error (Multiple Rows - PostgreSQL) (%s)", duration)
 			return fmt.Errorf("postgres Get error: expected 1 row, got multiple")
 		}
 		err = rows.Scan(scanDest...)
 		if err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Get Error (Scan - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+			log.Errorf("DB Get Error (Scan - PostgreSQL) (%s): %v", duration, err)
 			return fmt.Errorf("postgres Get scan error: %w", err)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Get Error (Rows Iteration - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Get Error (Rows Iteration - PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Get rows error: %w", err)
 	}
 
@@ -189,14 +189,14 @@ func (a *Adapter) Select(ctx context.Context, dest interface{}, query string, ar
 	rows, err := a.db.QueryContext(ctx, reboundQuery, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Select Query Error (PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Select Query Error (PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Select query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		log.Printf("DB Select Error (Fetching Columns - PostgreSQL): %s [%v] - %v", reboundQuery, args, err)
+		log.Errorf("DB Select Error (Fetching Columns - PostgreSQL): %v", err)
 		return fmt.Errorf("postgres Select failed fetching columns: %w", err)
 	}
 
@@ -227,14 +227,14 @@ func (a *Adapter) Select(ctx context.Context, dest interface{}, query string, ar
 			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols)
 			if setupErr != nil {
 				duration := time.Since(start)
-				log.Printf("DB Select Error (Prepare Scan - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, setupErr)
+				log.Errorf("DB Select Error (Prepare Scan - PostgreSQL) (%s): %v", duration, setupErr)
 				return fmt.Errorf("postgres Select row setup error: %w", setupErr)
 			}
 		}
 
 		if err := rows.Scan(scanDest...); err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Select Scan Error (PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+			log.Errorf("DB Select Scan Error (PostgreSQL) (%s): %v", duration, err)
 			return fmt.Errorf("postgres Select scan error: %w", err)
 		}
 
@@ -254,7 +254,7 @@ func (a *Adapter) Select(ctx context.Context, dest interface{}, query string, ar
 
 	if err = rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Select Rows Error (PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Select Rows Error (PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Select rows error: %w", err)
 	}
 
@@ -278,7 +278,7 @@ func (a *Adapter) Exec(ctx context.Context, query string, args ...interface{}) (
 		err := row.Scan(&lastInsertID)
 		duration := time.Since(start)
 		if err != nil {
-			log.Printf("DB Exec Error (PostgreSQL INSERT RETURNING): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+			log.Errorf("DB Exec Error (PostgreSQL INSERT RETURNING) (%s): %v", duration, err)
 			return nil, fmt.Errorf("postgres ExecContext error (insert returning): %w", err)
 		}
 		log.Printf("DB Exec (PostgreSQL INSERT RETURNING): %s [%v] (LastInsertID: %d, %s)", reboundQuery, args, lastInsertID, duration)
@@ -288,7 +288,7 @@ func (a *Adapter) Exec(ctx context.Context, query string, args ...interface{}) (
 	result, err := a.db.ExecContext(ctx, reboundQuery, args...)
 	duration := time.Since(start)
 	if err != nil {
-		log.Printf("DB Exec Error (PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Exec Error (PostgreSQL) (%s): %v", duration, err)
 		return nil, fmt.Errorf("postgres ExecContext error: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()
@@ -323,7 +323,7 @@ func (a *Adapter) BeginTx(ctx context.Context, opts *sql.TxOptions) (thing.Tx, e
 	log.Println("DB Transaction Started (PostgreSQL)")
 	tx, err := a.db.BeginTx(ctx, opts)
 	if err != nil {
-		log.Printf("DB BeginTx Error (PostgreSQL): %v", err)
+		log.Errorf("DB BeginTx Error (PostgreSQL): %v", err)
 		return nil, fmt.Errorf("postgres BeginTx error: %w", err)
 	}
 	return &Tx{tx: tx, builder: a.builder}, nil
@@ -353,7 +353,7 @@ func (tx *Tx) Commit() error {
 	log.Println("DB Transaction Committing (PostgreSQL)")
 	err := tx.tx.Commit()
 	if err != nil {
-		log.Printf("DB Tx Commit Error (PostgreSQL): %v", err)
+		log.Errorf("DB Tx Commit Error (PostgreSQL): %v", err)
 		return fmt.Errorf("postgres Tx Commit error: %w", err)
 	}
 	log.Println("DB Transaction Committed (PostgreSQL)")
@@ -367,7 +367,7 @@ func (tx *Tx) Rollback() error {
 	log.Println("DB Transaction Rolling Back (PostgreSQL)")
 	err := tx.tx.Rollback()
 	if err != nil && !errors.Is(err, sql.ErrTxDone) {
-		log.Printf("DB Tx Rollback Error (PostgreSQL): %v", err)
+		log.Errorf("DB Tx Rollback Error (PostgreSQL): %v", err)
 		return fmt.Errorf("postgres Tx Rollback error: %w", err)
 	}
 	log.Println("DB Transaction Rolled Back (PostgreSQL)")
@@ -385,7 +385,7 @@ func (tx *Tx) Get(ctx context.Context, dest interface{}, query string, args ...i
 	rows, err := tx.tx.QueryContext(ctx, reboundQuery, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Query - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Tx Get Error (Query - PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Tx Get query error: %w", err)
 	}
 	defer rows.Close()
@@ -393,7 +393,7 @@ func (tx *Tx) Get(ctx context.Context, dest interface{}, query string, args ...i
 	cols, err := rows.Columns()
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Columns - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Tx Get Error (Columns - PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Tx Get failed fetching columns: %w", err)
 	}
 
@@ -405,7 +405,7 @@ func (tx *Tx) Get(ctx context.Context, dest interface{}, query string, args ...i
 	scanDest, err := prepareScanDest(structVal, cols)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Prepare Scan - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Tx Get Error (Prepare Scan - PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Tx Get setup error: %w", err)
 	}
 
@@ -414,20 +414,20 @@ func (tx *Tx) Get(ctx context.Context, dest interface{}, query string, args ...i
 		rowCount++
 		if rowCount > 1 {
 			duration := time.Since(start)
-			log.Printf("DB Tx Get Error (Multiple Rows - PostgreSQL): %s [%v] (%s)", reboundQuery, args, duration)
+			log.Errorf("DB Tx Get Error (Multiple Rows - PostgreSQL) (%s)", duration)
 			return fmt.Errorf("postgres Tx Get error: expected 1 row, got multiple")
 		}
 		err = rows.Scan(scanDest...)
 		if err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Tx Get Error (Scan - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+			log.Errorf("DB Tx Get Error (Scan - PostgreSQL) (%s): %v", duration, err)
 			return fmt.Errorf("postgres Tx Get scan error: %w", err)
 		}
 	}
 
 	if err := rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Get Error (Rows Iteration - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Tx Get Error (Rows Iteration - PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Tx Get rows error: %w", err)
 	}
 
@@ -460,14 +460,14 @@ func (tx *Tx) Select(ctx context.Context, dest interface{}, query string, args .
 	rows, err := tx.tx.QueryContext(ctx, reboundQuery, args...)
 	if err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Select Query Error (PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Tx Select Query Error (PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Tx Select query error: %w", err)
 	}
 	defer rows.Close()
 
 	cols, err := rows.Columns()
 	if err != nil {
-		log.Printf("DB Tx Select Error (Fetching Columns - PostgreSQL): %s [%v] - %v", reboundQuery, args, err)
+		log.Errorf("DB Tx Select Error (Fetching Columns - PostgreSQL): %v", err)
 		return fmt.Errorf("postgres Tx Select failed fetching columns: %w", err)
 	}
 
@@ -498,14 +498,14 @@ func (tx *Tx) Select(ctx context.Context, dest interface{}, query string, args .
 			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols)
 			if setupErr != nil {
 				duration := time.Since(start)
-				log.Printf("DB Tx Select Error (Prepare Scan - PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, setupErr)
+				log.Errorf("DB Tx Select Error (Prepare Scan - PostgreSQL) (%s): %v", duration, setupErr)
 				return fmt.Errorf("postgres Tx Select row setup error: %w", setupErr)
 			}
 		}
 
 		if err := rows.Scan(scanDest...); err != nil {
 			duration := time.Since(start)
-			log.Printf("DB Tx Select Scan Error (PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+			log.Errorf("DB Tx Select Scan Error (PostgreSQL) (%s): %v", duration, err)
 			return fmt.Errorf("postgres Tx Select scan error: %w", err)
 		}
 
@@ -525,7 +525,7 @@ func (tx *Tx) Select(ctx context.Context, dest interface{}, query string, args .
 
 	if err = rows.Err(); err != nil {
 		duration := time.Since(start)
-		log.Printf("DB Tx Select Rows Error (PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Tx Select Rows Error (PostgreSQL) (%s): %v", duration, err)
 		return fmt.Errorf("postgres Tx Select rows error: %w", err)
 	}
 
@@ -547,7 +547,7 @@ func (tx *Tx) Exec(ctx context.Context, query string, args ...interface{}) (sql.
 		err := row.Scan(&lastInsertID)
 		duration := time.Since(start)
 		if err != nil {
-			log.Printf("DB Tx Exec Error (PostgreSQL INSERT RETURNING): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+			log.Errorf("DB Tx Exec Error (PostgreSQL INSERT RETURNING) (%s): %v", duration, err)
 			return nil, fmt.Errorf("postgres Tx ExecContext error (insert returning): %w", err)
 		}
 		log.Printf("DB Tx Exec (PostgreSQL INSERT RETURNING): %s [%v] (LastInsertID: %d, %s)", reboundQuery, args, lastInsertID, duration)
@@ -557,7 +557,7 @@ func (tx *Tx) Exec(ctx context.Context, query string, args ...interface{}) (sql.
 	result, err := tx.tx.ExecContext(ctx, reboundQuery, args...)
 	duration := time.Since(start)
 	if err != nil {
-		log.Printf("DB Tx Exec Error (PostgreSQL): %s [%v] (%s) - %v", reboundQuery, args, duration, err)
+		log.Errorf("DB Tx Exec Error (PostgreSQL) (%s): %v", duration, err)
 		return nil, fmt.Errorf("postgres Tx ExecContext error: %w", err)
 	}
 	rowsAffected, _ := result.RowsAffected()

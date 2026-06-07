@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"reflect"
 	"strconv"
 	"strings"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/burugo/thing/common" // Added import for common errors/constants
 	"github.com/burugo/thing/internal/cache"
+	log "github.com/burugo/thing/internal/logging"
 	"github.com/burugo/thing/internal/schema" // Import internal cache package
 	"github.com/burugo/thing/internal/utils"
 	// "thing/internal/helpers" // Removed import
@@ -279,7 +279,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			// Save/Update: check both current and original model
 			matchesCurrent, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 			if err != nil {
-				log.Printf("ERROR CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
+				log.Printf("WARN CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
 					log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
 				}
@@ -290,7 +290,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			if !isCreate && originalReflect.Kind() == reflect.Ptr && !originalReflect.IsNil() {
 				matchesOriginal, err = cache.CheckQueryMatch(originalModel, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 				if err != nil {
-					log.Printf("ERROR CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
+					log.Printf("WARN CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 					if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
 						log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
 					}

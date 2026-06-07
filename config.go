@@ -2,9 +2,10 @@ package thing
 
 import (
 	"errors"
-	"log"
 	"sync"
 	"time"
+
+	log "github.com/burugo/thing/internal/logging"
 )
 
 // --- Global Configuration ---
@@ -22,9 +23,11 @@ var (
 
 // Config holds configuration for the Thing ORM.
 type Config struct {
-	DB    DBAdapter   // User must initialize and provide
-	Cache CacheClient // User must initialize and provide
-	TTL   time.Duration
+	DB       DBAdapter   // User must initialize and provide
+	Cache    CacheClient // User must initialize and provide
+	TTL      time.Duration
+	Logger   Logger
+	LogLevel LogLevel
 }
 
 // Configure sets up the package-level database and cache clients, and the global cache TTL.
@@ -105,6 +108,12 @@ func ConfigureWithConfig(cfg Config) error {
 	}
 	if cfg.Cache == nil {
 		return errors.New("CacheClient must be non-nil")
+	}
+	if cfg.Logger != nil {
+		SetLogger(cfg.Logger)
+	}
+	if cfg.LogLevel != LogDefault {
+		SetLogLevel(cfg.LogLevel)
 	}
 	if cfg.TTL > 0 {
 		return Configure(cfg.DB, cfg.Cache, cfg.TTL)

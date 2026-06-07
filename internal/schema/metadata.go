@@ -2,7 +2,7 @@ package schema
 
 import (
 	"fmt"
-	"log"
+	log "github.com/burugo/thing/internal/logging"
 	"reflect"
 	"regexp"
 	"sort"
