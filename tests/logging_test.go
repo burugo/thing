@@ -2,6 +2,7 @@ package thing_test
 
 import (
 	"bytes"
+	"context"
 	"log"
 	"strings"
 	"testing"
@@ -26,7 +27,7 @@ func TestDefaultLoggingSuppressesSQLLogs(t *testing.T) {
 	dbAdapter, _, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	_, err := dbAdapter.Exec(t.Context(), "INSERT INTO users (name, email) VALUES (?, ?)", "Silent", "silent@example.com")
+	_, err := dbAdapter.Exec(context.Background(), "INSERT INTO users (name, email) VALUES (?, ?)", "Silent", "silent@example.com")
 	require.NoError(t, err)
 	require.NotContains(t, buf.String(), "DB Exec:")
 	require.NotContains(t, stdLog.String(), "DB Exec:")
@@ -46,7 +47,7 @@ func TestDebugLoggingEmitsSQLLogs(t *testing.T) {
 	dbAdapter, _, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	_, err := dbAdapter.Exec(t.Context(), "INSERT INTO users (name, email) VALUES (?, ?)", "Debug", "debug@example.com")
+	_, err := dbAdapter.Exec(context.Background(), "INSERT INTO users (name, email) VALUES (?, ?)", "Debug", "debug@example.com")
 	require.NoError(t, err)
 	require.Contains(t, buf.String(), "DB Exec:")
 	require.Contains(t, buf.String(), "INSERT INTO users")
@@ -92,7 +93,7 @@ func TestConfigureWithConfigAppliesLoggerAndLogLevel(t *testing.T) {
 		LogLevel: thing.LogDebug,
 	}))
 
-	_, err := dbAdapter.Exec(t.Context(), "INSERT INTO users (name, email) VALUES (?, ?)", "Config", "config@example.com")
+	_, err := dbAdapter.Exec(context.Background(), "INSERT INTO users (name, email) VALUES (?, ?)", "Config", "config@example.com")
 	require.NoError(t, err)
 	require.Contains(t, buf.String(), "DB Exec:")
 }
@@ -136,7 +137,7 @@ func TestSQLErrorLoggingOmitsSQLAndArgs(t *testing.T) {
 	dbAdapter, _, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	_, err := dbAdapter.Exec(t.Context(), "INSERT INTO missing_table (name) VALUES (?)", "secret-arg")
+	_, err := dbAdapter.Exec(context.Background(), "INSERT INTO missing_table (name) VALUES (?)", "secret-arg")
 	require.Error(t, err)
 
 	logs := buf.String()
@@ -158,7 +159,7 @@ func TestSQLQueryErrorLoggingOmitsSQLAndArgs(t *testing.T) {
 	defer cleanup()
 
 	var rows []User
-	err := dbAdapter.Select(t.Context(), &rows, "SELECT * FROM missing_table WHERE name = ?", "secret-arg")
+	err := dbAdapter.Select(context.Background(), &rows, "SELECT * FROM missing_table WHERE name = ?", "secret-arg")
 	require.Error(t, err)
 
 	logs := buf.String()
