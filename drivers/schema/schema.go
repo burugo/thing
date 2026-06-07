@@ -9,6 +9,7 @@ type IndexInfo struct {
 	Name    string   // Index name
 	Columns []string // Column names
 	Unique  bool     // Is unique index
+	Where   string   // Optional partial index predicate
 }
 
 // TableInfo holds the actual schema info introspected from the database.

@@ -639,6 +639,35 @@ type Post struct {
 }
 ```
 
+Models can also declare programmatic indexes for predicates that do not fit in tags, such as partial unique indexes on optional provider identities. SQLite and PostgreSQL support the generated `WHERE` clause; MySQL returns an explicit migration error for partial indexes.
+
+```go
+type User struct {
+	thing.BaseModel
+	GitHubID string `db:"github_id,default:''"`
+	GoogleID string `db:"google_id,default:''"`
+}
+
+func (User) Indexes() []thing.Index {
+	return []thing.Index{
+		{
+			Name:    "uniq_users_github_id_present",
+			Columns: []string{"github_id"},
+			Unique:  true,
+			Where:   "github_id <> ''",
+		},
+		{
+			Name:    "uniq_users_google_id_present",
+			Columns: []string{"google_id"},
+			Unique:  true,
+			Where:   "google_id <> ''",
+		},
+	}
+}
+```
+
+Changing only an existing partial index predicate may require manually dropping and recreating that index before running migration again.
+
 ### Auto Migration Example
 
 ```go

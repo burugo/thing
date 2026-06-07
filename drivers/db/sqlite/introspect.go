@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 
 	"github.com/burugo/thing/drivers/schema"
 )
@@ -74,7 +75,8 @@ func (si *SQLiteIntrospector) GetTableInfo(ctx context.Context, tableName string
 		var seq int
 		var name string
 		var unique int
-		var origin, partial sql.NullString
+		var origin string
+		var partial int
 		if err := idxRows.Scan(&seq, &name, &unique, &origin, &partial); err != nil {
 			return nil, fmt.Errorf("scan index_list: %w", err)
 		}
@@ -97,10 +99,18 @@ func (si *SQLiteIntrospector) GetTableInfo(ctx context.Context, tableName string
 			cols = append(cols, colName)
 		}
 		colInfoRows.Close()
+		where := ""
+		if partial == 1 {
+			where, err = si.getIndexWhere(ctx, name)
+			if err != nil {
+				return nil, err
+			}
+		}
 		indexes = append(indexes, schema.IndexInfo{
 			Name:    name,
 			Columns: cols,
 			Unique:  unique == 1,
+			Where:   where,
 		})
 	}
 	if err := idxRows.Err(); err != nil {
@@ -122,4 +132,24 @@ func (si *SQLiteIntrospector) GetTableInfo(ctx context.Context, tableName string
 		Indexes:    indexes,
 		PrimaryKey: pkCol,
 	}, nil
+}
+
+func (si *SQLiteIntrospector) getIndexWhere(ctx context.Context, indexName string) (string, error) {
+	var createSQL sql.NullString
+	if err := si.DB.QueryRowContext(ctx, "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?", indexName).Scan(&createSQL); err != nil {
+		return "", fmt.Errorf("sqlite_master index sql failed for %s: %w", indexName, err)
+	}
+	if !createSQL.Valid {
+		return "", nil
+	}
+	return extractTrailingWhere(createSQL.String), nil
+}
+
+func extractTrailingWhere(sql string) string {
+	upperSQL := strings.ToUpper(sql)
+	whereIndex := strings.LastIndex(upperSQL, " WHERE ")
+	if whereIndex == -1 {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimSuffix(sql[whereIndex+len(" WHERE "):], ";"))
 }

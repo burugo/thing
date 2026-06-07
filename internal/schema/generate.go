@@ -188,10 +188,13 @@ func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 	var indexSQLs []string
 	mergedIndexes := make(map[string]IndexInfo) // name -> consolidated IndexInfo
 
-	populateMergedMap := func(indexes []IndexInfo, unique bool) {
+	populateMergedMap := func(indexes []IndexInfo, unique bool) error {
 		for _, idx := range indexes {
 			if len(idx.Columns) == 0 {
 				continue
+			}
+			if idx.Where != "" && dialect == "mysql" {
+				return fmt.Errorf("partial indexes are not supported for MySQL: index %q on table %q has WHERE %q", effectiveIndexName(tableName, idx), tableName, idx.Where)
 			}
 
 			idxName := idx.Name
@@ -206,12 +209,16 @@ func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 				log.Printf("Warning (CREATE): Composite index on table '%s' columns [%s] has no explicit name and will be skipped.", tableName, strings.Join(idx.Columns, ", "))
 				continue
 			}
+			idx.Name = idxName
 
 			if existing, ok := mergedIndexes[idxName]; ok {
 				// Index name exists, merge columns (ensure unique)
 				if existing.Unique != unique {
 					log.Printf("Warning (CREATE): Conflicting uniqueness for index name '%s' on table '%s'. Skipping merge.", idxName, tableName)
 					continue
+				}
+				if existing.Where != idx.Where {
+					return fmt.Errorf("index %q on table %q has conflicting WHERE predicates", idxName, tableName)
 				}
 				existingColumnsMap := make(map[string]bool)
 				for _, col := range existing.Columns {
@@ -228,17 +235,20 @@ func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 				mergedIndexes[idxName] = existing // Update map with merged columns
 			} else {
 				// New index name, add to map
-				// Sort columns before adding
 				colsCopy := make([]string, len(idx.Columns))
 				copy(colsCopy, idx.Columns)
-				sort.Strings(colsCopy)
-				mergedIndexes[idxName] = IndexInfo{Name: idxName, Columns: colsCopy, Unique: unique}
+				mergedIndexes[idxName] = IndexInfo{Name: idxName, Columns: colsCopy, Unique: unique, Where: idx.Where}
 			}
 		}
+		return nil
 	}
 
-	populateMergedMap(info.Indexes, false)
-	populateMergedMap(info.UniqueIndexes, true)
+	if err := populateMergedMap(info.Indexes, false); err != nil {
+		return "", err
+	}
+	if err := populateMergedMap(info.UniqueIndexes, true); err != nil {
+		return "", err
+	}
 
 	// Generate SQL from the merged map
 	// Sort index names for deterministic output order
@@ -250,7 +260,7 @@ func GenerateCreateTableSQL(info *ModelInfo, dialect string) (string, error) {
 
 	for _, name := range sortedIndexNames {
 		idx := mergedIndexes[name]
-		indexSQL := generateCreateIndexSQL(tableName, idx.Name, idx.Columns, idx.Unique, dialect)
+		indexSQL := generateCreateIndexSQL(tableName, idx.Name, idx.Columns, idx.Unique, idx.Where, dialect)
 		if indexSQL != "" {
 			indexSQLs = append(indexSQLs, indexSQL)
 		}
@@ -372,10 +382,13 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 	dbIndexes := make(map[string]IndexInfo)    // name -> IndexInfo (combined unique/non-unique)
 
 	// Populate modelIndexes map (generate default names for single-column unnamed)
-	populateIndexMap := func(indexes []IndexInfo, unique bool) {
+	populateIndexMap := func(indexes []IndexInfo, unique bool) error {
 		for _, idx := range indexes {
 			if len(idx.Columns) == 0 {
 				continue
+			}
+			if idx.Where != "" && dialect == "mysql" {
+				return fmt.Errorf("partial indexes are not supported for MySQL: index %q on table %q has WHERE %q", effectiveIndexName(tableName, idx), tableName, idx.Where)
 			}
 			// *** Add default name generation for single-column unnamed indexes ***
 			idxName := idx.Name
@@ -389,6 +402,7 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 				log.Printf("Warning (ALTER): Composite index on table '%s' columns [%s] has no explicit name and will be skipped.", tableName, strings.Join(idx.Columns, ", "))
 				continue
 			}
+			idx.Name = idxName
 
 			mapKey := idxName // Use generated or provided name as map key
 			if existing, ok := modelIndexes[mapKey]; ok {
@@ -400,13 +414,21 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 					log.Printf("Warning (ALTER): Index name '%s' on table '%s' used for different column sets? Skipping definition.", mapKey, tableName)
 					continue
 				}
+				if existing.Where != idx.Where {
+					return fmt.Errorf("index %q on table %q has conflicting WHERE predicates", mapKey, tableName)
+				}
 			} else {
-				modelIndexes[mapKey] = IndexInfo{Name: idxName, Columns: idx.Columns, Unique: unique}
+				modelIndexes[mapKey] = IndexInfo{Name: idxName, Columns: idx.Columns, Unique: unique, Where: idx.Where}
 			}
 		}
+		return nil
 	}
-	populateIndexMap(modelInfo.Indexes, false)
-	populateIndexMap(modelInfo.UniqueIndexes, true)
+	if err := populateIndexMap(modelInfo.Indexes, false); err != nil {
+		return nil, err
+	}
+	if err := populateIndexMap(modelInfo.UniqueIndexes, true); err != nil {
+		return nil, err
+	}
 
 	// Populate dbIndexes map (using names from DB)
 	for _, idx := range tableInfo.Indexes {
@@ -417,7 +439,7 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 		cols := make([]string, len(idx.Columns))
 		copy(cols, idx.Columns)
 		sort.Strings(cols)
-		dbIndexes[idx.Name] = IndexInfo{Name: idx.Name, Columns: cols, Unique: idx.Unique}
+		dbIndexes[idx.Name] = IndexInfo{Name: idx.Name, Columns: cols, Unique: idx.Unique, Where: idx.Where}
 	}
 
 	// Find indexes to ADD
@@ -426,7 +448,7 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 		if dbIdx, exists := dbIndexes[name]; !exists {
 			// log.Printf("[DEBUG ALTER ADD] Index '%s' not in DB. Generating CREATE statement.", name)
 			// Index exists in model but not in DB -> ADD
-			createSQL := generateCreateIndexSQL(tableName, mIdx.Name, mIdx.Columns, mIdx.Unique, dialect)
+			createSQL := generateCreateIndexSQL(tableName, mIdx.Name, mIdx.Columns, mIdx.Unique, mIdx.Where, dialect)
 			sqls = append(sqls, createSQL)
 		} else {
 			// log.Printf("[DEBUG ALTER ADD] Index '%s' exists in DB. Checking for changes.", name)
@@ -439,18 +461,18 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 				if !containsSQL(sqls, dropSQL) {
 					sqls = append(sqls, dropSQL)
 				}
-				createSQL := generateCreateIndexSQL(tableName, mIdx.Name, mIdx.Columns, mIdx.Unique, dialect)
+				createSQL := generateCreateIndexSQL(tableName, mIdx.Name, mIdx.Columns, mIdx.Unique, mIdx.Where, dialect)
 				if !containsSQL(sqls, createSQL) {
 					sqls = append(sqls, createSQL)
 				}
-			} else if !equalStringSlice(mIdx.Columns, dbIdx.Columns) {
+			} else if !equalStringSlice(mIdx.Columns, dbIdx.Columns) || !indexWherePresenceMatches(mIdx.Where, dbIdx.Where) {
 				// Columns differ, requires DROP + ADD
 				log.Printf("Info (ALTER): Index '%s' on table '%s' needs column change (requires DROP+ADD). Model:[%s], DB:[%s]", name, tableName, strings.Join(mIdx.Columns, ","), strings.Join(dbIdx.Columns, ","))
 				dropSQL := generateDropIndexSQL(tableName, name, dialect)
 				if !containsSQL(sqls, dropSQL) {
 					sqls = append(sqls, dropSQL)
 				}
-				createSQL := generateCreateIndexSQL(tableName, mIdx.Name, mIdx.Columns, mIdx.Unique, dialect)
+				createSQL := generateCreateIndexSQL(tableName, mIdx.Name, mIdx.Columns, mIdx.Unique, mIdx.Where, dialect)
 				if !containsSQL(sqls, createSQL) {
 					sqls = append(sqls, createSQL)
 				}
@@ -461,14 +483,14 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 	// Find indexes to DROP
 	for name, dbIdx := range dbIndexes {
 		modelIdx, exists := modelIndexes[name]
-		if !exists || modelIdx.Unique != dbIdx.Unique || !equalStringSlice(modelIdx.Columns, dbIdx.Columns) {
+		if !exists || modelIdx.Unique != dbIdx.Unique || !equalStringSlice(modelIdx.Columns, dbIdx.Columns) || !indexWherePresenceMatches(modelIdx.Where, dbIdx.Where) {
 			// Drop if: not in model OR uniqueness differs OR columns differ (and wasn't handled by ADD/MODIFY above)
 			// Avoid dropping generated indexes if the column still exists and requires one
 			// Check if the model index that *should* exist (based on columns/unique) has a *different* name
 			shouldDrop := true
 			potentialModelMatchName := ""
 			for mName, mIdx := range modelIndexes {
-				if equalStringSlice(dbIdx.Columns, mIdx.Columns) && dbIdx.Unique == mIdx.Unique {
+				if equalStringSlice(dbIdx.Columns, mIdx.Columns) && dbIdx.Unique == mIdx.Unique && indexWherePresenceMatches(mIdx.Where, dbIdx.Where) {
 					potentialModelMatchName = mName
 					break
 				}
@@ -484,7 +506,7 @@ func GenerateAlterTableSQL(modelInfo *ModelInfo, tableInfo *TableInfo, dialect s
 
 			// If the DB index didn't match any model index by name, and doesn't match any model index by definition (cols/unique) either,
 			// then it's truly orphaned and should be dropped.
-			if exists && (modelIdx.Unique != dbIdx.Unique || !equalStringSlice(modelIdx.Columns, dbIdx.Columns)) {
+			if exists && (modelIdx.Unique != dbIdx.Unique || !equalStringSlice(modelIdx.Columns, dbIdx.Columns) || !indexWherePresenceMatches(modelIdx.Where, dbIdx.Where)) {
 				// Already handled by ADD section (DROP + ADD)
 				shouldDrop = false
 			}
@@ -514,7 +536,7 @@ func containsSQL(slice []string, item string) bool {
 }
 
 // generateCreateIndexSQL generates the CREATE INDEX statement.
-func generateCreateIndexSQL(tableName, indexName string, columns []string, unique bool, dialect string) string {
+func generateCreateIndexSQL(tableName, indexName string, columns []string, unique bool, where string, dialect string) string {
 	if len(columns) == 0 {
 		return "" // Should not happen
 	}
@@ -547,7 +569,17 @@ func generateCreateIndexSQL(tableName, indexName string, columns []string, uniqu
 	// Join the quoted column names with commas
 	columnsSQL := strings.Join(quotedColumnsList, ", ")
 
-	return fmt.Sprintf("%s %s ON %s (%s);", stmt, quotedIndexName, quotedTableName, columnsSQL)
+	sql := fmt.Sprintf("%s %s ON %s (%s)", stmt, quotedIndexName, quotedTableName, columnsSQL)
+	if where != "" {
+		sql += " WHERE " + where
+	}
+	return sql + ";"
+}
+
+func indexWherePresenceMatches(modelWhere, dbWhere string) bool {
+	modelHasPredicate := strings.TrimSpace(modelWhere) != ""
+	dbHasPredicate := strings.TrimSpace(dbWhere) != ""
+	return modelHasPredicate == dbHasPredicate
 }
 
 // generateDropIndexSQL generates the DROP INDEX statement.

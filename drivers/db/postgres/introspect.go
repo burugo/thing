@@ -142,6 +142,7 @@ func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName st
 			Name:    name,
 			Columns: cols,
 			Unique:  unique,
+			Where:   parsePgIndexWhere(def),
 		})
 	}
 	if err := idxRows.Err(); err != nil {
@@ -169,4 +170,13 @@ func parsePgIndexColumns(def string) []string {
 		cols[i] = strings.TrimSpace(cols[i])
 	}
 	return cols
+}
+
+func parsePgIndexWhere(def string) string {
+	upperDef := strings.ToUpper(def)
+	whereIndex := strings.LastIndex(upperDef, " WHERE ")
+	if whereIndex == -1 {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimSuffix(def[whereIndex+len(" WHERE "):], ";"))
 }

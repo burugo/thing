@@ -50,6 +50,7 @@ type IndexInfo struct {
 	Name    string   // Index name
 	Columns []string // Column names
 	Unique  bool     // Is unique index
+	Where   string   // Optional partial index predicate
 }
 
 // ModelInfo holds pre-computed metadata about a model type T.
@@ -276,6 +277,10 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 	compositeIndexes := make(map[string]*IndexInfo)
 	processFields(modelType, []int{}, false, compositeIndexes, &info)
 
+	// Determine table name before processing programmatic indexes so validation
+	// and error messages can refer to the final table name.
+	info.TableName = getTableNameFromType(modelType)
+
 	// --- Consolidate Indexes from compositeIndexes map into ModelInfo ---
 	// After processFields completes, compositeIndexes contains all named indexes
 	// with their columns properly merged. Now append them to info.Indexes/UniqueIndexes.
@@ -288,6 +293,10 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 		} else {
 			info.Indexes = append(info.Indexes, *compositeIdx)
 		}
+	}
+
+	if err := appendProgrammaticIndexes(modelType, &info); err != nil {
+		return nil, err
 	}
 
 	// Sort index slices for deterministic ordering
@@ -308,9 +317,6 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 		}
 	}
 	info.PkName = pkDbName
-
-	// Determine table name
-	info.TableName = getTableNameFromType(modelType)
 
 	// Store in cache
 	ModelCache.Store(modelType, &info)
@@ -366,6 +372,111 @@ func getTableNameFromType(modelType reflect.Type) string {
 	return ToSnakeCase(modelType.Name()) + "s" // Simple pluralization
 }
 
+func appendProgrammaticIndexes(modelType reflect.Type, info *ModelInfo) error {
+	modelValue := reflect.New(modelType)
+	indexesMethod := modelValue.MethodByName("Indexes")
+	if !indexesMethod.IsValid() {
+		return nil
+	}
+	methodType := indexesMethod.Type()
+	if methodType.NumIn() != 0 || methodType.NumOut() != 1 || methodType.Out(0).Kind() != reflect.Slice {
+		return fmt.Errorf("%s.Indexes must have signature Indexes() []thing.Index", modelType.Name())
+	}
+
+	indexesValue := indexesMethod.Call(nil)[0]
+	for i := 0; i < indexesValue.Len(); i++ {
+		idx, err := indexInfoFromValue(indexesValue.Index(i))
+		if err != nil {
+			return fmt.Errorf("%s.Indexes[%d]: %w", modelType.Name(), i, err)
+		}
+		if err := validateProgrammaticIndex(info, idx); err != nil {
+			return fmt.Errorf("%s.Indexes[%d]: %w", modelType.Name(), i, err)
+		}
+		if err := appendIndex(info, idx); err != nil {
+			return fmt.Errorf("%s.Indexes[%d]: %w", modelType.Name(), i, err)
+		}
+	}
+	return nil
+}
+
+func indexInfoFromValue(indexValue reflect.Value) (IndexInfo, error) {
+	if indexValue.Kind() == reflect.Ptr {
+		if indexValue.IsNil() {
+			return IndexInfo{}, fmt.Errorf("index must not be nil")
+		}
+		indexValue = indexValue.Elem()
+	}
+	if indexValue.Kind() != reflect.Struct {
+		return IndexInfo{}, fmt.Errorf("index must be a struct")
+	}
+
+	nameField := indexValue.FieldByName("Name")
+	columnsField := indexValue.FieldByName("Columns")
+	uniqueField := indexValue.FieldByName("Unique")
+	whereField := indexValue.FieldByName("Where")
+	if !nameField.IsValid() || nameField.Kind() != reflect.String ||
+		!columnsField.IsValid() || columnsField.Kind() != reflect.Slice || columnsField.Type().Elem().Kind() != reflect.String ||
+		!uniqueField.IsValid() || uniqueField.Kind() != reflect.Bool ||
+		!whereField.IsValid() || whereField.Kind() != reflect.String {
+		return IndexInfo{}, fmt.Errorf("index must have Name string, Columns []string, Unique bool, and Where string fields")
+	}
+
+	columns := make([]string, columnsField.Len())
+	for i := 0; i < columnsField.Len(); i++ {
+		columns[i] = columnsField.Index(i).String()
+	}
+	return IndexInfo{
+		Name:    nameField.String(),
+		Columns: columns,
+		Unique:  uniqueField.Bool(),
+		Where:   whereField.String(),
+	}, nil
+}
+
+func validateProgrammaticIndex(info *ModelInfo, idx IndexInfo) error {
+	if len(idx.Columns) == 0 {
+		return fmt.Errorf("Columns must be non-empty")
+	}
+	if idx.Name == "" && len(idx.Columns) > 1 {
+		return fmt.Errorf("Name is required for composite indexes")
+	}
+	for _, column := range idx.Columns {
+		if _, ok := info.ColumnToFieldMap[column]; !ok {
+			return fmt.Errorf("column %q does not exist on table %q", column, info.TableName)
+		}
+	}
+	return nil
+}
+
+func appendIndex(info *ModelInfo, idx IndexInfo) error {
+	idxName := effectiveIndexName(info.TableName, idx)
+	for _, existing := range append(info.Indexes, info.UniqueIndexes...) {
+		if effectiveIndexName(info.TableName, existing) != idxName {
+			continue
+		}
+		if existing.Unique == idx.Unique && existing.Where == idx.Where && equalStringSlice(existing.Columns, idx.Columns) {
+			return nil
+		}
+		return fmt.Errorf("index %q conflicts with an existing index definition", idxName)
+	}
+	if idx.Unique {
+		info.UniqueIndexes = append(info.UniqueIndexes, idx)
+	} else {
+		info.Indexes = append(info.Indexes, idx)
+	}
+	return nil
+}
+
+func effectiveIndexName(tableName string, idx IndexInfo) string {
+	if idx.Name != "" || len(idx.Columns) != 1 {
+		return idx.Name
+	}
+	if idx.Unique {
+		return fmt.Sprintf("uniq_%s_%s", tableName, idx.Columns[0])
+	}
+	return fmt.Sprintf("idx_%s_%s", tableName, idx.Columns[0])
+}
+
 // ToSnakeCase converts a string from CamelCase to snake_case.
 func ToSnakeCase(str string) string {
 	matchFirstCap := regexp.MustCompile("(.)([A-Z][a-z]+)")
@@ -398,6 +509,7 @@ func ConvertTableInfo(src *driversSchema.TableInfo) *TableInfo {
 			Name:    idx.Name,
 			Columns: idx.Columns,
 			Unique:  idx.Unique,
+			Where:   idx.Where,
 		}
 	}
 	return &TableInfo{
