@@ -98,7 +98,7 @@ func TestConfigureWithConfigAppliesLoggerAndLogLevel(t *testing.T) {
 	require.Contains(t, buf.String(), "DB Exec:")
 }
 
-func TestCheckQueryMatchParseFailureLogsWarningNotError(t *testing.T) {
+func TestCheckQueryMatchParseFailureHiddenAtWarn(t *testing.T) {
 	var buf bytes.Buffer
 	thing.SetLogOutput(&buf)
 	thing.SetLogLevel(thing.LogWarn)
@@ -119,8 +119,31 @@ func TestCheckQueryMatchParseFailureLogsWarningNotError(t *testing.T) {
 	user := &User{Name: "Cache Degrade", Email: "cache-degrade@example.com"}
 	require.NoError(t, thingUser.Save(user))
 
+	require.NotContains(t, buf.String(), "CheckQueryMatch")
+}
+
+func TestCheckQueryMatchParseFailureLogsAtDebugNotError(t *testing.T) {
+	var buf bytes.Buffer
+	thing.SetLogOutput(&buf)
+	thing.SetLogLevel(thing.LogDebug)
+	t.Cleanup(func() {
+		thing.SetLogger(nil)
+		thing.SetLogLevel(thing.LogDefault)
+	})
+
+	thingUser, _, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	_, err := thingUser.Query(thing.QueryParams{
+		Where: "name IN (?,?)",
+		Args:  []interface{}{"Cache Debug Degrade", "Other"},
+	}).Fetch(0, 10)
+	require.NoError(t, err)
+
+	user := &User{Name: "Cache Debug Degrade", Email: "cache-debug-degrade@example.com"}
+	require.NoError(t, thingUser.Save(user))
+
 	logs := buf.String()
-	require.Contains(t, logs, "WARN")
 	require.Contains(t, logs, "CheckQueryMatch")
 	require.NotContains(t, logs, "ERROR CheckQueryMatch")
 }

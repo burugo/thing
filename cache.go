@@ -239,13 +239,13 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 		isListKey := strings.HasPrefix(cacheKey, "list:")
 		isCountKey := strings.HasPrefix(cacheKey, "count:")
 		if !isListKey && !isCountKey {
-			log.Printf("WARN: Skipping unknown cache key format in index: %s", cacheKey)
+			log.Printf("DEBUG: Skipping unknown cache key format in index: %s", cacheKey)
 			continue
 		}
 
 		paramsInternal, found := cache.GlobalCacheIndex.GetQueryParamsForKey(cacheKey)
 		if !found {
-			log.Printf("WARN: QueryParams not found for registered cache key '%s'. Cannot perform cache update.", cacheKey)
+			log.Printf("DEBUG: QueryParams not found for registered cache key '%s'. Cannot perform cache update.", cacheKey)
 			continue
 		}
 		paramsRoot := QueryParams{
@@ -259,7 +259,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			// Only check if the model would have matched before deletion
 			matches, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 			if err != nil {
-				log.Printf("WARN: Error checking query match for deleted model (key: %s): %v. Skipping.", cacheKey, err)
+				log.Printf("DEBUG: Error checking query match for deleted model (key: %s): %v. Skipping.", cacheKey, err)
 				continue
 			}
 			if matches {
@@ -279,7 +279,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			// Save/Update: check both current and original model
 			matchesCurrent, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 			if err != nil {
-				log.Printf("WARN CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
+				log.Printf("DEBUG CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
 					log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
 				}
@@ -290,7 +290,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			if !isCreate && originalReflect.Kind() == reflect.Ptr && !originalReflect.IsNil() {
 				matchesOriginal, err = cache.CheckQueryMatch(originalModel, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 				if err != nil {
-					log.Printf("WARN CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
+					log.Printf("DEBUG CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 					if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
 						log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
 					}

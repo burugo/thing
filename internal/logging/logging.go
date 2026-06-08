@@ -95,6 +95,8 @@ func levelForMessage(message string) Level {
 		return Error
 	case strings.HasPrefix(upper, "INFO"):
 		return Info
+	case strings.HasPrefix(upper, "DEBUG") || strings.HasPrefix(upper, "[DEBUG]"):
+		return Debug
 	case strings.HasPrefix(upper, "DB ") || strings.HasPrefix(upper, "CACHE ") || strings.Contains(upper, " SQL"):
 		return Debug
 	default:

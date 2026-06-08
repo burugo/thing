@@ -127,7 +127,7 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 		}
 
 		if !isValidFormat {
-			log.Printf("WARN: CheckQueryMatch could not parse condition: '%s'. Expected 'column OP ?', 'column IN (?)', 'column NOT LIKE ?', or 'column NOT IN (?)'", condition)
+			log.Printf("DEBUG: CheckQueryMatch could not parse condition: '%s'. Expected 'column OP ?', 'column IN (?)', 'column NOT LIKE ?', or 'column NOT IN (?)'", condition)
 			return false, fmt.Errorf("unsupported condition format: '%s'. Expected 'column OP ?', 'column IN (?)', 'column NOT LIKE ?', or 'column NOT IN (?)'", condition)
 		}
 
@@ -392,7 +392,7 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 
 		// Handle errors during matching
 		if matchErr != nil {
-			log.Printf("WARN: Error during CheckQueryMatch condition evaluation: %v", matchErr)
+			log.Printf("DEBUG: Error during CheckQueryMatch condition evaluation: %v", matchErr)
 			return false, matchErr // Propagate error
 		}
 
@@ -564,7 +564,7 @@ func checkInOperator(modelField reflect.Value, argSlice reflect.Value) (bool, er
 				defer func() {
 					if r := recover(); r != nil {
 						errMsg := fmt.Sprintf("Type conversion failed in IN operator: %v", r)
-						log.Printf("WARN: %s", errMsg)
+						log.Printf("DEBUG: %s", errMsg)
 						err = errors.New(errMsg)
 						success = false
 					}
