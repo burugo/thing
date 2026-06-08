@@ -14,6 +14,7 @@ import (
 	"github.com/burugo/thing/common"
 	"github.com/burugo/thing/drivers/schema"
 	log "github.com/burugo/thing/internal/logging"
+	"github.com/burugo/thing/internal/sqlbuilder"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite driver
 )
@@ -269,6 +270,9 @@ func (a *SQLiteAdapter) Exec(ctx context.Context, query string, args ...interfac
 func (a *SQLiteAdapter) GetCount(ctx context.Context, tableName string, where string, args []interface{}) (int64, error) {
 	if a.isClosed() {
 		return 0, fmt.Errorf("adapter is closed")
+	}
+	if where != "" {
+		where, args = sqlbuilder.ExpandInClauses(SQLiteDialector{}, where, args)
 	}
 	query := a.builder.BuildCountSQL(tableName, where)
 	row := a.db.QueryRowContext(ctx, query, args...)

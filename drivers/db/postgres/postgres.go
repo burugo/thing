@@ -14,6 +14,7 @@ import (
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
 	driversSchema "github.com/burugo/thing/drivers/schema"
+	"github.com/burugo/thing/internal/sqlbuilder"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
 )
@@ -303,9 +304,13 @@ func (a *Adapter) GetCount(ctx context.Context, tableName string, where string, 
 	if tableName == "" {
 		return 0, errors.New("getCount: table name is missing")
 	}
+	if where != "" {
+		where, args = sqlbuilder.ExpandInClauses(Dialector{}, where, args)
+	}
 	query := a.builder.BuildCountSQL(tableName, where)
-	log.Printf("DB GetCount (Postgres): %s [%v]", query, args)
-	row := a.db.QueryRowContext(ctx, query, args...)
+	reboundQuery := a.builder.Rebind(query)
+	log.Printf("DB GetCount (Postgres): %s [%v]", reboundQuery, args)
+	row := a.db.QueryRowContext(ctx, reboundQuery, args...)
 	var count int64
 	err := row.Scan(&count)
 	if err != nil {

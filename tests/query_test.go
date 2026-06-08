@@ -68,6 +68,31 @@ func TestCachedResult_Count(t *testing.T) {
 	countNoneCached, err := resultNone.Count() // Cache Hit
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), countNoneCached, "Count for non-existent should be 0 from cache")
+
+	mockCache.Reset()
+
+	user1 := &User{Name: "IN Count 1", Email: "in-count-1@example.com"}
+	user2 := &User{Name: "IN Count 2", Email: "in-count-2@example.com"}
+	user3 := &User{Name: "IN Count 3", Email: "in-count-3@example.com"}
+	require.NoError(t, th.Save(user1))
+	require.NoError(t, th.Save(user2))
+	require.NoError(t, th.Save(user3))
+
+	resultInSlice := th.Query(thing.QueryParams{
+		Where: "name != ? AND id IN (?)",
+		Args:  []interface{}{"IN Count 3", []int64{user1.ID, user2.ID, user3.ID}},
+	})
+	inSliceCount, err := resultInSlice.Count()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), inSliceCount)
+
+	emptyResult := th.Query(thing.QueryParams{
+		Where: "id IN (?)",
+		Args:  []interface{}{[]int64{}},
+	})
+	emptyCount, err := emptyResult.Count()
+	require.NoError(t, err)
+	require.Equal(t, int64(0), emptyCount)
 }
 
 // TestCachedResult_Fetch tests the Fetch() method with caching.

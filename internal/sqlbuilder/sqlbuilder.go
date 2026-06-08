@@ -48,7 +48,7 @@ func (b *SQLBuilder) BuildSelectIDsSQL(tableName string, pkName string, where st
 	query.WriteString(fmt.Sprintf("SELECT %s FROM %s", b.Dialect.Quote(pkName), b.Dialect.Quote(tableName)))
 
 	if where != "" {
-		expandedWhere, expandedArgs := b.expandInClauses(where, args)
+		expandedWhere, expandedArgs := b.ExpandInClauses(where, args)
 		query.WriteString(" WHERE ")
 		query.WriteString(expandedWhere)
 		args = expandedArgs
@@ -61,8 +61,13 @@ func (b *SQLBuilder) BuildSelectIDsSQL(tableName string, pkName string, where st
 	return query.String(), args
 }
 
-// expandInClauses replaces IN (?) with the correct number of placeholders and flattens slice args.
-func (b *SQLBuilder) expandInClauses(where string, args []interface{}) (string, []interface{}) {
+// ExpandInClauses replaces IN (?) with the correct number of placeholders and flattens slice args.
+func (b *SQLBuilder) ExpandInClauses(where string, args []interface{}) (string, []interface{}) {
+	return ExpandInClauses(b.Dialect, where, args)
+}
+
+// ExpandInClauses replaces IN (?) with the correct number of placeholders and flattens slice args.
+func ExpandInClauses(dialect Dialector, where string, args []interface{}) (string, []interface{}) {
 	var newWhere strings.Builder
 	newArgs := make([]interface{}, 0, len(args))
 	argIdx := 0
@@ -94,7 +99,7 @@ func (b *SQLBuilder) expandInClauses(where string, args []interface{}) (string, 
 				} else {
 					placeholders := make([]string, n)
 					for j := 0; j < n; j++ {
-						placeholders[j] = b.Dialect.Placeholder(j + 1) // Use dialect-specific placeholders
+						placeholders[j] = dialect.Placeholder(len(newArgs) + 1) // Use dialect-specific placeholders
 						newArgs = append(newArgs, sliceVal.Index(j).Interface())
 					}
 					coreCond = prefix + "(" + strings.Join(placeholders, ", ") + ")"

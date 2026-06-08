@@ -14,6 +14,7 @@ import (
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
 	driversSchema "github.com/burugo/thing/drivers/schema"
+	"github.com/burugo/thing/internal/sqlbuilder"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
 )
@@ -292,6 +293,9 @@ func (a *MySQLAdapter) Exec(ctx context.Context, query string, args ...interface
 func (a *MySQLAdapter) GetCount(ctx context.Context, tableName string, where string, args []interface{}) (int64, error) {
 	if tableName == "" {
 		return 0, errors.New("getCount: table name is missing")
+	}
+	if where != "" {
+		where, args = sqlbuilder.ExpandInClauses(MySQLDialector{}, where, args)
 	}
 	query := a.builder.BuildCountSQL(tableName, where)
 	log.Printf("DB GetCount (MySQL): %s [%v]", query, args)
