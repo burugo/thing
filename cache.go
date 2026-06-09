@@ -170,6 +170,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 		log.Printf("ERROR: Failed to get model metadata for cache invalidation: %v", err)
 		return
 	}
+	changedColumns := changedModelColumns(info, model, originalModel)
 
 	// Collect all field values for this model
 	fieldValues := make(map[string]interface{})
@@ -219,6 +220,11 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	for _, k := range cache.GlobalCacheIndex.GetFullTableCountKeys(tableName) {
 		cacheKeySet[k] = struct{}{}
 	}
+	if !isCreate && !isDelete {
+		for _, k := range cache.GlobalCacheIndex.GetKeysByChangedFields(tableName, changedColumns) {
+			cacheKeySet[k] = struct{}{}
+		}
+	}
 	// Convert set to slice
 	queryCacheKeys := make([]string, 0, len(cacheKeySet))
 	for k := range cacheKeySet {
@@ -254,6 +260,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			Order:    paramsInternal.Order,
 			Preloads: paramsInternal.Preloads,
 		}
+		queryDeps, _ := cache.GlobalCacheIndex.GetQueryDependenciesForKey(cacheKey)
 
 		if isDelete {
 			// Only check if the model would have matched before deletion
@@ -298,6 +305,9 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 				}
 			}
 			needsAdd, needsRemove := determineCacheAction(isCreate, matchesOriginal, matchesCurrent, model.KeepItem())
+			if isListKey && !isCreate && matchesOriginal && matchesCurrent && orderDependencyChanged(queryDeps, changedColumns) {
+				needsRemove = true
+			}
 			if needsAdd || needsRemove {
 				// log.Printf("DEBUG Gather Task (%s): Action determined: Add=%v, Remove=%v", cacheKey, needsAdd, needsRemove)
 				tasks = append(tasks, cacheTask{
@@ -499,6 +509,62 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 func containsID(ids []int64, id int64) bool {
 	for _, currentID := range ids {
 		if currentID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func changedModelColumns[T Model](info *schema.ModelInfo, model T, originalModel T) map[string]bool {
+	changed := make(map[string]bool)
+	currentVal := reflect.ValueOf(model)
+	if currentVal.Kind() == reflect.Ptr {
+		if currentVal.IsNil() {
+			return changed
+		}
+		currentVal = currentVal.Elem()
+	}
+	originalVal := reflect.ValueOf(originalModel)
+	if originalVal.Kind() == reflect.Ptr {
+		if originalVal.IsNil() {
+			for _, f := range info.CompareFields {
+				if !f.IgnoreInDiff {
+					changed[f.DBColumn] = true
+				}
+			}
+			return changed
+		}
+		originalVal = originalVal.Elem()
+	}
+	if currentVal.Kind() != reflect.Struct || originalVal.Kind() != reflect.Struct {
+		return changed
+	}
+
+	for _, f := range info.CompareFields {
+		if f.IgnoreInDiff || len(f.Index) == 0 {
+			continue
+		}
+		if f.Index[0] >= currentVal.NumField() || f.Index[0] >= originalVal.NumField() {
+			continue
+		}
+		currentField := currentVal.FieldByIndex(f.Index)
+		originalField := originalVal.FieldByIndex(f.Index)
+		if !reflect.DeepEqual(currentField.Interface(), originalField.Interface()) {
+			changed[f.DBColumn] = true
+		}
+	}
+	return changed
+}
+
+func orderDependencyChanged(deps cache.QueryDependencies, changedColumns map[string]bool) bool {
+	if len(changedColumns) == 0 {
+		return false
+	}
+	if deps.HasUncertainOrder {
+		return true
+	}
+	for field := range deps.OrderFields {
+		if changedColumns[field] {
 			return true
 		}
 	}
