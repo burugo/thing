@@ -67,67 +67,60 @@ func (b *SQLBuilder) ExpandInClauses(where string, args []interface{}) (string, 
 }
 
 // ExpandInClauses replaces IN (?) with the correct number of placeholders and flattens slice args.
-func ExpandInClauses(dialect Dialector, where string, args []interface{}) (string, []interface{}) {
+func ExpandInClauses(_ Dialector, where string, args []interface{}) (string, []interface{}) {
 	var newWhere strings.Builder
 	newArgs := make([]interface{}, 0, len(args))
 	argIdx := 0
-	conditions := strings.Split(where, " AND ")
-	for i, cond := range conditions {
-		if i > 0 {
-			newWhere.WriteString(" AND ")
+
+	for i := 0; i < len(where); i++ {
+		if where[i] != '?' {
+			newWhere.WriteByte(where[i])
+			continue
 		}
-		cond = strings.TrimSpace(cond)
-		// Preserve parentheses around the condition
-		openParen := strings.HasPrefix(cond, "(")
-		closeParen := strings.HasSuffix(cond, ")")
-		coreCond := cond
-		if openParen {
-			coreCond = coreCond[1:]
+
+		inClause := false
+		left := i - 1
+		for left >= 0 && (where[left] == ' ' || where[left] == '\t' || where[left] == '\n' || where[left] == '\r') {
+			left--
 		}
-		if closeParen && len(coreCond) > 0 {
-			coreCond = coreCond[:len(coreCond)-1]
+		right := i + 1
+		for right < len(where) && (where[right] == ' ' || where[right] == '\t' || where[right] == '\n' || where[right] == '\r') {
+			right++
 		}
-		if strings.Contains(coreCond, "IN (?)") && argIdx < len(args) {
-			prefix := coreCond[:strings.Index(coreCond, "IN (?)")+2] // up to 'IN'
+		if left >= 0 && where[left] == '(' && right < len(where) && where[right] == ')' {
+			wordEnd := left - 1
+			for wordEnd >= 0 && (where[wordEnd] == ' ' || where[wordEnd] == '\t' || where[wordEnd] == '\n' || where[wordEnd] == '\r') {
+				wordEnd--
+			}
+			wordStart := wordEnd - 1
+			if wordStart >= 0 && strings.EqualFold(where[wordStart:wordEnd+1], "IN") {
+				beforeWord := wordStart - 1
+				inClause = beforeWord < 0 || !(where[beforeWord] == '_' || where[beforeWord] >= '0' && where[beforeWord] <= '9' || where[beforeWord] >= 'A' && where[beforeWord] <= 'Z' || where[beforeWord] >= 'a' && where[beforeWord] <= 'z')
+			}
+		}
+
+		if inClause && argIdx < len(args) {
 			arg := args[argIdx]
 			sliceVal := reflect.ValueOf(arg)
 			if sliceVal.Kind() == reflect.Slice || sliceVal.Kind() == reflect.Array {
 				n := sliceVal.Len()
 				if n == 0 {
-					// IN () is invalid SQL, but we can use IN (NULL) to ensure no match
-					coreCond = prefix + "(NULL)"
+					newWhere.WriteString("NULL")
 				} else {
 					placeholders := make([]string, n)
 					for j := 0; j < n; j++ {
-						placeholders[j] = dialect.Placeholder(len(newArgs) + 1) // Use dialect-specific placeholders
+						placeholders[j] = "?"
 						newArgs = append(newArgs, sliceVal.Index(j).Interface())
 					}
-					coreCond = prefix + "(" + strings.Join(placeholders, ", ") + ")"
+					newWhere.WriteString(strings.Join(placeholders, ", "))
 				}
 				argIdx++
-				// Re-wrap with parentheses if needed
-				if openParen {
-					coreCond = "(" + coreCond
-				}
-				if closeParen {
-					coreCond += ")"
-				}
-				newWhere.WriteString(coreCond)
 				continue
 			}
 		}
-		// Not an IN clause, or not a slice arg
-		if openParen {
-			coreCond = "(" + coreCond
-		}
-		if closeParen {
-			coreCond += ")"
-		}
-		newWhere.WriteString(coreCond)
 
-		// Count the number of ? placeholders in this condition and consume that many args
-		questionMarkCount := strings.Count(coreCond, "?")
-		for j := 0; j < questionMarkCount && argIdx < len(args); j++ {
+		newWhere.WriteByte('?')
+		if argIdx < len(args) {
 			newArgs = append(newArgs, args[argIdx])
 			argIdx++
 		}
