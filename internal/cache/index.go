@@ -10,9 +10,18 @@ import (
 	"github.com/burugo/thing/internal/types"
 )
 
+const uncertainDependencyField = "*"
+
 // Global instance of the cache index.
 // This should be initialized once, potentially during application startup.
 var GlobalCacheIndex = NewCacheIndex()
+
+// QueryDependencies records which DB columns a cached query depends on.
+type QueryDependencies struct {
+	WhereFields       map[string]bool
+	OrderFields       map[string]bool
+	HasUncertainOrder bool
+}
 
 // CacheIndex tracks which query cache keys might be affected by changes to a specific table.
 // It maintains a map from table names to a set of cache keys, and a map from cache keys
@@ -22,6 +31,11 @@ type CacheIndex struct {
 	// keyToParams maps a query cache key (string) back to the QueryParams used to generate it.
 	// This is needed to evaluate if a changed model matches the query conditions.
 	keyToParams map[string]types.QueryParams
+	// keyToDependencies maps a query cache key to the fields it depends on.
+	keyToDependencies map[string]QueryDependencies
+
+	// DependencyIndex maps table -> DB column -> cache keys for all query dependencies.
+	DependencyIndex map[string]map[string]map[string]bool
 
 	// valueIndex maps table -> field -> value (as string) -> set of cache keys.
 	// Only for exact match ("=", "IN") queries. Used for efficient invalidation location.
@@ -42,6 +56,8 @@ type CacheIndex struct {
 func NewCacheIndex() *CacheIndex {
 	return &CacheIndex{
 		keyToParams:              make(map[string]types.QueryParams),
+		keyToDependencies:        make(map[string]QueryDependencies),
+		DependencyIndex:          make(map[string]map[string]map[string]bool),
 		valueIndex:               make(map[string]map[string]map[string]map[string]bool),
 		FieldIndex:               make(map[string]map[string]map[string]bool),
 		TableToFullTableListKeys: make(map[string]map[string]bool),
@@ -62,6 +78,17 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params types.Qu
 
 	// Register key -> params mapping
 	idx.keyToParams[cacheKey] = params
+	deps := buildQueryDependencies(params, strings.HasPrefix(cacheKey, "list:"))
+	idx.keyToDependencies[cacheKey] = deps
+	for field := range deps.WhereFields {
+		idx.addDependencyLocked(tableName, field, cacheKey)
+	}
+	for field := range deps.OrderFields {
+		idx.addDependencyLocked(tableName, field, cacheKey)
+	}
+	if deps.HasUncertainOrder {
+		idx.addDependencyLocked(tableName, uncertainDependencyField, cacheKey)
+	}
 
 	// --- 新增: 注册全表 list cache key ---
 	if params.Where == "" && strings.HasPrefix(cacheKey, "list:") {
@@ -100,6 +127,37 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params types.Qu
 		}
 		idx.FieldIndex[tableName][field][cacheKey] = true
 	}
+}
+
+func (idx *CacheIndex) addDependencyLocked(tableName, field, cacheKey string) {
+	if field == "" {
+		return
+	}
+	if _, ok := idx.DependencyIndex[tableName]; !ok {
+		idx.DependencyIndex[tableName] = make(map[string]map[string]bool)
+	}
+	if _, ok := idx.DependencyIndex[tableName][field]; !ok {
+		idx.DependencyIndex[tableName][field] = make(map[string]bool)
+	}
+	idx.DependencyIndex[tableName][field][cacheKey] = true
+}
+
+func buildQueryDependencies(params types.QueryParams, isListKey bool) QueryDependencies {
+	deps := QueryDependencies{
+		WhereFields: make(map[string]bool),
+		OrderFields: make(map[string]bool),
+	}
+	for _, field := range extractAllWhereFields(params) {
+		deps.WhereFields[field] = true
+	}
+	if isListKey && params.Order != "" {
+		orderFields, uncertain := ParseOrderFields(params.Order)
+		for _, field := range orderFields {
+			deps.OrderFields[field] = true
+		}
+		deps.HasUncertainOrder = uncertain
+	}
+	return deps
 }
 
 // toIndexValueString converts an index value to string for use as a map key
@@ -154,6 +212,49 @@ func (idx *CacheIndex) GetQueryParamsForKey(cacheKey string) (types.QueryParams,
 
 	params, found := idx.keyToParams[cacheKey]
 	return params, found
+}
+
+// GetQueryDependenciesForKey returns the parsed dependency metadata for a cache key.
+func (idx *CacheIndex) GetQueryDependenciesForKey(cacheKey string) (QueryDependencies, bool) {
+	if cacheKey == "" {
+		return QueryDependencies{}, false
+	}
+
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	deps, found := idx.keyToDependencies[cacheKey]
+	return deps, found
+}
+
+// GetKeysByChangedFields returns cache keys registered as dependent on any changed field.
+func (idx *CacheIndex) GetKeysByChangedFields(table string, changedFields map[string]bool) []string {
+	if table == "" || len(changedFields) == 0 {
+		return nil
+	}
+
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	tableDeps, ok := idx.DependencyIndex[table]
+	if !ok {
+		return nil
+	}
+	keySet := make(map[string]bool)
+	for field := range changedFields {
+		for key := range tableDeps[field] {
+			keySet[key] = true
+		}
+	}
+	for key := range tableDeps[uncertainDependencyField] {
+		keySet[key] = true
+	}
+
+	keys := make([]string, 0, len(keySet))
+	for key := range keySet {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 // ResetGlobalCacheIndex resets the global cache index to a new empty state.
@@ -217,6 +318,64 @@ func ParseExactMatchFields(params types.QueryParams) map[string][]interface{} {
 		}
 	}
 	return result
+}
+
+// ParseOrderFields parses a simple ORDER BY clause into DB column names.
+// The boolean return is true when any order expression could not be parsed safely.
+func ParseOrderFields(order string) ([]string, bool) {
+	if strings.TrimSpace(order) == "" {
+		return nil, false
+	}
+
+	fields := make([]string, 0)
+	seen := make(map[string]bool)
+	uncertain := false
+	for _, clause := range strings.Split(order, ",") {
+		clause = strings.TrimSpace(clause)
+		if clause == "" {
+			uncertain = true
+			continue
+		}
+		parts := strings.Fields(clause)
+		if len(parts) == 0 {
+			uncertain = true
+			continue
+		}
+		if len(parts) > 2 {
+			uncertain = true
+		}
+		if len(parts) == 2 && !strings.EqualFold(parts[1], "ASC") && !strings.EqualFold(parts[1], "DESC") {
+			uncertain = true
+		}
+
+		field, ok := normalizeOrderIdentifier(parts[0])
+		if !ok {
+			uncertain = true
+			continue
+		}
+		if !seen[field] {
+			seen[field] = true
+			fields = append(fields, field)
+		}
+	}
+	return fields, uncertain
+}
+
+func normalizeOrderIdentifier(identifier string) (string, bool) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" || strings.ContainsAny(identifier, "()+-*/") {
+		return "", false
+	}
+	parts := strings.Split(identifier, ".")
+	identifier = strings.TrimSpace(parts[len(parts)-1])
+	identifier = strings.Trim(identifier, "\"`")
+	if strings.HasPrefix(identifier, "[") && strings.HasSuffix(identifier, "]") {
+		identifier = strings.TrimPrefix(strings.TrimSuffix(identifier, "]"), "[")
+	}
+	if identifier == "" || strings.ContainsAny(identifier, " \t\n\r") {
+		return "", false
+	}
+	return identifier, true
 }
 
 // splitAndConditions splits a WHERE string by AND (case-insensitive)

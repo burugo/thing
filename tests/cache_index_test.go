@@ -64,6 +64,76 @@ func TestCacheIndex_GetQueryParamsForKey_NotFound(t *testing.T) {
 	assert.Equal(t, types.QueryParams{}, params) // Use internal type
 }
 
+func TestCacheIndex_QueryDependencyIndex(t *testing.T) {
+	cache.ResetGlobalCacheIndex()
+	idx := cache.GlobalCacheIndex
+
+	listKey := "list:threads:ordered"
+	countKey := "count:threads:ordered"
+	params := types.QueryParams{
+		Where: "user_id = ? AND archived = ?",
+		Args:  []interface{}{int64(42), false},
+		Order: "updated_at DESC, id DESC",
+	}
+
+	idx.RegisterQuery("threads", listKey, params)
+	idx.RegisterQuery("threads", countKey, params)
+
+	updatedAtKeys := idx.GetKeysByChangedFields("threads", map[string]bool{"updated_at": true})
+	assert.ElementsMatch(t, []string{listKey}, updatedAtKeys)
+
+	userIDKeys := idx.GetKeysByChangedFields("threads", map[string]bool{"user_id": true})
+	assert.ElementsMatch(t, []string{listKey, countKey}, userIDKeys)
+
+	deps, found := idx.GetQueryDependenciesForKey(listKey)
+	assert.True(t, found)
+	assert.True(t, deps.WhereFields["user_id"])
+	assert.True(t, deps.WhereFields["archived"])
+	assert.True(t, deps.OrderFields["updated_at"])
+	assert.True(t, deps.OrderFields["id"])
+	assert.False(t, deps.HasUncertainOrder)
+}
+
+func TestParseOrderFields(t *testing.T) {
+	cases := []struct {
+		name          string
+		order         string
+		wantFields    []string
+		wantUncertain bool
+	}{
+		{
+			name:       "simple directions",
+			order:      "updated_at DESC, id ASC",
+			wantFields: []string{"updated_at", "id"},
+		},
+		{
+			name:       "quoted qualified identifiers",
+			order:      `"threads"."updated_at" DESC, ` + "`id` DESC",
+			wantFields: []string{"updated_at", "id"},
+		},
+		{
+			name:          "expression is uncertain",
+			order:         "LOWER(name) ASC",
+			wantFields:    []string{},
+			wantUncertain: true,
+		},
+		{
+			name:          "unknown direction is uncertain but field is still indexed",
+			order:         "score RANDOM",
+			wantFields:    []string{"score"},
+			wantUncertain: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fields, uncertain := cache.ParseOrderFields(tc.order)
+			assert.Equal(t, tc.wantFields, fields)
+			assert.Equal(t, tc.wantUncertain, uncertain)
+		})
+	}
+}
+
 func TestParseExactMatchFields(t *testing.T) {
 	testCases := []struct {
 		name   string
