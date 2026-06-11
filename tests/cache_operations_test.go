@@ -896,6 +896,47 @@ func TestThing_Query_IncrementalCacheUpdate_IN(t *testing.T) {
 	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated for matching IN")
 }
 
+func TestThing_InvalidateQueryCachesClearsRegisteredListAndCountCaches(t *testing.T) {
+	thingUser, cacheClient, db, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	initial := &User{Name: "Raw Bulk", Email: "raw-bulk-1@example.com"}
+	require.NoError(t, thingUser.Save(initial))
+
+	params := thing.QueryParams{
+		Where: "name = ?",
+		Args:  []interface{}{"Raw Bulk"},
+	}
+	count, err := thingUser.Query(params).Count()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count)
+	users, err := thingUser.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	require.Len(t, users, 1)
+
+	_, err = db.Exec(
+		context.Background(),
+		"INSERT INTO users (created_at, updated_at, deleted, name, email) VALUES (?, ?, ?, ?, ?)",
+		initial.CreatedAt,
+		initial.UpdatedAt,
+		false,
+		"Raw Bulk",
+		"raw-bulk-2@example.com",
+	)
+	require.NoError(t, err)
+
+	cacheClient.ResetCalls()
+	require.NoError(t, thingUser.InvalidateQueryCaches(context.Background()))
+	require.Equal(t, 2, cacheClient.Counters["Delete"], "list and count query cache keys should be deleted")
+
+	count, err = thingUser.Query(params).Count()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count)
+	users, err = thingUser.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	require.Len(t, users, 2)
+}
+
 func TestThing_Query_IncrementalCacheUpdate_ID_IN(t *testing.T) {
 	thingUser, cacheClient, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()

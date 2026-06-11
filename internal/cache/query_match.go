@@ -98,11 +98,12 @@ func matchPredicateCondition(modelVal reflect.Value, tableName string, columnToF
 	case "LIKE":
 		modelStr, modelOk, modelNil := stringValueForLike(modelFieldValue)
 		patternStr, patternOk, patternNil := stringValueForLike(argValue)
-		if !modelOk || !patternOk {
+		switch {
+		case !modelOk || !patternOk:
 			matchErr = fmt.Errorf("LIKE operator requires string field and pattern, got %T and %T for field '%s'", modelFieldValue, argValue, goFieldName)
-		} else if modelNil || patternNil {
+		case modelNil || patternNil:
 			conditionMet = false
-		} else {
+		default:
 			conditionMet, matchErr = matchLike(modelStr, patternStr)
 			if matchErr != nil {
 				matchErr = fmt.Errorf("error matching LIKE for field '%s': %w", goFieldName, matchErr)
@@ -111,11 +112,12 @@ func matchPredicateCondition(modelVal reflect.Value, tableName string, columnToF
 	case "NOT LIKE":
 		modelStr, modelOk, modelNil := stringValueForLike(modelFieldValue)
 		patternStr, patternOk, patternNil := stringValueForLike(argValue)
-		if !modelOk || !patternOk {
+		switch {
+		case !modelOk || !patternOk:
 			matchErr = fmt.Errorf("NOT LIKE operator requires string field and pattern, got %T and %T for field '%s'", modelFieldValue, argValue, goFieldName)
-		} else if modelNil || patternNil {
+		case modelNil || patternNil:
 			conditionMet = false
-		} else {
+		default:
 			var likeMet bool
 			likeMet, matchErr = matchLike(modelStr, patternStr)
 			conditionMet = !likeMet

@@ -127,6 +127,26 @@ func (t *Thing[T]) ClearCacheByID(ctx context.Context, id int64) error {
 	return nil // Or return err if you want to propagate cache errors
 }
 
+// InvalidateQueryCaches removes all registered list/count query cache entries
+// for this model's table. Call this after raw SQL bulk writes that bypass
+// Thing's Save/Delete methods.
+func (t *Thing[T]) InvalidateQueryCaches(ctx context.Context) error {
+	if t.cache == nil {
+		return nil
+	}
+	keys := cache.GlobalCacheIndex.GetQueryKeysForTable(t.info.TableName)
+	var firstErr error
+	for _, key := range keys {
+		if err := t.cache.Delete(ctx, key); err != nil && !errors.Is(err, common.ErrNotFound) {
+			log.Printf("WARN: Failed to delete query cache key %s: %v", key, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
 // --- Helper structs for cache update tasks (moved out of generic function for Go 1.18 compatibility) ---
 type cacheTask struct {
 	cacheKey    string

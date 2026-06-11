@@ -136,6 +136,13 @@ if err := users.Save(user); err != nil {
 	log.Fatal(err)
 }
 
+// Create or update multiple records in one transaction
+batch := []*User{
+	{Name: "Bob", Email: "bob@example.com"},
+	{Name: "Carol", Email: "carol@example.com"},
+}
+err := users.SaveMany(batch)
+
 // Cached single read
 found, err := users.ByID(user.ID)
 
@@ -147,9 +154,14 @@ err = users.SoftDelete(user)
 
 // Hard delete
 err = users.Delete(user)
+
+// Hard delete multiple records in one transaction
+err = users.DeleteMany(batch)
 ```
 
 Prefer `ByID` and `ByIDs` for entity reads. They are the main model-cache path and are easier to reuse across list pages than scattered `SELECT *` calls.
+
+`SaveMany` and `DeleteMany` keep the normal Thing lifecycle behavior, but group the database writes into one transaction. Model and query caches are updated only after the transaction commits.
 
 ## Queries
 
@@ -498,7 +510,7 @@ Guidelines:
 
 - High-frequency business reads should prefer `Query`, `ByID`, and `ByIDs`.
 - Reporting, aggregation, and one-off background jobs can use raw SQL.
-- After raw SQL writes, decide whether related caches need explicit cleanup, because the ORM write path was bypassed.
+- After raw SQL writes, call `InvalidateQueryCaches(ctx)` on the affected model when cached list/count queries for that table may now be stale.
 
 ## Cache Monitoring
 

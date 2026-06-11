@@ -201,33 +201,60 @@ func (t *Thing[T]) byIDInternal(ctx context.Context, id int64, dest *T) error {
 	}
 }
 
+type sqlExecutor interface {
+	Get(ctx context.Context, dest interface{}, query string, args ...interface{}) error
+	Exec(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+type saveMutation[T Model] struct {
+	value         T
+	original      T
+	isNew         bool
+	changedFields map[string]interface{}
+	applied       bool
+}
+
 // saveInternal handles both creating and updating records.
 func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
+	mutation, err := t.saveWithExecutor(ctx, t.db, value, false)
+	if err != nil {
+		return err
+	}
+	t.finalizeSave(ctx, mutation)
+	return nil
+}
+
+func (t *Thing[T]) saveWithExecutor(ctx context.Context, executor sqlExecutor, value T, readOriginalFromExecutor bool) (saveMutation[T], error) {
+	mutation := saveMutation[T]{value: value}
 	if t.db == nil || t.cache == nil {
-		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+		return mutation, errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+	}
+	if executor == nil {
+		return mutation, errors.New("saveWithExecutor: executor is nil")
 	}
 
 	valueReflect := reflect.ValueOf(value)
 	// Check if value can be nil before calling IsNil()
 	if valueReflect.Kind() == reflect.Ptr && valueReflect.IsNil() {
-		return errors.New("saveInternal: value (model pointer) is nil")
+		return mutation, errors.New("saveInternal: value (model pointer) is nil")
 	}
 
 	modelValue := reflect.ValueOf(value)
 	if modelValue.Kind() != reflect.Ptr || modelValue.IsNil() {
-		return errors.New("value must be a non-nil pointer")
+		return mutation, errors.New("value must be a non-nil pointer")
 	}
 
 	// --- Prepare state ---
 	id := value.GetID()
 	isNew := id == 0
+	mutation.isNew = isNew
 	now := time.Now().Round(0)
 	// Set the internal flag *before* hooks are called
 	setNewRecordFlagIfBaseModel(value, isNew)
 
 	// --- Trigger BeforeSave hook ---
 	if err := triggerEvent(ctx, EventTypeBeforeSave, value, nil); err != nil { // Uses helper defined later
-		return fmt.Errorf("BeforeSave hook failed: %w", err)
+		return mutation, fmt.Errorf("BeforeSave hook failed: %w", err)
 	}
 
 	var query string
@@ -241,7 +268,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		// --- CREATE Path ---
 		// Trigger BeforeCreate hook
 		if err := triggerEvent(ctx, EventTypeBeforeCreate, value, nil); err != nil { // Uses helper defined later
-			return fmt.Errorf("BeforeCreate hook failed: %w", err)
+			return mutation, fmt.Errorf("BeforeCreate hook failed: %w", err)
 		}
 
 		setCreatedAtTimestamp(value, now) // Uses helper defined later
@@ -281,39 +308,44 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		}
 
 		if len(colsToInsert) == 0 {
-			return errors.New("no columns to insert")
+			return mutation, errors.New("no columns to insert")
 		}
 
 		query = t.db.Builder().BuildInsertSQL(t.info.TableName, colsToInsert)
 		args = vals
 
 		// Execute the INSERT query
-		result, err = t.db.Exec(ctx, query, args...)
+		result, err = executor.Exec(ctx, query, args...)
 	} else {
 		// --- UPDATE Path ---
 		// Fetch the original record to compare against (优先查缓存)
 		original = utils.NewPtr[T]()
-		err = t.byIDInternal(ctx, id, &original)
+		if readOriginalFromExecutor {
+			err = t.getOriginalForSave(ctx, executor, id, original)
+		} else {
+			err = t.byIDInternal(ctx, id, &original)
+		}
 		if err != nil {
 			// If not found, use a non-nil zero value pointer for original
 			original = utils.NewPtr[T]()
 			changedFields, err = utils.FindChangedFieldsSimple(&original, utils.ToPtr(value), t.info) // Use utils package
 			if err != nil {
-				return fmt.Errorf("failed to find changed fields: %w", err)
+				return mutation, fmt.Errorf("failed to find changed fields: %w", err)
 			}
 			// Proceed with update as if all fields changed (or skip, depending on policy)
 		} else {
 			changedFields, err = utils.FindChangedFieldsSimple(&original, utils.ToPtr(value), t.info) // Use utils package
 			if err != nil {
-				return fmt.Errorf("failed to find changed fields: %w", err)
+				return mutation, fmt.Errorf("failed to find changed fields: %w", err)
 			}
 		}
+		mutation.original = original
 		if updatedAtCol, updatedAtExists := t.info.FieldToColumnMap["UpdatedAt"]; updatedAtExists {
 			delete(changedFields, updatedAtCol)
 		}
 
 		if len(changedFields) == 0 {
-			return nil // Nothing to update
+			return mutation, nil // Nothing to update
 		}
 
 		setUpdatedAtTimestamp(value, now)
@@ -334,7 +366,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 
 		// Ensure ID is non-zero for update
 		if id == 0 {
-			return errors.New("cannot update record with zero ID")
+			return mutation, errors.New("cannot update record with zero ID")
 		}
 
 		vals = append(vals, id) // Add ID for WHERE clause
@@ -343,13 +375,13 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		args = vals
 
 		// Execute the UPDATE query
-		result, err = t.db.Exec(ctx, query, args...)
+		result, err = executor.Exec(ctx, query, args...)
 	}
 
 	// --- Handle DB Error ---
 	if err != nil {
 		log.Printf("ERROR: Failed to execute save operation for %s: %v", t.info.TableName, err)
-		return fmt.Errorf("database save operation failed: %w", err)
+		return mutation, fmt.Errorf("database save operation failed: %w", err)
 	}
 
 	// --- Update Model State (ID, NewRecord) ---
@@ -369,6 +401,23 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 	} else {
 		log.Printf("[WARN] saveInternal: Could not set ID or NewRecordFlag on model value for %T", value)
 	}
+
+	mutation.changedFields = changedFields
+	mutation.applied = true
+	return mutation, nil
+}
+
+func (t *Thing[T]) getOriginalForSave(ctx context.Context, executor sqlExecutor, id int64, dest T) error {
+	query := fmt.Sprintf("%s WHERE \"%s\" = ?", t.db.Builder().BuildSelectSQL(t.info.TableName, t.info.Columns), t.info.PkName)
+	return executor.Get(ctx, dest, query, id)
+}
+
+func (t *Thing[T]) finalizeSave(ctx context.Context, mutation saveMutation[T]) {
+	if !mutation.applied {
+		return
+	}
+	value := mutation.value
+	modelValue := reflect.ValueOf(value)
 
 	// --- Update Cache ---
 	switch {
@@ -393,24 +442,22 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 		// Update Query Caches (Incremental)
 		// Pass original even if it's a zero value in CREATE case
 		// Pass value (which is the final state)
-		t.invalidateAffectedQueryCaches(ctx, value, original, isNew, false)
+		t.invalidateAffectedQueryCaches(ctx, value, mutation.original, mutation.isNew, false)
 	}
 
 	// Trigger AfterSave/AfterCreate Hooks
 	if modelValue.IsValid() {
-		if isNew {
+		if mutation.isNew {
 			if err := triggerEvent(ctx, EventTypeAfterCreate, value, nil); err != nil {
 				log.Printf("WARN: AfterCreate hook failed: %v", err)
 			}
 		}
-		if err := triggerEvent(ctx, EventTypeAfterSave, value, changedFields); err != nil {
+		if err := triggerEvent(ctx, EventTypeAfterSave, value, mutation.changedFields); err != nil {
 			log.Printf("WARN: AfterSave hook failed: %v", err)
 		}
 	} else {
 		log.Printf("[WARN] saveInternal: Model value invalid, skipping AfterSave/AfterCreate hooks for %T", value)
 	}
-
-	return nil // Success
 }
 
 // deleteInternal handles deleting records.
@@ -489,6 +536,32 @@ func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 	return nil // Success
 }
 
+func (t *Thing[T]) finalizeDelete(ctx context.Context, value T) error {
+	if t.cache == nil {
+		return nil
+	}
+	id := value.GetID()
+	cacheKey := generateCacheKey(t.info.TableName, id)
+	lockKey := cacheKey + ":lock"
+	err := WithLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
+		if errCache := t.cache.Delete(ctx, cacheKey); errCache != nil && !errors.Is(errCache, common.ErrNotFound) {
+			log.Printf("WARN: Failed to delete cache key %s during delete operation: %v", cacheKey, errCache)
+			return errCache
+		}
+		t.invalidateAffectedQueryCaches(ctx, value, value, false, true)
+		return nil
+	})
+	if err != nil {
+		log.Printf("WARN: Failed to finalize delete cache state for %s %d: %v", t.info.TableName, id, err)
+	}
+	if reflect.ValueOf(value).IsValid() {
+		if errHook := triggerEvent(ctx, EventTypeAfterDelete, value, nil); errHook != nil {
+			log.Printf("WARN: AfterDelete hook failed: %v", errHook)
+		}
+	}
+	return err
+}
+
 // sliceContains checks if a string slice contains a specific string.
 func sliceContains(slice []string, item string) bool {
 	for _, s := range slice {
@@ -509,6 +582,51 @@ func (t *Thing[T]) ByID(id int64) (T, error) {
 // Save creates or updates a record in the database.
 func (t *Thing[T]) Save(value T) error {
 	return t.saveInternal(t.ctx, value) // value is already *User (T)
+}
+
+// SaveMany creates or updates records in a single database transaction.
+// Model and query caches are updated only after the transaction commits.
+func (t *Thing[T]) SaveMany(values []T) error {
+	if len(values) == 0 {
+		return nil
+	}
+	if t.db == nil || t.cache == nil {
+		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+	}
+
+	tx, err := t.db.BeginTx(t.ctx, nil)
+	if err != nil {
+		return fmt.Errorf("SaveMany begin transaction failed: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				log.Printf("WARN: SaveMany rollback failed: %v", rollbackErr)
+			}
+		}
+	}()
+
+	mutations := make([]saveMutation[T], 0, len(values))
+	for i, value := range values {
+		mutation, err := t.saveWithExecutor(t.ctx, tx, value, true)
+		if err != nil {
+			return fmt.Errorf("SaveMany item %d failed: %w", i, err)
+		}
+		if mutation.applied {
+			mutations = append(mutations, mutation)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("SaveMany commit failed: %w", err)
+	}
+	committed = true
+
+	for _, mutation := range mutations {
+		t.finalizeSave(t.ctx, mutation)
+	}
+	return nil
 }
 
 // SoftDelete performs a soft delete on the record by setting the 'deleted' flag to true
@@ -560,6 +678,72 @@ func (t *Thing[T]) SoftDelete(value T) error {
 func (t *Thing[T]) Delete(value T) error {
 	// Call the internal hard delete logic
 	return t.deleteInternal(t.ctx, value)
+}
+
+// DeleteMany hard-deletes records in a single database transaction.
+// Model and query caches are invalidated only after the transaction commits.
+func (t *Thing[T]) DeleteMany(values []T) error {
+	if len(values) == 0 {
+		return nil
+	}
+	if t.db == nil || t.cache == nil {
+		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+	}
+
+	tx, err := t.db.BeginTx(t.ctx, nil)
+	if err != nil {
+		return fmt.Errorf("DeleteMany begin transaction failed: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+				log.Printf("WARN: DeleteMany rollback failed: %v", rollbackErr)
+			}
+		}
+	}()
+
+	deletedValues := make([]T, 0, len(values))
+	for i, value := range values {
+		modelValue := reflect.ValueOf(value)
+		if !modelValue.IsValid() || (modelValue.Kind() == reflect.Ptr && modelValue.IsNil()) {
+			return fmt.Errorf("DeleteMany item %d failed: value (model pointer) is nil", i)
+		}
+
+		id := value.GetID()
+		if id == 0 {
+			return fmt.Errorf("DeleteMany item %d failed: cannot delete record with zero ID", i)
+		}
+		if modelValue.IsValid() {
+			if err := triggerEvent(t.ctx, EventTypeBeforeDelete, value, nil); err != nil {
+				return fmt.Errorf("DeleteMany item %d BeforeDelete hook failed: %w", i, err)
+			}
+		}
+
+		query := t.db.Builder().BuildDeleteSQL(t.info.TableName, t.info.PkName)
+		result, err := tx.Exec(t.ctx, query, id)
+		if err != nil {
+			return fmt.Errorf("DeleteMany item %d database delete failed: %w", i, err)
+		}
+		rowsAffected, _ := result.RowsAffected()
+		if rowsAffected == 0 {
+			return fmt.Errorf("DeleteMany item %d failed: %w", i, common.ErrNotFound)
+		}
+		deletedValues = append(deletedValues, value)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("DeleteMany commit failed: %w", err)
+	}
+	committed = true
+
+	var firstErr error
+	for _, value := range deletedValues {
+		if err := t.finalizeDelete(t.ctx, value); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // ByIDs retrieves multiple records by their primary keys and optionally preloads relations.

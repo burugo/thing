@@ -80,7 +80,7 @@ func main() {
 
 ## What Thing Optimizes For
 
-- `Save`, `ByID`, `ByIDs`, `Delete`, and `SoftDelete`
+- `Save`, `SaveMany`, `ByID`, `ByIDs`, `Delete`, `DeleteMany`, and `SoftDelete`
 - Paginated list queries through `Query(...).Fetch(offset, limit)`
 - Count caching through `Query(...).Count()`
 - Model cache reuse when list results are hydrated

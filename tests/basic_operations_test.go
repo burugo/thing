@@ -108,6 +108,43 @@ func TestThing_Save_Update(t *testing.T) {
 	assert.Equal(t, "updated@example.com", foundUser.Email)
 }
 
+func TestThing_SaveManyCreatesAndUpdatesInTransaction(t *testing.T) {
+	th, _, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	alice := &User{Name: "Batch Alice", Email: "batch-alice@example.com"}
+	bob := &User{Name: "Batch Bob", Email: "batch-bob@example.com"}
+	err := th.SaveMany([]*User{alice, bob})
+	require.NoError(t, err)
+	require.NotZero(t, alice.ID)
+	require.NotZero(t, bob.ID)
+
+	alice.Name = "Batch Alice Updated"
+	bob.Name = "Batch Bob Updated"
+	err = th.SaveMany([]*User{alice, bob})
+	require.NoError(t, err)
+
+	foundAlice, err := th.ByID(alice.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Batch Alice Updated", foundAlice.Name)
+	foundBob, err := th.ByID(bob.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "Batch Bob Updated", foundBob.Name)
+}
+
+func TestThing_SaveManyRollsBackWhenItemFails(t *testing.T) {
+	th, _, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	first := &User{Name: "Batch Rollback", Email: "batch-rollback@example.com"}
+	err := th.SaveMany([]*User{first, nil})
+	require.Error(t, err)
+	require.NotZero(t, first.ID, "insert ran before rollback and assigned an ID")
+
+	_, err = th.ByID(first.ID)
+	assert.ErrorIs(t, err, common.ErrNotFound)
+}
+
 func TestThing_Save_UnchangedExistingDoesNotTouchUpdatedAt(t *testing.T) {
 	th, _, db, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
@@ -218,6 +255,54 @@ func TestThing_Delete(t *testing.T) {
 
 	// Verify user is actually gone from DB
 	_, err = th.ByID(1)
+}
+
+func TestThing_DeleteManyDeletesInTransaction(t *testing.T) {
+	th, _, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	alice := &User{Name: "DeleteMany Alice", Email: "delete-many-alice@example.com"}
+	bob := &User{Name: "DeleteMany Bob", Email: "delete-many-bob@example.com"}
+	require.NoError(t, th.SaveMany([]*User{alice, bob}))
+
+	require.NoError(t, th.DeleteMany([]*User{alice, bob}))
+
+	_, err := th.ByID(alice.ID)
+	assert.ErrorIs(t, err, common.ErrNotFound)
+	_, err = th.ByID(bob.ID)
+	assert.ErrorIs(t, err, common.ErrNotFound)
+}
+
+func TestThing_DeleteManyRollsBackWhenItemMissing(t *testing.T) {
+	th, _, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	alice := &User{Name: "DeleteMany Rollback", Email: "delete-many-rollback@example.com"}
+	require.NoError(t, th.Save(alice))
+
+	missing := &User{BaseModel: thing.BaseModel{ID: 999999}}
+	err := th.DeleteMany([]*User{alice, missing})
+	assert.ErrorIs(t, err, common.ErrNotFound)
+
+	found, err := th.ByID(alice.ID)
+	require.NoError(t, err)
+	assert.Equal(t, alice.ID, found.ID)
+}
+
+func TestThing_DeleteManyRejectsNilAndRollsBack(t *testing.T) {
+	th, _, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	alice := &User{Name: "DeleteMany Nil Rollback", Email: "delete-many-nil-rollback@example.com"}
+	require.NoError(t, th.Save(alice))
+
+	err := th.DeleteMany([]*User{alice, nil})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "item 1")
+
+	found, err := th.ByID(alice.ID)
+	require.NoError(t, err)
+	assert.Equal(t, alice.ID, found.ID)
 }
 
 func TestThing_Query(t *testing.T) {

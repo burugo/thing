@@ -136,6 +136,13 @@ if err := users.Save(user); err != nil {
 	log.Fatal(err)
 }
 
+// 在一个事务里创建或更新多条记录
+batch := []*User{
+	{Name: "Bob", Email: "bob@example.com"},
+	{Name: "Carol", Email: "carol@example.com"},
+}
+err := users.SaveMany(batch)
+
 // Cached single read
 found, err := users.ByID(user.ID)
 
@@ -147,9 +154,14 @@ err = users.SoftDelete(user)
 
 // Hard delete
 err = users.Delete(user)
+
+// 在一个事务里硬删除多条记录
+err = users.DeleteMany(batch)
 ```
 
 优先使用 `ByID` / `ByIDs` 读取实体。它们是模型缓存的主路径，比散落的 `SELECT *` 更容易复用缓存。
+
+`SaveMany` 和 `DeleteMany` 保持普通 Thing 写入的生命周期行为，但会把数据库写入合并到一个事务里。模型缓存和 query cache 只会在事务提交后更新或失效。
 
 ## 查询
 
@@ -498,7 +510,7 @@ sqlDB := users.DB()
 
 - 业务高频读优先走 Thing 的 `Query` / `ByID` / `ByIDs`。
 - 报表、聚合、一次性后台任务可以走 raw SQL。
-- raw SQL 写入后要确认是否需要主动清理相关缓存，避免绕开 ORM 写路径。
+- raw SQL 写入后，如果该表相关的缓存列表或计数可能变脏，对受影响的模型调用 `InvalidateQueryCaches(ctx)`。
 
 ## 监控缓存
 

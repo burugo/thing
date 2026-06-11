@@ -33,6 +33,8 @@ type CacheIndex struct {
 	keyToParams map[string]types.QueryParams
 	// keyToDependencies maps a query cache key to the fields it depends on.
 	keyToDependencies map[string]QueryDependencies
+	// tableToQueryKeys maps table -> all registered list/count query cache keys.
+	tableToQueryKeys map[string]map[string]bool
 
 	// DependencyIndex maps table -> DB column -> cache keys for all query dependencies.
 	DependencyIndex map[string]map[string]map[string]bool
@@ -57,6 +59,7 @@ func NewCacheIndex() *CacheIndex {
 	return &CacheIndex{
 		keyToParams:              make(map[string]types.QueryParams),
 		keyToDependencies:        make(map[string]QueryDependencies),
+		tableToQueryKeys:         make(map[string]map[string]bool),
 		DependencyIndex:          make(map[string]map[string]map[string]bool),
 		valueIndex:               make(map[string]map[string]map[string]map[string]bool),
 		FieldIndex:               make(map[string]map[string]map[string]bool),
@@ -78,6 +81,10 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params types.Qu
 
 	// Register key -> params mapping
 	idx.keyToParams[cacheKey] = params
+	if _, ok := idx.tableToQueryKeys[tableName]; !ok {
+		idx.tableToQueryKeys[tableName] = make(map[string]bool)
+	}
+	idx.tableToQueryKeys[tableName][cacheKey] = true
 	deps := buildQueryDependencies(params, strings.HasPrefix(cacheKey, "list:"))
 	idx.keyToDependencies[cacheKey] = deps
 	for field := range deps.WhereFields {
@@ -242,6 +249,26 @@ func (idx *CacheIndex) GetQueryDependenciesForKey(cacheKey string) (QueryDepende
 
 	deps, found := idx.keyToDependencies[cacheKey]
 	return deps, found
+}
+
+// GetQueryKeysForTable returns all registered list/count query cache keys for a table.
+func (idx *CacheIndex) GetQueryKeysForTable(tableName string) []string {
+	if tableName == "" {
+		return nil
+	}
+
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	keysForTable, ok := idx.tableToQueryKeys[tableName]
+	if !ok {
+		return nil
+	}
+	keys := make([]string, 0, len(keysForTable))
+	for key := range keysForTable {
+		keys = append(keys, key)
+	}
+	return keys
 }
 
 // GetKeysByChangedFields returns cache keys registered as dependent on any changed field.
