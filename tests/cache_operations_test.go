@@ -755,6 +755,83 @@ func generateQueryCacheKey(t *testing.T, keyType, tableName string, params thing
 	return thing.GenerateCacheKey(keyType, tableName, params)
 }
 
+func TestThing_DeleteInvalidatesQueryCacheWhenMatchCannotParse(t *testing.T) {
+	thingUser, mockCache, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	user := &User{Name: "Bob", Email: "bob@example.com"}
+	require.NoError(t, thingUser.Save(user))
+
+	params := thing.QueryParams{
+		Where: "LOWER(email) = ?",
+		Args:  []interface{}{"bob@example.com"},
+	}
+	_, err := thingUser.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+
+	listCacheKey := generateQueryCacheKey(t, "list", user.TableName(), params)
+	cachedIDs, err := mockCache.GetQueryIDs(context.Background(), listCacheKey)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{user.ID}, cachedIDs)
+
+	mockCache.ResetCalls()
+	require.NoError(t, thingUser.Delete(user))
+
+	_, err = mockCache.GetQueryIDs(context.Background(), listCacheKey)
+	assert.ErrorIs(t, err, common.ErrNotFound)
+	assert.GreaterOrEqual(t, mockCache.Counters["Delete"], 1, "delete should drop query cache when match evaluation cannot parse WHERE")
+}
+
+func TestThing_DeleteInvalidatesUncertainDependencyQueryCache(t *testing.T) {
+	thingUser, mockCache, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	user := &User{Name: "Bob", Email: "bob@example.com"}
+	require.NoError(t, thingUser.Save(user))
+
+	params := thing.QueryParams{
+		Where: "LOWER(name) = ?",
+		Args:  []interface{}{"bob"},
+	}
+	_, err := thingUser.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+
+	listCacheKey := generateQueryCacheKey(t, "list", user.TableName(), params)
+	cachedIDs, err := mockCache.GetQueryIDs(context.Background(), listCacheKey)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{user.ID}, cachedIDs)
+
+	mockCache.ResetCalls()
+	require.NoError(t, thingUser.Delete(user))
+
+	_, err = mockCache.GetQueryIDs(context.Background(), listCacheKey)
+	assert.ErrorIs(t, err, common.ErrNotFound)
+}
+
+func TestThing_CreateInvalidatesUncertainDependencyQueryCache(t *testing.T) {
+	thingUser, mockCache, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	params := thing.QueryParams{
+		Where: "LOWER(name) = ?",
+		Args:  []interface{}{"bob"},
+	}
+	initial, err := thingUser.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, initial)
+
+	listCacheKey := generateQueryCacheKey(t, "list", "users", params)
+	cachedIDs, err := mockCache.GetQueryIDs(context.Background(), listCacheKey)
+	require.NoError(t, err)
+	assert.Empty(t, cachedIDs)
+
+	mockCache.ResetCalls()
+	require.NoError(t, thingUser.Save(&User{Name: "Bob", Email: "bob@example.com"}))
+
+	_, err = mockCache.GetQueryIDs(context.Background(), listCacheKey)
+	assert.ErrorIs(t, err, common.ErrNotFound)
+}
+
 // Test: Complex multi-field query (name = ? AND email LIKE ?)
 func TestThing_Query_IncrementalCacheUpdate_Complex(t *testing.T) {
 	thingUser, cacheClient, _, cleanup := setupCacheTest[*User](t)

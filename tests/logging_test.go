@@ -66,8 +66,8 @@ func TestSilentLoggingSuppressesWarnings(t *testing.T) {
 	defer cleanup()
 
 	_, err := thingUser.Query(thing.QueryParams{
-		Where: "name IN (?,?)",
-		Args:  []interface{}{"Silent Degrade", "Other"},
+		Where: "LOWER(name) = ?",
+		Args:  []interface{}{"silent degrade"},
 	}).Fetch(0, 10)
 	require.NoError(t, err)
 
@@ -111,8 +111,8 @@ func TestCheckQueryMatchParseFailureHiddenAtWarn(t *testing.T) {
 	defer cleanup()
 
 	_, err := thingUser.Query(thing.QueryParams{
-		Where: "name IN (?,?)",
-		Args:  []interface{}{"Cache Degrade", "Other"},
+		Where: "LOWER(name) = ?",
+		Args:  []interface{}{"cache degrade"},
 	}).Fetch(0, 10)
 	require.NoError(t, err)
 
@@ -135,8 +135,8 @@ func TestCheckQueryMatchParseFailureLogsAtDebugNotError(t *testing.T) {
 	defer cleanup()
 
 	_, err := thingUser.Query(thing.QueryParams{
-		Where: "name IN (?,?)",
-		Args:  []interface{}{"Cache Debug Degrade", "Other"},
+		Where: "LOWER(name) = ?",
+		Args:  []interface{}{"cache debug degrade"},
 	}).Fetch(0, 10)
 	require.NoError(t, err)
 

@@ -20,12 +20,13 @@ import (
 // Mock Model for testing CheckQueryMatch
 type MatchTestModel struct {
 	thing.BaseModel
-	Name   string  `db:"name"`
-	Status int     `db:"status"`
-	Count  int64   `db:"count"`
-	Amount float64 `db:"amount"`
-	Code   *string `db:"code"`  // Pointer type
-	Flags  []int   `db:"flags"` // Slice type
+	Name    string  `db:"name"`
+	Status  int     `db:"status"`
+	Count   int64   `db:"count"`
+	Amount  float64 `db:"amount"`
+	Code    *string `db:"code"`  // Pointer type
+	Flags   []int   `db:"flags"` // Slice type
+	Deleted bool    `db:"deleted"`
 }
 
 func (m MatchTestModel) TableName() string {
@@ -111,6 +112,54 @@ func TestCheckQueryMatch(t *testing.T) {
 				Args:  []interface{}{1, "Wrong Name"},
 			},
 			expected: false,
+		},
+		{
+			name: "OR Conditions Match First Branch",
+			params: thing.QueryParams{
+				Where: "status = ? OR name = ?",
+				Args:  []interface{}{1, "Wrong Name"},
+			},
+			expected: true,
+		},
+		{
+			name: "OR Conditions Match Second Branch",
+			params: thing.QueryParams{
+				Where: "status = ? OR name = ?",
+				Args:  []interface{}{2, "Test Name"},
+			},
+			expected: true,
+		},
+		{
+			name: "OR Conditions Mismatch",
+			params: thing.QueryParams{
+				Where: "status = ? OR name = ?",
+				Args:  []interface{}{2, "Wrong Name"},
+			},
+			expected: false,
+		},
+		{
+			name: "Grouped OR With AND Match",
+			params: thing.QueryParams{
+				Where: "(status = ? OR name = ?) AND count >= ?",
+				Args:  []interface{}{2, "Test Name", int64(100)},
+			},
+			expected: true,
+		},
+		{
+			name: "Grouped OR With AND Mismatch",
+			params: thing.QueryParams{
+				Where: "(status = ? OR name = ?) AND count > ?",
+				Args:  []interface{}{2, "Test Name", int64(100)},
+			},
+			expected: false,
+		},
+		{
+			name: "Nested Groups Respect Precedence",
+			params: thing.QueryParams{
+				Where: "status = ? OR (name = ? AND count > ?)",
+				Args:  []interface{}{2, "Test Name", int64(50)},
+			},
+			expected: true,
 		},
 		{
 			name: "LIKE Match End Wildcard",
@@ -292,6 +341,28 @@ func TestCheckQueryMatch(t *testing.T) {
 			expectError: true,
 		},
 		{
+			name: "IN Match Expanded Placeholders",
+			params: thing.QueryParams{
+				Where: "status IN (?, ?)",
+				Args:  []interface{}{2, 1},
+			},
+			expected: true,
+		},
+		{
+			name: "Quoted Boolean Literal Match",
+			params: thing.QueryParams{
+				Where: `"deleted" = false`,
+			},
+			expected: true,
+		},
+		{
+			name: "Quoted Boolean Literal Mismatch",
+			params: thing.QueryParams{
+				Where: `"deleted" = true`,
+			},
+			expected: false,
+		},
+		{
 			name: "Unsupported Operator (Error)",
 			params: thing.QueryParams{
 				Where: "status BETWEEN ? AND ?",
@@ -452,7 +523,7 @@ func TestCheckQueryMatch(t *testing.T) {
 		{
 			name: "Invalid WHERE Clause Format",
 			params: thing.QueryParams{
-				Where: "status = 1", // No placeholder
+				Where: "status =",
 				Args:  []interface{}{},
 			},
 			expected:    false,
@@ -499,6 +570,52 @@ func TestCheckQueryMatch(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, tt.expected, result)
 			}
+		})
+	}
+}
+
+func TestCheckQueryMatch_NilPointerFieldComparison(t *testing.T) {
+	modelInfo, err := schema.GetCachedModelInfo(reflect.TypeOf(MatchTestModel{}))
+	require.NoError(t, err)
+
+	model := MatchTestModel{
+		Name:   "Nil Code",
+		Status: 1,
+		Code:   nil,
+	}
+
+	tests := []struct {
+		name     string
+		params   thing.QueryParams
+		expected bool
+	}{
+		{
+			name:     "nil pointer equals non-nil value",
+			params:   thing.QueryParams{Where: "code = ?", Args: []interface{}{"ABC"}},
+			expected: false,
+		},
+		{
+			name:     "nil pointer not equals non-nil value",
+			params:   thing.QueryParams{Where: "code != ?", Args: []interface{}{"ABC"}},
+			expected: true,
+		},
+		{
+			name:     "nil pointer equals nil",
+			params:   thing.QueryParams{Where: "code = ?", Args: []interface{}{nil}},
+			expected: true,
+		},
+		{
+			name:     "nil pointer not equals nil",
+			params:   thing.QueryParams{Where: "code != ?", Args: []interface{}{nil}},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := cache.CheckQueryMatch(&model, modelInfo.TableName, modelInfo.ColumnToFieldMap, toInternalQueryParams(tt.params))
+			require.NoError(t, err)
+			require.Equal(t, tt.expected, result)
 		})
 	}
 }

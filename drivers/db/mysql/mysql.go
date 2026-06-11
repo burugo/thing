@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"time"
 
 	log "github.com/burugo/thing/internal/logging"
@@ -14,6 +13,7 @@ import (
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
 	driversSchema "github.com/burugo/thing/drivers/schema"
+	"github.com/burugo/thing/internal/dbscan"
 	"github.com/burugo/thing/internal/sqlbuilder"
 
 	_ "github.com/go-sql-driver/mysql" // MySQL driver
@@ -130,7 +130,7 @@ func (a *MySQLAdapter) Get(ctx context.Context, dest interface{}, query string, 
 	}
 	structVal := destVal.Elem() // The actual struct value
 
-	scanDest, err := prepareScanDest(structVal, cols) // Reusable helper
+	scanDest, err := dbscan.PrepareScanDest(structVal, cols) // Reusable helper
 	if err != nil {
 		duration := time.Since(start)
 		log.Errorf("DB Get Error (Prepare Scan - MySQL) (%s): %v", duration, err)
@@ -199,7 +199,7 @@ func (a *MySQLAdapter) Select(ctx context.Context, dest interface{}, query strin
 		return fmt.Errorf("mysql Select failed fetching columns: %w", err)
 	}
 
-	isBasicTypeSlice := isBasicType(elemType)
+	isBasicTypeSlice := dbscan.IsBasicType(elemType)
 	isPtrElem := elemType.Kind() == reflect.Ptr
 	baseElemType := elemType
 	if isPtrElem {
@@ -245,7 +245,7 @@ func (a *MySQLAdapter) scanAndAppendRowForSelect(rows *sql.Rows, sliceVal *refle
 	} else {
 		newElemPtrVal := reflect.New(baseElemType)
 		elemToScan = newElemPtrVal
-		scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols)
+		scanDest, setupErr = dbscan.PrepareScanDest(newElemPtrVal.Elem(), cols)
 		if setupErr != nil {
 			return setupErr
 		}
@@ -388,7 +388,7 @@ func (tx *MySQLTx) Get(ctx context.Context, dest interface{}, query string, args
 		return fmt.Errorf("tx get: destination must be a non-nil pointer to a struct, got %T", dest)
 	}
 	structVal := destVal.Elem()
-	scanDest, err := prepareScanDest(structVal, cols)
+	scanDest, err := dbscan.PrepareScanDest(structVal, cols)
 	if err != nil {
 		duration := time.Since(start)
 		log.Errorf("DB Tx Get Error (Prepare Scan - MySQL) (%s): %v", duration, err)
@@ -458,7 +458,7 @@ func (tx *MySQLTx) Select(ctx context.Context, dest interface{}, query string, a
 		return fmt.Errorf("mysql Tx Select failed fetching columns: %w", err)
 	}
 
-	isBasicTypeSlice := isBasicType(elemType)
+	isBasicTypeSlice := dbscan.IsBasicType(elemType)
 	isPtrElem := elemType.Kind() == reflect.Ptr
 	baseElemType := elemType
 	if isPtrElem {
@@ -482,7 +482,7 @@ func (tx *MySQLTx) Select(ctx context.Context, dest interface{}, query string, a
 		} else {
 			newElemPtrVal := reflect.New(baseElemType)
 			elemToScan = newElemPtrVal
-			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols)
+			scanDest, setupErr = dbscan.PrepareScanDest(newElemPtrVal.Elem(), cols)
 			if setupErr != nil {
 				duration := time.Since(start)
 				log.Errorf("DB Tx Select Error (Prepare Scan - MySQL) (%s): %v", duration, setupErr)
@@ -538,137 +538,6 @@ func (tx *MySQLTx) Exec(ctx context.Context, query string, args ...interface{}) 
 	lastInsertID, _ := result.LastInsertId()
 	log.Printf("DB Tx Exec (MySQL): %s [%v] (Affected: %d, LastInsertID: %d) (%s)", query, args, rowsAffected, lastInsertID, duration)
 	return result, nil
-}
-
-// --- Helper Functions (Copied from SQLite adapter - might need consolidation) ---
-
-// prepareScanDest creates a slice of pointers for scanning based on struct fields and column names.
-func prepareScanDest(structVal reflect.Value, cols []string) ([]interface{}, error) {
-	if structVal.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("prepareScanDest: input must be a struct value, got %s", structVal.Kind())
-	}
-
-	fieldMap, err := getStructFieldMap(structVal)
-	if err != nil {
-		return nil, fmt.Errorf("prepareScanDest: failed to get struct field map: %w", err)
-	}
-
-	dest := make([]interface{}, len(cols))
-	for i, colName := range cols {
-		if field, ok := fieldMap[colName]; ok {
-			if !field.CanAddr() {
-				return nil, fmt.Errorf("prepareScanDest: cannot take address of field for column %s", colName)
-			}
-			dest[i] = field.Addr().Interface() // Get pointer to the field
-		} else {
-			// If a column is returned that doesn't map to a field, scan into sql.RawBytes
-			// log.Printf("Warning: Column '%s' not found in destination struct fields, scanning into RawBytes.", colName)
-			dest[i] = new(sql.RawBytes)
-		}
-	}
-	return dest, nil
-}
-
-// getStructFieldMap is a helper for prepareScanDest to recursively build the field map, including embedded structs.
-// It maps the database column name (from db tag or field name) to the reflect.Value of the field.
-// Prioritizes outer fields over embedded fields if names clash.
-func getStructFieldMap(structVal reflect.Value) (map[string]reflect.Value, error) {
-	if structVal.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("getStructFieldMap: input must be a struct value, got %s", structVal.Kind())
-	}
-
-	typ := structVal.Type()
-	fieldMap := make(map[string]reflect.Value)
-	// log.Printf("DEBUG: getStructFieldMap processing type: %s", typ.Name()) // Added log
-
-	// First pass: handle embedded structs recursively
-	for i := 0; i < structVal.NumField(); i++ {
-		field := structVal.Field(i)
-		structField := typ.Field(i)
-
-		if structField.Anonymous && field.Kind() == reflect.Struct && field.Type() != reflect.TypeOf(time.Time{}) {
-			// log.Printf("DEBUG: getStructFieldMap recursing into anonymous field: %s", structField.Name) // Added log
-			embeddedMap, err := getStructFieldMap(field) // Recursive call
-			if err != nil {
-				return nil, fmt.Errorf("error processing embedded struct field %s: %w", structField.Name, err)
-			}
-			// Merge embedded fields. Outer fields will overwrite later.
-			for k, v := range embeddedMap {
-				fieldMap[k] = v
-			}
-			// log.Printf("DEBUG: getStructFieldMap merged %d fields from embedded %s", len(embeddedMap), structField.Name) // Added log
-		}
-	}
-
-	// Second pass: handle direct fields (overwrites embedded fields if names clash)
-	for i := 0; i < structVal.NumField(); i++ {
-		field := structVal.Field(i)
-		structField := typ.Field(i)
-
-		if !structField.IsExported() {
-			continue
-		}
-
-		// Skip anonymous structs processed in the first pass
-		if structField.Anonymous && field.Kind() == reflect.Struct && field.Type() != reflect.TypeOf(time.Time{}) {
-			continue
-		}
-
-		dbTag := structField.Tag.Get("db")
-		if dbTag == "-" {
-			continue // Skip fields explicitly ignored
-		}
-
-		// Handle regular (non-anonymous or non-struct) fields with a db tag, or use field name.
-		// Note: This block now also handles named embedded structs if they have a db tag.
-		fieldName := structField.Name
-		mapKey := dbTag
-		if mapKey != "" {
-			// Use only the part before the first comma as the column name
-			parts := strings.Split(mapKey, ",")
-			mapKey = parts[0]
-		}
-
-		if mapKey == "" {
-			mapKey = strings.ToLower(fieldName) // Default to lower-case field name if no db tag or after splitting
-		}
-
-		// Add/overwrite the field in the map. Outer fields overwrite embedded fields naturally
-		if field.IsValid() && field.CanAddr() {
-			fieldMap[mapKey] = field
-			// log.Printf("DEBUG: getStructFieldMap added/updated mapKey: '%s' for field: %s", mapKey, fieldName) // Added log
-		} else {
-			// Log or return an error if the field cannot be addressed
-			log.Printf("WARN: Field %s (mapKey %s) is not addressable or invalid.", fieldName, mapKey)
-			// return nil, fmt.Errorf("field %s is not addressable", fieldName)
-		}
-	}
-
-	// log.Printf("DEBUG: getStructFieldMap finished processing type: %s, map size: %d", typ.Name(), len(fieldMap)) // Added log
-	return fieldMap, nil
-}
-
-// isBasicType checks if a reflect.Type represents a basic Go type suitable for direct scanning.
-func isBasicType(t reflect.Type) bool {
-	switch t.Kind() {
-	case reflect.Bool,
-		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64,
-		reflect.String:
-		return true
-	case reflect.Slice:
-		// Handle []byte specifically
-		return t.Elem().Kind() == reflect.Uint8
-	case reflect.Struct:
-		// Handle time.Time
-		return t == reflect.TypeOf(time.Time{})
-	case reflect.Ptr:
-		// Handle pointers to basic types or time.Time
-		return isBasicType(t.Elem())
-	default:
-		return false
-	}
 }
 
 // DB returns the underlying *sql.DB for advanced use cases.

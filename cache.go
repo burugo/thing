@@ -191,10 +191,14 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 		v := modelVal.FieldByIndex(f.Index)
 		fieldValues[f.DBColumn] = v.Interface()
 	}
+	candidateColumns := cacheCandidateColumns(fieldValues, changedColumns, isCreate, isDelete, !model.KeepItem())
 
 	// Use valueIndex for exact match fields
 	cacheKeySet := make(map[string]struct{})
 	for col, val := range fieldValues {
+		if !candidateColumns[col] {
+			continue
+		}
 		keys := cache.GlobalCacheIndex.GetKeysByValue(tableName, col, val)
 		for _, k := range keys {
 			cacheKeySet[k] = struct{}{}
@@ -202,7 +206,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	}
 	// Use fieldIndex for range/other queries
 	if cache.GlobalCacheIndex != nil && cache.GlobalCacheIndex.FieldIndex != nil {
-		for col := range fieldValues {
+		for col := range candidateColumns {
 			if fieldMap, ok := cache.GlobalCacheIndex.FieldIndex[tableName]; ok {
 				if keyMap, ok := fieldMap[col]; ok {
 					for k := range keyMap {
@@ -220,10 +224,8 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	for _, k := range cache.GlobalCacheIndex.GetFullTableCountKeys(tableName) {
 		cacheKeySet[k] = struct{}{}
 	}
-	if !isCreate && !isDelete {
-		for _, k := range cache.GlobalCacheIndex.GetKeysByChangedFields(tableName, changedColumns) {
-			cacheKeySet[k] = struct{}{}
-		}
+	for _, k := range cache.GlobalCacheIndex.GetKeysByChangedFields(tableName, candidateColumns) {
+		cacheKeySet[k] = struct{}{}
 	}
 	// Convert set to slice
 	queryCacheKeys := make([]string, 0, len(cacheKeySet))
@@ -266,7 +268,10 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			// Only check if the model would have matched before deletion
 			matches, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
 			if err != nil {
-				log.Printf("DEBUG: Error checking query match for deleted model (key: %s): %v. Skipping.", cacheKey, err)
+				log.Printf("DEBUG CheckQueryMatch Failed: Query check failed for deleted model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
+				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
+					log.Printf("ERROR Failed to delete cache key '%s' after CheckQueryMatch error: %v", cacheKey, delErr)
+				}
 				continue
 			}
 			if matches {
@@ -569,6 +574,17 @@ func orderDependencyChanged(deps cache.QueryDependencies, changedColumns map[str
 		}
 	}
 	return false
+}
+
+func cacheCandidateColumns(fieldValues map[string]interface{}, changedColumns map[string]bool, isCreate bool, isDelete bool, forceAll bool) map[string]bool {
+	if !isCreate && !isDelete && !forceAll {
+		return changedColumns
+	}
+	columns := make(map[string]bool, len(fieldValues))
+	for col := range fieldValues {
+		columns[col] = true
+	}
+	return columns
 }
 
 // determineCacheAction determines cache add/remove actions.

@@ -14,6 +14,7 @@ import (
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
 	driversSchema "github.com/burugo/thing/drivers/schema"
+	"github.com/burugo/thing/internal/dbscan"
 	"github.com/burugo/thing/internal/sqlbuilder"
 
 	_ "github.com/lib/pq" // PostgreSQL driver
@@ -132,7 +133,7 @@ func (a *Adapter) Get(ctx context.Context, dest interface{}, query string, args 
 		return fmt.Errorf("get: destination must be a non-nil pointer to a struct, got %T", dest)
 	}
 	structVal := destVal.Elem()
-	scanDest, err := prepareScanDest(structVal, cols) // Reusable helper
+	scanDest, err := dbscan.PrepareScanDest(structVal, cols) // Reusable helper
 	if err != nil {
 		duration := time.Since(start)
 		log.Errorf("DB Get Error (Prepare Scan - PostgreSQL) (%s): %v", duration, err)
@@ -202,7 +203,7 @@ func (a *Adapter) Select(ctx context.Context, dest interface{}, query string, ar
 		return fmt.Errorf("postgres Select failed fetching columns: %w", err)
 	}
 
-	isBasicTypeSlice := isBasicType(elemType)
+	isBasicTypeSlice := dbscan.IsBasicType(elemType)
 	isPtrElem := elemType.Kind() == reflect.Ptr
 	baseElemType := elemType
 	if isPtrElem {
@@ -226,7 +227,7 @@ func (a *Adapter) Select(ctx context.Context, dest interface{}, query string, ar
 		} else {
 			newElemPtrVal := reflect.New(baseElemType)
 			elemToScan = newElemPtrVal
-			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols)
+			scanDest, setupErr = dbscan.PrepareScanDest(newElemPtrVal.Elem(), cols)
 			if setupErr != nil {
 				duration := time.Since(start)
 				log.Errorf("DB Select Error (Prepare Scan - PostgreSQL) (%s): %v", duration, setupErr)
@@ -408,7 +409,7 @@ func (tx *Tx) Get(ctx context.Context, dest interface{}, query string, args ...i
 		return fmt.Errorf("tx get: destination must be a non-nil pointer to a struct, got %T", dest)
 	}
 	structVal := destVal.Elem()
-	scanDest, err := prepareScanDest(structVal, cols)
+	scanDest, err := dbscan.PrepareScanDest(structVal, cols)
 	if err != nil {
 		duration := time.Since(start)
 		log.Errorf("DB Tx Get Error (Prepare Scan - PostgreSQL) (%s): %v", duration, err)
@@ -477,7 +478,7 @@ func (tx *Tx) Select(ctx context.Context, dest interface{}, query string, args .
 		return fmt.Errorf("postgres Tx Select failed fetching columns: %w", err)
 	}
 
-	isBasicTypeSlice := isBasicType(elemType)
+	isBasicTypeSlice := dbscan.IsBasicType(elemType)
 	isPtrElem := elemType.Kind() == reflect.Ptr
 	baseElemType := elemType
 	if isPtrElem {
@@ -501,7 +502,7 @@ func (tx *Tx) Select(ctx context.Context, dest interface{}, query string, args .
 		} else {
 			newElemPtrVal := reflect.New(baseElemType)
 			elemToScan = newElemPtrVal
-			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols)
+			scanDest, setupErr = dbscan.PrepareScanDest(newElemPtrVal.Elem(), cols)
 			if setupErr != nil {
 				duration := time.Since(start)
 				log.Errorf("DB Tx Select Error (Prepare Scan - PostgreSQL) (%s): %v", duration, setupErr)
@@ -572,120 +573,6 @@ func (tx *Tx) Exec(ctx context.Context, query string, args ...interface{}) (sql.
 }
 
 // --- Placeholder Rebinding Helper ---
-
-// --- Helper Functions (Copied from SQLite adapter - might need consolidation) ---
-
-// prepareScanDest creates a slice of pointers for scanning based on struct fields and column names.
-func prepareScanDest(structVal reflect.Value, cols []string) ([]interface{}, error) {
-	if structVal.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("prepareScanDest: input must be a struct value, got %s", structVal.Kind())
-	}
-
-	fieldMap, err := getStructFieldMap(structVal)
-	if err != nil {
-		return nil, fmt.Errorf("prepareScanDest: failed to get struct field map: %w", err)
-	}
-
-	dest := make([]interface{}, len(cols))
-	for i, colName := range cols {
-		if field, ok := fieldMap[colName]; ok {
-			if !field.CanAddr() {
-				return nil, fmt.Errorf("prepareScanDest: cannot take address of field for column %s", colName)
-			}
-			dest[i] = field.Addr().Interface() // Get pointer to the field
-		} else {
-			// If a column is returned that doesn't map to a field, scan into sql.RawBytes
-			dest[i] = new(sql.RawBytes)
-		}
-	}
-	return dest, nil
-}
-
-// getStructFieldMap is a helper for prepareScanDest to recursively build the field map, including embedded structs.
-func getStructFieldMap(structVal reflect.Value) (map[string]reflect.Value, error) {
-	if structVal.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("getStructFieldMap: input must be a struct value, got %s", structVal.Kind())
-	}
-
-	typ := structVal.Type()
-	fieldMap := make(map[string]reflect.Value)
-
-	// First pass: handle embedded structs recursively
-	for i := 0; i < structVal.NumField(); i++ {
-		field := structVal.Field(i)
-		structField := typ.Field(i)
-
-		if structField.Anonymous && field.Kind() == reflect.Struct && field.Type() != reflect.TypeOf(time.Time{}) {
-			embeddedMap, err := getStructFieldMap(field)
-			if err != nil {
-				return nil, fmt.Errorf("error processing embedded struct field %s: %w", structField.Name, err)
-			}
-			for k, v := range embeddedMap {
-				fieldMap[k] = v
-			}
-		}
-	}
-
-	// Second pass: handle direct fields (overwrites embedded fields if names clash)
-	for i := 0; i < structVal.NumField(); i++ {
-		field := structVal.Field(i)
-		structField := typ.Field(i)
-
-		if !structField.IsExported() {
-			continue
-		}
-
-		if structField.Anonymous && field.Kind() == reflect.Struct && field.Type() != reflect.TypeOf(time.Time{}) {
-			continue
-		}
-
-		dbTag := structField.Tag.Get("db")
-		if dbTag == "-" {
-			continue
-		}
-
-		fieldName := structField.Name
-		mapKey := dbTag
-		if mapKey != "" {
-			parts := strings.Split(mapKey, ",")
-			mapKey = parts[0]
-		}
-
-		if mapKey == "" {
-			mapKey = strings.ToLower(fieldName)
-		}
-
-		if field.IsValid() && field.CanAddr() {
-			fieldMap[mapKey] = field
-		} else {
-			log.Printf("WARN: Field %s (mapKey %s) is not addressable or invalid.", fieldName, mapKey)
-		}
-	}
-
-	return fieldMap, nil
-}
-
-// isBasicType checks if a reflect.Type represents a basic Go type suitable for direct scanning.
-func isBasicType(t reflect.Type) bool {
-	switch t.Kind() {
-	case reflect.Bool,
-		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64,
-		reflect.String:
-		return true
-	case reflect.Slice:
-		return t.Elem().Kind() == reflect.Uint8
-	case reflect.Struct:
-		return t == reflect.TypeOf(time.Time{})
-	case reflect.Ptr:
-		return isBasicType(t.Elem())
-	case reflect.Invalid, reflect.Uintptr, reflect.Complex64, reflect.Complex128, reflect.Array, reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.UnsafePointer:
-		return false
-	default:
-		return false
-	}
-}
 
 // pgResult implements sql.Result for PostgreSQL INSERT RETURNING id
 // to support LastInsertID in ORM logic.

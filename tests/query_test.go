@@ -196,6 +196,68 @@ func TestCachedResult_Fetch(t *testing.T) {
 	})
 }
 
+type VisibilityPost struct {
+	thing.BaseModel
+	Title  string `db:"title"`
+	Hidden bool   `db:"hidden"`
+}
+
+func (p *VisibilityPost) TableName() string {
+	return "visibility_posts"
+}
+
+func (p *VisibilityPost) KeepItem() bool {
+	return p.BaseModel.KeepItem() && !p.Hidden
+}
+
+func setupVisibilityPostThing(t *testing.T) (*thing.Thing[*VisibilityPost], *mockCacheClient, func()) {
+	db, mockCache, cleanup := setupTestDB(t)
+	_, err := db.Exec(
+		context.Background(),
+		`CREATE TABLE IF NOT EXISTS visibility_posts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted BOOLEAN DEFAULT FALSE,
+			title TEXT,
+			hidden BOOLEAN DEFAULT FALSE
+		);`,
+	)
+	require.NoError(t, err)
+
+	th, err := thing.New[*VisibilityPost](db, mockCache)
+	require.NoError(t, err)
+
+	return th, mockCache, cleanup
+}
+
+func TestCachedResult_FetchUsesKeepItemForBusinessVisibility(t *testing.T) {
+	th, mockCache, cleanup := setupVisibilityPostThing(t)
+	defer cleanup()
+
+	hiddenFirst := &VisibilityPost{Title: "hidden first", Hidden: true}
+	visibleFirst := &VisibilityPost{Title: "visible first"}
+	hiddenSecond := &VisibilityPost{Title: "hidden second", Hidden: true}
+	visibleSecond := &VisibilityPost{Title: "visible second"}
+	for _, post := range []*VisibilityPost{hiddenFirst, visibleFirst, hiddenSecond, visibleSecond} {
+		require.NoError(t, th.Save(post))
+	}
+
+	params := thing.QueryParams{Order: "id ASC"}
+	mockCache.Reset()
+
+	posts, err := th.Query(params).Fetch(0, 2)
+	require.NoError(t, err)
+	require.Len(t, posts, 2)
+	require.Equal(t, visibleFirst.ID, posts[0].ID)
+	require.Equal(t, visibleSecond.ID, posts[1].ID)
+
+	listCacheKey := testGenerateListCacheKey(t, th, params)
+	cachedIDs, err := mockCache.GetQueryIDs(context.Background(), listCacheKey)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{visibleFirst.ID, visibleSecond.ID}, cachedIDs, "list cache should preserve KeepItem business filtering")
+}
+
 // TestCachedResult_All tests the Fetch() method simulating an 'All' scenario
 func TestCachedResult_All(t *testing.T) {
 	th, _, _, _ := setupCacheTest[*User](t)

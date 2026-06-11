@@ -94,6 +94,56 @@ func TestCacheIndex_QueryDependencyIndex(t *testing.T) {
 	assert.False(t, deps.HasUncertainOrder)
 }
 
+func TestCacheIndex_QueryDependencyIndexWithGroupedOR(t *testing.T) {
+	cache.ResetGlobalCacheIndex()
+	idx := cache.GlobalCacheIndex
+
+	key := "list:threads:visibility"
+	params := types.QueryParams{
+		Where: "(user_id = ? OR author_id = ?) AND archived = ?",
+		Args:  []interface{}{int64(42), int64(99), false},
+	}
+
+	idx.RegisterQuery("threads", key, params)
+
+	deps, found := idx.GetQueryDependenciesForKey(key)
+	assert.True(t, found)
+	assert.True(t, deps.WhereFields["user_id"])
+	assert.True(t, deps.WhereFields["author_id"])
+	assert.True(t, deps.WhereFields["archived"])
+
+	userKeys := idx.GetKeysByChangedFields("threads", map[string]bool{"user_id": true})
+	assert.ElementsMatch(t, []string{key}, userKeys)
+	authorKeys := idx.GetKeysByChangedFields("threads", map[string]bool{"author_id": true})
+	assert.ElementsMatch(t, []string{key}, authorKeys)
+	archivedKeys := idx.GetKeysByChangedFields("threads", map[string]bool{"archived": true})
+	assert.ElementsMatch(t, []string{key}, archivedKeys)
+}
+
+func TestCacheIndex_QueryDependencyIndexWithLiteralSoftDelete(t *testing.T) {
+	cache.ResetGlobalCacheIndex()
+	idx := cache.GlobalCacheIndex
+
+	key := "list:threads:visible_for_user"
+	params := types.QueryParams{
+		Where: `"deleted" = false AND user_id = ?`,
+		Args:  []interface{}{int64(42)},
+	}
+
+	idx.RegisterQuery("threads", key, params)
+
+	deps, found := idx.GetQueryDependenciesForKey(key)
+	assert.True(t, found)
+	assert.True(t, deps.WhereFields["deleted"])
+	assert.True(t, deps.WhereFields["user_id"])
+	assert.False(t, deps.WhereFields["*"])
+
+	deletedKeys := idx.GetKeysByChangedFields("threads", map[string]bool{"deleted": true})
+	assert.ElementsMatch(t, []string{key}, deletedKeys)
+	userKeys := idx.GetKeysByChangedFields("threads", map[string]bool{"user_id": true})
+	assert.ElementsMatch(t, []string{key}, userKeys)
+}
+
 func TestParseOrderFields(t *testing.T) {
 	cases := []struct {
 		name          string
@@ -156,6 +206,11 @@ func TestParseExactMatchFields(t *testing.T) {
 			expect: map[string][]interface{}{"user_id": {1, 2, 3}},
 		},
 		{
+			name:   "single IN scalar ignored",
+			params: types.QueryParams{Where: "user_id IN (?)", Args: []interface{}{1}},
+			expect: map[string][]interface{}{},
+		},
+		{
 			name:   "mixed = and IN",
 			params: types.QueryParams{Where: "user_id IN (?) AND status = ?", Args: []interface{}{[]int{1, 2}, "active"}},
 			expect: map[string][]interface{}{"user_id": {1, 2}, "status": {"active"}},
@@ -179,6 +234,21 @@ func TestParseExactMatchFields(t *testing.T) {
 			name:   "IN with interface{} slice",
 			params: types.QueryParams{Where: "tag IN (?)", Args: []interface{}{[]interface{}{1, "x"}}},
 			expect: map[string][]interface{}{"tag": {1, "x"}},
+		},
+		{
+			name:   "grouped OR exact matches",
+			params: types.QueryParams{Where: "(user_id = ? OR author_id = ?) AND archived = ?", Args: []interface{}{1, 2, false}},
+			expect: map[string][]interface{}{"user_id": {1}, "author_id": {2}, "archived": {false}},
+		},
+		{
+			name:   "expanded IN placeholders",
+			params: types.QueryParams{Where: "status IN (?, ?)", Args: []interface{}{"pending", "complete"}},
+			expect: map[string][]interface{}{"status": {"pending", "complete"}},
+		},
+		{
+			name:   "quoted boolean literal",
+			params: types.QueryParams{Where: `"deleted" = false AND user_id = ?`, Args: []interface{}{7}},
+			expect: map[string][]interface{}{"deleted": {false}, "user_id": {7}},
 		},
 	}
 

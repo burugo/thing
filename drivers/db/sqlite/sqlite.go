@@ -6,13 +6,13 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/burugo/thing"
 	"github.com/burugo/thing/common"
 	"github.com/burugo/thing/drivers/schema"
+	"github.com/burugo/thing/internal/dbscan"
 	log "github.com/burugo/thing/internal/logging"
 	"github.com/burugo/thing/internal/sqlbuilder"
 
@@ -110,7 +110,7 @@ func (a *SQLiteAdapter) Get(ctx context.Context, dest interface{}, query string,
 	}
 	structVal := destVal.Elem() // The actual struct value
 
-	scanDest, err := prepareScanDest(structVal, cols) // Pass struct value
+	scanDest, err := dbscan.PrepareScanDest(structVal, cols) // Pass struct value
 	if err != nil {
 		duration := time.Since(start)
 		log.Errorf("DB Get Error (Prepare Scan) (%s): %v", duration, err)
@@ -183,7 +183,7 @@ func (a *SQLiteAdapter) Select(ctx context.Context, dest interface{}, query stri
 		return fmt.Errorf("sqlite Select failed fetching columns: %w", err)
 	}
 
-	isBasicTypeSlice := isBasicType(elemType)
+	isBasicTypeSlice := dbscan.IsBasicType(elemType)
 	isPtrElem := elemType.Kind() == reflect.Ptr
 	baseElemType := elemType
 	if isPtrElem {
@@ -208,7 +208,7 @@ func (a *SQLiteAdapter) Select(ctx context.Context, dest interface{}, query stri
 			newElemPtrVal := reflect.New(baseElemType)
 			elemToScan = newElemPtrVal
 			// Use the dynamic scanner preparation for structs
-			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols) // Pass struct value
+			scanDest, setupErr = dbscan.PrepareScanDest(newElemPtrVal.Elem(), cols) // Pass struct value
 			if setupErr != nil {
 				duration := time.Since(start)
 				log.Errorf("DB Select Error (Prepare Scan) (%s): %v", duration, setupErr)
@@ -353,7 +353,7 @@ func (t *SQLiteTx) Get(ctx context.Context, dest interface{}, query string, args
 	}
 	structVal := destVal.Elem() // The actual struct value
 
-	scanDest, err := prepareScanDest(structVal, cols) // Pass struct value
+	scanDest, err := dbscan.PrepareScanDest(structVal, cols) // Pass struct value
 	if err != nil {
 		duration := time.Since(start)
 		log.Errorf("DB Tx Get Error (Prepare Scan) (%s): %v", duration, err)
@@ -422,7 +422,7 @@ func (t *SQLiteTx) Select(ctx context.Context, dest interface{}, query string, a
 		return fmt.Errorf("sqlite Tx Select failed fetching columns: %w", err)
 	}
 
-	isBasicTypeSlice := isBasicType(elemType)
+	isBasicTypeSlice := dbscan.IsBasicType(elemType)
 	isPtrElem := elemType.Kind() == reflect.Ptr
 	baseElemType := elemType
 	if isPtrElem {
@@ -447,7 +447,7 @@ func (t *SQLiteTx) Select(ctx context.Context, dest interface{}, query string, a
 			newElemPtrVal := reflect.New(baseElemType)
 			elemToScan = newElemPtrVal
 			// Use the dynamic scanner preparation for structs
-			scanDest, setupErr = prepareScanDest(newElemPtrVal.Elem(), cols) // Pass struct value
+			scanDest, setupErr = dbscan.PrepareScanDest(newElemPtrVal.Elem(), cols) // Pass struct value
 			if setupErr != nil {
 				duration := time.Since(start)
 				log.Errorf("DB Tx Select Error (Prepare Scan) (%s): %v", duration, setupErr)
@@ -526,140 +526,6 @@ func (t *SQLiteTx) Rollback() error {
 	}
 	log.Println("DB Transaction Rolled Back")
 	return nil
-}
-
-// --- Helper Functions ---
-
-// prepareScanDest creates a slice of pointers suitable for sql.Rows.Scan,
-// mapping columns returned by the query to fields in the target struct.
-// structVal should be the reflect.Value of the struct itself (not a pointer to it).
-// cols is the slice of column names returned by rows.Columns().
-func prepareScanDest(structVal reflect.Value, cols []string) ([]interface{}, error) {
-	if structVal.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("prepareScanDest: input must be a struct value, got %s", structVal.Kind())
-	}
-
-	fieldMap, err := getStructFieldMap(structVal) // Build map from db tag -> field value
-	if err != nil {
-		return nil, fmt.Errorf("prepareScanDest: failed to build field map: %w", err)
-	}
-
-	// Create scan destinations based on returned columns
-	scanDest := make([]interface{}, len(cols))
-	for i, colName := range cols {
-		if fieldVal, ok := fieldMap[colName]; ok {
-			// Ensure the field we found is addressable before getting its address
-			if fieldVal.CanAddr() {
-				scanDest[i] = fieldVal.Addr().Interface() // Get pointer to the field
-			} else {
-				// This case might happen if the field originates from an unaddressable embedded struct
-				// within an addressable outer struct. Log and discard.
-				log.Printf("Warning: Field found for column '%s' but it is not addressable in struct type %s, discarding.", colName, structVal.Type().Name())
-				scanDest[i] = new(sql.RawBytes)
-			}
-		} else {
-			// Column doesn't map to a field, use RawBytes to discard
-			scanDest[i] = new(sql.RawBytes)
-			log.Printf("Warning: Column '%s' not found in destination struct type %s, discarding.", colName, structVal.Type().Name())
-		}
-	}
-
-	return scanDest, nil
-}
-
-// getStructFieldMap is a helper for prepareScanDest to recursively build the field map, including embedded structs.
-// It maps the database column name (from db tag or field name) to the reflect.Value of the field.
-func getStructFieldMap(structVal reflect.Value) (map[string]reflect.Value, error) {
-	if structVal.Kind() != reflect.Struct {
-		return nil, fmt.Errorf("getStructFieldMap: input must be a struct value, got %s", structVal.Kind())
-	}
-
-	typ := structVal.Type()
-	fieldMap := make(map[string]reflect.Value)
-	// log.Printf("[DEBUG] getStructFieldMap: Processing type: %s", typ.Name()) // Removed log
-
-	for i := 0; i < structVal.NumField(); i++ {
-		field := structVal.Field(i)
-		structField := typ.Field(i)
-		// log.Printf("[DEBUG] getStructFieldMap: Field %s (%s)", structField.Name, field.Type().Name()) // Removed log
-
-		if !structField.IsExported() {
-			// log.Printf("[DEBUG] getStructFieldMap: Field %s is not exported, skipping.", structField.Name) // Removed log
-			continue
-		}
-
-		dbTag := structField.Tag.Get("db")
-		// jsonTag := structField.Tag.Get("json") // Removed log
-		// log.Printf("[DEBUG] getStructFieldMap: Field %s, dbTag: '%s', jsonTag: '%s'", structField.Name, dbTag, jsonTag) // Removed log
-
-		if dbTag == "-" {
-			// log.Printf("[DEBUG] getStructFieldMap: Field %s has dbTag \"-\", skipping.", structField.Name) // Removed log
-			continue
-		}
-
-		// If it's an anonymous embedded struct, recurse and merge its fields first.
-		if structField.Anonymous && field.Kind() == reflect.Struct {
-			// Ensure we can work with the struct's fields
-			if !field.CanAddr() {
-				// This might happen with unexported anonymous fields, although we filter exported above.
-				// Or non-addressable ones for other reasons. Log and skip recursion.
-				log.Printf("Skipping recursion into non-addressable anonymous struct field %s", structField.Name)
-				continue
-			}
-
-			// log.Printf("DEBUG: getStructFieldMap recursing into anonymous field: %s", structField.Name) // Added log
-			embeddedMap, err := getStructFieldMap(field) // Recursive call
-			if err != nil {
-				return nil, fmt.Errorf("error processing embedded struct field %s: %w", structField.Name, err)
-			}
-			// Merge embedded fields. Outer fields processed later will overwrite if names clash.
-			// log.Printf("DEBUG: getStructFieldMap merging %d fields from embedded %s", len(embeddedMap), structField.Name) // Removed log
-			for k, v := range embeddedMap {
-				fieldMap[k] = v
-			}
-			// log.Printf("[DEBUG] getStructFieldMap: Finished merging embedded struct %s", structField.Name) // Removed log
-			// Continue to the next field after processing the embedded struct's fields.
-			continue // Important: skip the dbTag handling below for the anonymous struct itself.
-		}
-
-		// Handle regular (non-anonymous or non-struct) fields with a db tag, or use field name.
-		// Note: This block now also handles named embedded structs if they have a db tag.
-		fieldName := structField.Name
-		mapKey := dbTag
-		if mapKey != "" {
-			// Use only the part before the first comma as the column name
-			parts := strings.Split(mapKey, ",")
-			mapKey = parts[0]
-			// log.Printf("[DEBUG] getStructFieldMap: Field %s, dbTag part used for mapKey: '%s'", fieldName, mapKey) // Removed log
-		}
-
-		if mapKey == "" {
-			mapKey = strings.ToLower(fieldName) // Default to lower-case field name if no db tag or after splitting
-			// log.Printf("[DEBUG] getStructFieldMap: Field %s, mapKey defaulted to lowercased field name: '%s'", fieldName, mapKey) // Removed log
-		}
-
-		// Add/overwrite the field in the map. Outer fields overwrite embedded fields naturally
-		fieldMap[mapKey] = field
-		// log.Printf("[DEBUG] getStructFieldMap: Field %s, added to fieldMap with key: '%s'", fieldName, mapKey) // Removed log
-	}
-	// log.Printf("[DEBUG] getStructFieldMap: Finished processing type: %s, map size: %d, map: %v", typ.Name(), len(fieldMap), fieldMap) // Removed log
-	return fieldMap, nil
-}
-
-// isBasicType checks if a reflect.Type represents a basic Go type suitable for direct scanning.
-func isBasicType(t reflect.Type) bool {
-	switch t.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64,
-		reflect.String,
-		reflect.Bool:
-		return true
-	case reflect.Invalid, reflect.Uintptr, reflect.Complex64, reflect.Complex128, reflect.Array, reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.Struct, reflect.UnsafePointer:
-		return false
-	default:
-		return false
-	}
 }
 
 // DB returns the underlying *sql.DB for advanced use cases.

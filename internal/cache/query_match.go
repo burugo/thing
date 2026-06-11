@@ -35,8 +35,9 @@ func isArgNil(argValue interface{}) bool {
 // defined in the provided QueryParams.
 // It now takes the model as interface{} and requires ModelInfo to be passed in.
 //
-// Supports =, LIKE, >, <, >=, <=, IN, !=, <>, NOT LIKE, NOT IN operators joined by AND.
-// Support for OR clauses or complex LIKE patterns is NOT yet implemented.
+// Supports =, LIKE, >, <, >=, <=, IN, !=, <>, NOT LIKE, NOT IN operators
+// joined by AND/OR with parentheses.
+// Support for complex LIKE patterns is NOT yet implemented.
 func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[string]string, params types.QueryParams) (bool, error) {
 	if model == nil {
 		return false, errors.New("model cannot be nil")
@@ -48,365 +49,130 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 		return false, errors.New("columnToFieldMap cannot be nil")
 	}
 
-	whereClause := strings.TrimSpace(params.Where)
-	args := params.Args
-
-	// Handle the simple case of no WHERE clause
-	if whereClause == "" {
-		return true, nil // No conditions means it always matches
+	modelVal := reflect.ValueOf(model)
+	if modelVal.Kind() != reflect.Pointer || modelVal.IsNil() {
+		return false, errors.New("model must be a non-nil pointer")
 	}
 
-	// Basic validation: Check if number of '?' matches number of args
-	expectedArgs := strings.Count(whereClause, "?")
-	if expectedArgs != len(args) {
-		// Special case for IN: it uses one '?' but multiple implicit args in the slice
-		isIN := false
-		conditionsTemp := strings.Split(whereClause, " AND ")
-		for _, cond := range conditionsTemp {
-			if len(strings.Fields(cond)) == 3 && strings.ToUpper(strings.Fields(cond)[1]) == "IN" {
-				isIN = true
-				break
-			}
+	predicate, err := parseQueryPredicate(params)
+	if err != nil {
+		log.Printf("DEBUG: CheckQueryMatch could not parse WHERE clause '%s': %v", params.Where, err)
+		return false, err
+	}
+	return predicate.Match(modelVal.Elem(), tableName, columnToFieldMap)
+}
+
+func matchPredicateCondition(modelVal reflect.Value, tableName string, columnToFieldMap map[string]string, colName string, operator string, argValue interface{}) (bool, error) {
+	goFieldName, ok := columnToFieldMap[colName]
+	if !ok {
+		if _, directFieldOK := modelVal.Type().FieldByName(colName); directFieldOK {
+			goFieldName = colName
+		} else {
+			return false, fmt.Errorf("column '%s' from WHERE clause not found in map for table '%s'", colName, tableName)
 		}
-		// If it's not an IN query or if arg count still mismatch, error out
-		if !isIN || expectedArgs != 1 || len(args) != 1 || reflect.ValueOf(args[0]).Kind() != reflect.Slice {
-			return false, fmt.Errorf("mismatched number of placeholders ('?') and arguments: %d vs %d in WHERE clause '%s' (Note: IN expects one '?' and one slice argument)", expectedArgs, len(args), whereClause)
-		}
-		// If it looks like a valid IN, let the loop handle the single arg
 	}
 
-	// Very basic parser for "column OP ?" clauses joined by "AND"
-	conditions := strings.Split(whereClause, " AND ")
-	// We are deliberately *not* checking if len(conditions) == expectedArgs here,
-	// because a single condition like "a = ? OR b = ?" might fail that check
-	// but could still be parsed condition by condition if we enhance the loop.
-	// However, for now, we only support AND-separated conditions.
-	if strings.Contains(strings.ToUpper(whereClause), " OR ") {
-		// Explicitly disallow OR for now
-		return false, fmt.Errorf("unsupported WHERE clause structure: '%s'. OR clauses are not supported", whereClause)
+	fieldVal := modelVal.FieldByName(goFieldName)
+	if !fieldVal.IsValid() {
+		return false, fmt.Errorf("field '%s' (for column '%s') not valid on model for table '%s'", goFieldName, colName, tableName)
 	}
 
-	modelVal := reflect.ValueOf(model).Elem()
-	currentArgIndex := 0 // Keep track of which arg we're using
+	modelFieldValue := fieldVal.Interface()
+	argReflectVal := reflect.ValueOf(argValue)
+	var conditionMet bool
+	var matchErr error
 
-	for _, condition := range conditions {
-		condition = strings.TrimSpace(condition)
-		if condition == "" {
-			continue
+	switch operator {
+	case "=":
+		if isArgNil(argValue) {
+			conditionMet = isFieldNil(fieldVal)
+		} else {
+			conditionMet = fieldEqualsArg(fieldVal, argValue)
 		}
-
-		// Expect "column OP ?" format or "column IN (?)"
-		parts := strings.Fields(condition) // Split by whitespace
-		operator := ""
-		if len(parts) >= 2 {
-			operator = strings.ToUpper(parts[1])
+	case "!=", "<>":
+		if isArgNil(argValue) {
+			conditionMet = !isFieldNil(fieldVal)
+		} else {
+			conditionMet = !fieldEqualsArg(fieldVal, argValue)
 		}
-
-		// Validate format: check for 3 parts and a supported operator + placeholder
-		supportedOperators := map[string]bool{
-			"=": true, "LIKE": true, ">": true, "<": true, ">=": true, "<=": true, "IN": true,
-			"!=": true, "<>": true, "NOT": true, // NOT is prefix for LIKE/IN
-		}
-		isValidFormat := false
-		if len(parts) == 3 {
-			op := strings.ToUpper(parts[1])
-			placeholder := parts[2]
-			if placeholder == "?" && supportedOperators[op] && op != "IN" && op != "NOT" { // Standard op ?
-				isValidFormat = true
-			} else if op == "IN" && placeholder == "(?)" { // IN (?)
-				isValidFormat = true
-			}
-		} else if len(parts) == 4 { // For NOT LIKE / NOT IN
-			opPrefix := strings.ToUpper(parts[1])
-			op := strings.ToUpper(parts[2])
-			placeholder := parts[3]
-			if opPrefix == "NOT" && (op == "LIKE" || op == "IN") && (placeholder == "?" || placeholder == "(?)") {
-				isValidFormat = true
-				operator = "NOT " + op // Combine into a single operator string
-			}
-		}
-
-		if !isValidFormat {
-			log.Printf("DEBUG: CheckQueryMatch could not parse condition: '%s'. Expected 'column OP ?', 'column IN (?)', 'column NOT LIKE ?', or 'column NOT IN (?)'", condition)
-			return false, fmt.Errorf("unsupported condition format: '%s'. Expected 'column OP ?', 'column IN (?)', 'column NOT LIKE ?', or 'column NOT IN (?)'", condition)
-		}
-
-		colName := strings.Trim(parts[0], "\\\"`'") // Remove potential quotes
-		argValue := args[currentArgIndex]
-		currentArgIndex++
-
-		// Find the Go field name corresponding to the DB column name
-		goFieldName, ok := columnToFieldMap[colName]
-		if !ok {
-			// Maybe the WHERE clause uses the Go field name directly? Check that.
-			if _, directFieldOK := modelVal.Type().FieldByName(colName); directFieldOK {
-				goFieldName = colName
-			} else {
-				return false, fmt.Errorf("column '%s' from WHERE clause not found in map for table '%s'", colName, tableName)
-			}
-		}
-
-		// Get the model's field value
-		fieldVal := modelVal.FieldByName(goFieldName)
-		if !fieldVal.IsValid() {
-			return false, fmt.Errorf("field '%s' (for column '%s') not valid on model for table '%s'", goFieldName, colName, tableName)
-		}
-
-		modelFieldValue := fieldVal.Interface()
-		argReflectVal := reflect.ValueOf(argValue)
-
-		// --- Perform comparison based on operator ---
-		var conditionMet bool
-		var matchErr error
-
-		switch operator {
-		case "=":
-			// Handle nil argument explicitly using the safe helper
-			if isArgNil(argValue) {
-				// Check if model field is also nil
-				if !fieldVal.IsValid() { // Field is invalid (e.g. nil interface)
-					conditionMet = true
-				} else {
-					// Check if field is a nilable type AND is nil
-					fieldKind := fieldVal.Kind()
-					isFieldNilable := fieldKind == reflect.Pointer || fieldKind == reflect.Interface || fieldKind == reflect.Map || fieldKind == reflect.Slice || fieldKind == reflect.Chan || fieldKind == reflect.Func
-					// log.Printf("DEBUG NIL_ARG(=): Field '%s', Kind: %s, IsNilable: %t, IsValid: %t", goFieldName, fieldKind, isFieldNilable, fieldVal.IsValid())
-
-					// Check if the value is actually nil BEFORE calling IsNil() if possible
-					isActuallyNil := false
-					if fieldVal.IsValid() { // Prevent panic on IsNil for zero Value
-						if isFieldNilable { // Only check IsNil if the Kind supports it
-							isActuallyNil = fieldVal.IsNil() // Call IsNil only when guarded
-						}
-					} else {
-						isActuallyNil = true // Invalid field is considered nil
-					}
-
-					// log.Printf("DEBUG NIL_ARG(=): Field '%s', isActuallyNil check result: %t", goFieldName, isActuallyNil)
-
-					if isActuallyNil {
-						conditionMet = true
-					} else {
-						// Field is not nil, or not a nilable type (like string, int)
-						conditionMet = false
-					}
-				}
-
-				// if !conditionMet {
-				// 	log.Printf("DEBUG CheckQueryMatch (= nil arg): Field '%s' (%v) is not nil.", goFieldName, modelFieldValue)
-				// }
-			} else {
-				// Dereference pointer if model field is a pointer and arg is not
-				modelFieldActualValue := modelFieldValue // Start with the raw interface value
-				if fieldVal.Kind() == reflect.Pointer {
-					// Check if the extracted interface value (the pointer itself) is nil
-					if modelFieldValue != nil {
-						// Pointer is not nil. Do we need to dereference for comparison?
-						if argReflectVal.Kind() != reflect.Pointer {
-							// Yes, argument is not a pointer, so get the pointed-to value.
-							modelFieldActualValue = fieldVal.Elem().Interface()
-						}
-						// If argument IS a pointer, we leave modelFieldActualValue as the pointer
-						// because DeepEqual can compare two pointers (or a pointer and nil).
-					}
-					// If modelFieldValue WAS nil, it remains nil. DeepEqual handles nil comparison.
-				}
-
-				// Now proceed with comparison using modelFieldActualValue
-				modelFieldActualVal := reflect.ValueOf(modelFieldActualValue)
-
-				// Basic type matching/conversion attempt for equality
-				if argReflectVal.Type().ConvertibleTo(modelFieldActualVal.Type()) {
-					convertedArg := argReflectVal.Convert(modelFieldActualVal.Type()).Interface()
-					conditionMet = reflect.DeepEqual(modelFieldActualValue, convertedArg)
-					// if !conditionMet {
-					// 	log.Printf("DEBUG CheckQueryMatch (=): Field '%s' mismatch. Model: [%v] (%T), Arg: [%v] (%T, Converted: %T)",
-					// 		goFieldName, modelFieldActualValue, modelFieldActualValue, argValue, argValue, convertedArg)
-					// }
-				} else {
-					// If types are not directly convertible, rely on DeepEqual
-					conditionMet = reflect.DeepEqual(modelFieldActualValue, argValue)
-					// if !conditionMet {
-					// 	log.Printf("DEBUG CheckQueryMatch (=): Field '%s' mismatch (non-convertible types). Model: [%v] (%T), Arg: [%v] (%T)",
-					// 		goFieldName, modelFieldActualValue, modelFieldActualValue, argValue, argValue)
-					// }
-				}
-			}
-
-		case "!=", "<>":
-			// Use DeepEqual and invert the result. Handle nil and pointers.
-
-			// Handle nil argument explicitly using the safe helper
-			if isArgNil(argValue) {
-				// Check if model field is NOT nil
-				if !fieldVal.IsValid() { // Field is invalid (e.g. nil interface) -> considered nil
-					conditionMet = false // nil != nil -> false
-				} else {
-					// Check if field is a nilable type AND is nil
-					fieldKind := fieldVal.Kind()
-					isFieldNilable := fieldKind == reflect.Pointer || fieldKind == reflect.Interface || fieldKind == reflect.Map || fieldKind == reflect.Slice || fieldKind == reflect.Chan || fieldKind == reflect.Func
-					// log.Printf("DEBUG NIL_ARG(!=): Field '%s', Kind: %s, IsNilable: %t, IsValid: %t", goFieldName, fieldKind, isFieldNilable, fieldVal.IsValid())
-
-					// Check if the value is actually nil BEFORE calling IsNil() if possible
-					isActuallyNil := false
-					if fieldVal.IsValid() {
-						if isFieldNilable {
-							isActuallyNil = fieldVal.IsNil()
-						}
-					} else {
-						isActuallyNil = true // Invalid field is considered nil
-					}
-
-					// log.Printf("DEBUG NIL_ARG(!=): Field '%s', isActuallyNil check result: %t", goFieldName, isActuallyNil)
-
-					if isActuallyNil { // field is nil, arg is nil
-						conditionMet = false // nil != nil -> false
-					} else { // field is not nil, arg is nil
-						conditionMet = true // not-nil != nil -> true
-					}
-				}
-
-				// if !conditionMet {
-				// 	log.Printf("DEBUG CheckQueryMatch (!= nil arg): Field '%s' (%v) is also nil.", goFieldName, modelFieldValue)
-				// }
-			} else {
-				// Dereference pointer if model field is a pointer and arg is not
-				modelFieldActualValue := modelFieldValue // Start with the raw interface value
-				if fieldVal.Kind() == reflect.Pointer {
-					// Check if the extracted interface value (the pointer itself) is nil
-					if modelFieldValue != nil {
-						// Pointer is not nil. Do we need to dereference for comparison?
-						if argReflectVal.Kind() != reflect.Pointer {
-							// Yes, argument is not a pointer, so get the pointed-to value.
-							modelFieldActualValue = fieldVal.Elem().Interface()
-						}
-						// If argument IS a pointer, we leave modelFieldActualValue as the pointer
-						// because DeepEqual can compare two pointers (or a pointer and nil).
-					}
-					// If modelFieldValue WAS nil, it remains nil. DeepEqual handles nil comparison.
-				}
-
-				// Now proceed with comparison using modelFieldActualValue
-				modelFieldActualVal := reflect.ValueOf(modelFieldActualValue)
-
-				var equal bool
-				if argReflectVal.Type().ConvertibleTo(modelFieldActualVal.Type()) {
-					convertedArg := argReflectVal.Convert(modelFieldActualVal.Type()).Interface()
-					equal = reflect.DeepEqual(modelFieldActualValue, convertedArg)
-				} else {
-					// If types are not directly convertible, rely on DeepEqual
-					equal = reflect.DeepEqual(modelFieldActualValue, argValue)
-				}
-				conditionMet = !equal // != is the inverse of ==
-
-				// if !conditionMet {
-				// 	log.Printf("DEBUG CheckQueryMatch (!=): Field '%s' matched arg. Model: [%v] (%T), Arg: [%v] (%T)",
-				// 		goFieldName, modelFieldActualValue, modelFieldActualValue, argValue, argValue)
-				// }
-			}
-
-		case "LIKE":
-			// Ensure both model field and arg are strings
-			modelStr, modelOk := modelFieldValue.(string)
-			patternStr, patternOk := argValue.(string)
-
-			if !modelOk || !patternOk {
-				matchErr = fmt.Errorf("LIKE operator requires string field and pattern, got %T and %T for field '%s'", modelFieldValue, argValue, goFieldName)
-			} else {
-				conditionMet, matchErr = matchLike(modelStr, patternStr)
-				if matchErr != nil {
-					matchErr = fmt.Errorf("error matching LIKE for field '%s': %w", goFieldName, matchErr)
-				}
-				// else if !conditionMet {
-				// 	log.Printf("DEBUG CheckQueryMatch (LIKE): Field '%s' ('%s') did not match pattern '%s'", goFieldName, modelStr, patternStr)
-				// }
-			}
-
-		case "NOT LIKE":
-			modelStr, modelOk := modelFieldValue.(string)
-			patternStr, patternOk := argValue.(string)
-
-			if !modelOk || !patternOk {
-				matchErr = fmt.Errorf("NOT LIKE operator requires string field and pattern, got %T and %T for field '%s'", modelFieldValue, argValue, goFieldName)
-			} else {
-				var likeMet bool
-				likeMet, matchErr = matchLike(modelStr, patternStr)
-				conditionMet = !likeMet // Invert the result of LIKE
-				if matchErr != nil {
-					matchErr = fmt.Errorf("error matching NOT LIKE for field '%s': %w", goFieldName, matchErr)
-				}
-				// else if !conditionMet {
-				// 	// This log means the LIKE condition *was* met, so NOT LIKE is false.
-				// 	log.Printf("DEBUG CheckQueryMatch (NOT LIKE): Field '%s' ('%s') matched pattern '%s', failing NOT LIKE", goFieldName, modelStr, patternStr)
-				// }
-			}
-
-		case ">":
-			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
-			// if !conditionMet && matchErr == nil {
-			// 	log.Printf("DEBUG CheckQueryMatch (>): Field '%s' (%v) not greater than arg (%v)", goFieldName, modelFieldValue, argValue)
-			// }
-
-		case "<":
-			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
-			// if !conditionMet && matchErr == nil {
-			// 	log.Printf("DEBUG CheckQueryMatch (<): Field '%s' (%v) not less than arg (%v)", goFieldName, modelFieldValue, argValue)
-			// }
-
-		case ">=":
-			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
-			// if !conditionMet && matchErr == nil {
-			// 	log.Printf("DEBUG CheckQueryMatch (>=): Field '%s' (%v) not greater than or equal to arg (%v)", goFieldName, modelFieldValue, argValue)
-			// }
-
-		case "<=":
-			conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
-			// if !conditionMet && matchErr == nil {
-			// 	log.Printf("DEBUG CheckQueryMatch (<=): Field '%s' (%v) not less than or equal to arg (%v)", goFieldName, modelFieldValue, argValue)
-			// }
-
-		case "IN":
-			conditionMet, matchErr = checkInOperator(fieldVal, argReflectVal)
+	case "LIKE":
+		modelStr, modelOk := modelFieldValue.(string)
+		patternStr, patternOk := argValue.(string)
+		if !modelOk || !patternOk {
+			matchErr = fmt.Errorf("LIKE operator requires string field and pattern, got %T and %T for field '%s'", modelFieldValue, argValue, goFieldName)
+		} else {
+			conditionMet, matchErr = matchLike(modelStr, patternStr)
 			if matchErr != nil {
-				return false, matchErr
+				matchErr = fmt.Errorf("error matching LIKE for field '%s': %w", goFieldName, matchErr)
 			}
-			// if !conditionMet && matchErr == nil {
-			// 	log.Printf("DEBUG CheckQueryMatch (IN): Field '%s' (%v) not in arg slice (%v)", goFieldName, modelFieldValue, argValue)
-			// }
-
-		case "NOT IN":
-			var inMet bool
-			inMet, matchErr = checkInOperator(fieldVal, argReflectVal)
+		}
+	case "NOT LIKE":
+		modelStr, modelOk := modelFieldValue.(string)
+		patternStr, patternOk := argValue.(string)
+		if !modelOk || !patternOk {
+			matchErr = fmt.Errorf("NOT LIKE operator requires string field and pattern, got %T and %T for field '%s'", modelFieldValue, argValue, goFieldName)
+		} else {
+			var likeMet bool
+			likeMet, matchErr = matchLike(modelStr, patternStr)
+			conditionMet = !likeMet
 			if matchErr != nil {
-				return false, matchErr
+				matchErr = fmt.Errorf("error matching NOT LIKE for field '%s': %w", goFieldName, matchErr)
 			}
-			conditionMet = !inMet // Invert the result of IN
-			// if !conditionMet && matchErr == nil {
-			// 	// This log means the IN condition *was* met, so NOT IN is false.
-			// 	log.Printf("DEBUG CheckQueryMatch (NOT IN): Field '%s' (%v) was found in arg slice (%v), failing NOT IN", goFieldName, modelFieldValue, argValue)
-			// }
-
-		default:
-			matchErr = fmt.Errorf("unsupported operator '%s' in condition '%s'", operator, condition)
 		}
-
-		// Handle errors during matching
-		if matchErr != nil {
-			log.Printf("DEBUG: Error during CheckQueryMatch condition evaluation: %v", matchErr)
-			return false, matchErr // Propagate error
-		}
-
-		// If any condition is not met, the whole query doesn't match
-		if !conditionMet {
-			return false, nil // Condition not met, no need to check further
-		}
-
-		// If we reach here, this condition matched. Continue to the next.
-		// log.Printf("DEBUG CheckQueryMatch: Condition '%s' matched for field '%s'", condition, goFieldName)
+	case ">", "<", ">=", "<=":
+		conditionMet, matchErr = compareValues(modelFieldValue, argValue, operator)
+	case "IN":
+		conditionMet, matchErr = checkInOperator(fieldVal, argReflectVal)
+	case "NOT IN":
+		var inMet bool
+		inMet, matchErr = checkInOperator(fieldVal, argReflectVal)
+		conditionMet = !inMet
+	default:
+		matchErr = fmt.Errorf("unsupported operator '%s'", operator)
 	}
 
-	// All conditions matched
-	return true, nil
+	if matchErr != nil {
+		log.Printf("DEBUG: Error during CheckQueryMatch condition evaluation: %v", matchErr)
+		return false, matchErr
+	}
+	return conditionMet, nil
+}
+
+func isFieldNil(fieldVal reflect.Value) bool {
+	if !fieldVal.IsValid() {
+		return true
+	}
+	switch fieldVal.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Chan, reflect.Func:
+		return fieldVal.IsNil()
+	default:
+		return false
+	}
+}
+
+func fieldEqualsArg(fieldVal reflect.Value, argValue interface{}) bool {
+	if !fieldVal.IsValid() {
+		return false
+	}
+	if isFieldNil(fieldVal) {
+		return false
+	}
+
+	actualValue := fieldVal.Interface()
+	argReflectVal := reflect.ValueOf(argValue)
+	if fieldVal.Kind() == reflect.Pointer && argReflectVal.Kind() != reflect.Pointer {
+		actualValue = fieldVal.Elem().Interface()
+	}
+
+	actualReflectVal := reflect.ValueOf(actualValue)
+	if !actualReflectVal.IsValid() || !argReflectVal.IsValid() {
+		return reflect.DeepEqual(actualValue, argValue)
+	}
+	if argReflectVal.Type().ConvertibleTo(actualReflectVal.Type()) {
+		convertedArg := argReflectVal.Convert(actualReflectVal.Type()).Interface()
+		return reflect.DeepEqual(actualValue, convertedArg)
+	}
+	return reflect.DeepEqual(actualValue, argValue)
 }
 
 // compareValues compares two values using >, <, >=, <= operators, handling numeric and string types.

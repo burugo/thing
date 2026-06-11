@@ -147,8 +147,12 @@ func buildQueryDependencies(params types.QueryParams, isListKey bool) QueryDepen
 		WhereFields: make(map[string]bool),
 		OrderFields: make(map[string]bool),
 	}
-	for _, field := range extractAllWhereFields(params) {
+	whereFields, uncertainWhere := queryWhereFields(params)
+	for _, field := range whereFields {
 		deps.WhereFields[field] = true
+	}
+	if uncertainWhere {
+		deps.WhereFields[uncertainDependencyField] = true
 	}
 	if isListKey && params.Order != "" {
 		orderFields, uncertain := ParseOrderFields(params.Order)
@@ -180,6 +184,19 @@ func toIndexValueString(v interface{}) string {
 
 // extractAllWhereFields extracts all field names from the WHERE clause
 func extractAllWhereFields(params types.QueryParams) []string {
+	fields, _ := queryWhereFields(params)
+	return fields
+}
+
+func queryWhereFields(params types.QueryParams) ([]string, bool) {
+	predicate, err := parseQueryPredicate(params)
+	if err == nil {
+		return predicate.Fields(), false
+	}
+	return legacyExtractAllWhereFields(params), true
+}
+
+func legacyExtractAllWhereFields(params types.QueryParams) []string {
 	var fields []string
 	where := params.Where
 	if where == "" {
@@ -268,9 +285,17 @@ func ResetGlobalCacheIndex() {
 // This would need to remove entries from both maps.
 // TODO: Consider persistence options if the index needs to survive application restarts.
 
-// ParseExactMatchFields parses QueryParams and returns a map of field name to value slice for all exact match (=, IN) conditions.
-// Only supports simple conditions connected by AND.
+// ParseExactMatchFields parses QueryParams and returns candidate values for exact match (=, IN) conditions.
+// The returned values are used as cache invalidation candidates; CheckQueryMatch still verifies the final match.
 func ParseExactMatchFields(params types.QueryParams) map[string][]interface{} {
+	predicate, err := parseQueryPredicate(params)
+	if err == nil {
+		return predicate.ExactMatches()
+	}
+	return legacyParseExactMatchFields(params)
+}
+
+func legacyParseExactMatchFields(params types.QueryParams) map[string][]interface{} {
 	result := make(map[string][]interface{})
 	where := params.Where
 	args := params.Args
