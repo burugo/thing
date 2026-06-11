@@ -896,14 +896,59 @@ func TestThing_Query_IncrementalCacheUpdate_IN(t *testing.T) {
 	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated for matching IN")
 }
 
+func TestThing_Query_IncrementalCacheUpdate_ID_IN(t *testing.T) {
+	thingUser, cacheClient, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	params := thing.QueryParams{
+		Where: "id IN (?)",
+		Args:  []interface{}{[]int64{1}},
+	}
+
+	_, err := thingUser.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	cacheClient.ResetCalls()
+
+	user := User{BaseModel: thing.BaseModel{}, Name: "First ID", Email: "first-id@example.com"}
+	require.NoError(t, thingUser.Save(&user))
+	require.Equal(t, int64(1), user.ID)
+	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated when created id matches id IN (?)")
+}
+
+func TestThing_Query_IncrementalCacheUpdate_GroupedOR(t *testing.T) {
+	thingUser, cacheClient, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	params := thing.QueryParams{
+		Where: "(name = ? OR email = ?) AND \"deleted\" = false",
+		Args:  []interface{}{"Grouped OR", "grouped-or@example.com"},
+	}
+
+	_, err := thingUser.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	cacheClient.ResetCalls()
+
+	nonMatching := User{BaseModel: thing.BaseModel{}, Name: "Other", Email: "other@example.com"}
+	require.NoError(t, thingUser.Save(&nonMatching))
+	assert.Equal(t, 0, cacheClient.Counters["Delete"], "Cache should not be invalidated for non-matching OR query")
+	cacheClient.ResetCalls()
+
+	matchesSecondBranch := User{BaseModel: thing.BaseModel{}, Name: "Other", Email: "grouped-or@example.com"}
+	require.NoError(t, thingUser.Save(&matchesSecondBranch))
+	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated when second OR branch matches")
+}
+
 // Test: Range query (id > ?)
 func TestThing_Query_IncrementalCacheUpdate_Range(t *testing.T) {
 	thingUser, cacheClient, _, cleanup := setupCacheTest[*User](t)
 	defer cleanup()
 
+	baseline := User{BaseModel: thing.BaseModel{}, Name: "Range Baseline", Email: "range-baseline@example.com"}
+	require.NoError(t, thingUser.Save(&baseline))
+
 	params := thing.QueryParams{
 		Where: "id > ?",
-		Args:  []interface{}{100},
+		Args:  []interface{}{baseline.ID},
 	}
 
 	cr := thingUser.Query(params)
@@ -911,18 +956,8 @@ func TestThing_Query_IncrementalCacheUpdate_Range(t *testing.T) {
 	require.NoError(t, err)
 	cacheClient.ResetCalls()
 
-	// Create item with id <= 100 (simulate by setting ID directly)
-	user1 := User{BaseModel: thing.BaseModel{}, Name: "LowID", Email: "lowid@example.com"}
-	require.NoError(t, thingUser.Save(&user1))
-	user1.ID = 50 // Simulate low ID (if auto-increment, this may not be possible, but for test, force it)
-	assert.Equal(t, 0, cacheClient.Counters["Delete"], "Cache should not be invalidated for id <= 100")
-	cacheClient.ResetCalls()
-
-	// Create item with id > 100 (simulate by setting ID directly)
 	user2 := User{BaseModel: thing.BaseModel{}, Name: "HighID", Email: "highid@example.com"}
 	require.NoError(t, thingUser.Save(&user2))
-	// Note: In real DB, ID will be auto-incremented and likely not > 100 unless seeded. This test documents the limitation.
-	// If your test DB allows manual ID assignment, set user2.ID = 150 and Save again.
-	// For now, just check that Save does not invalidate unless the ID is actually > 100.
-	assert.Equal(t, 0, cacheClient.Counters["Delete"], "Cache should not be invalidated unless id > 100 (see test note)")
+	require.Greater(t, user2.ID, baseline.ID)
+	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated when created id matches id > ?")
 }

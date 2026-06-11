@@ -395,6 +395,22 @@ func TestCheckQueryMatch(t *testing.T) {
 			},
 			expected: false, // model.Code is not nil
 		},
+		{
+			name: "Pointer String Field LIKE Match",
+			params: thing.QueryParams{
+				Where: "code LIKE ?",
+				Args:  []interface{}{"AB%"},
+			},
+			expected: true,
+		},
+		{
+			name: "Pointer String Field NOT LIKE Mismatch",
+			params: thing.QueryParams{
+				Where: "code NOT LIKE ?",
+				Args:  []interface{}{"AB%"},
+			},
+			expected: false,
+		},
 		// --- Add tests for !=, <>, NOT LIKE, NOT IN ---
 		{
 			name: "Not Equal (!=) Match",

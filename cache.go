@@ -175,7 +175,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	// Collect all field values for this model
 	fieldValues := make(map[string]interface{})
 	for _, f := range info.CompareFields {
-		if f.IgnoreInDiff || f.DBColumn == info.PkName {
+		if f.IgnoreInDiff {
 			continue
 		}
 		// log.Printf("[DEBUG] cache.go: field=%s, Index=%v, modelVal.Type=%v", f.DBColumn, f.Index, modelVal.Type())

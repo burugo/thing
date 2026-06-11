@@ -96,10 +96,12 @@ func matchPredicateCondition(modelVal reflect.Value, tableName string, columnToF
 			conditionMet = !fieldEqualsArg(fieldVal, argValue)
 		}
 	case "LIKE":
-		modelStr, modelOk := modelFieldValue.(string)
-		patternStr, patternOk := argValue.(string)
+		modelStr, modelOk, modelNil := stringValueForLike(modelFieldValue)
+		patternStr, patternOk, patternNil := stringValueForLike(argValue)
 		if !modelOk || !patternOk {
 			matchErr = fmt.Errorf("LIKE operator requires string field and pattern, got %T and %T for field '%s'", modelFieldValue, argValue, goFieldName)
+		} else if modelNil || patternNil {
+			conditionMet = false
 		} else {
 			conditionMet, matchErr = matchLike(modelStr, patternStr)
 			if matchErr != nil {
@@ -107,10 +109,12 @@ func matchPredicateCondition(modelVal reflect.Value, tableName string, columnToF
 			}
 		}
 	case "NOT LIKE":
-		modelStr, modelOk := modelFieldValue.(string)
-		patternStr, patternOk := argValue.(string)
+		modelStr, modelOk, modelNil := stringValueForLike(modelFieldValue)
+		patternStr, patternOk, patternNil := stringValueForLike(argValue)
 		if !modelOk || !patternOk {
 			matchErr = fmt.Errorf("NOT LIKE operator requires string field and pattern, got %T and %T for field '%s'", modelFieldValue, argValue, goFieldName)
+		} else if modelNil || patternNil {
+			conditionMet = false
 		} else {
 			var likeMet bool
 			likeMet, matchErr = matchLike(modelStr, patternStr)
@@ -136,6 +140,27 @@ func matchPredicateCondition(modelVal reflect.Value, tableName string, columnToF
 		return false, matchErr
 	}
 	return conditionMet, nil
+}
+
+func stringValueForLike(value interface{}) (string, bool, bool) {
+	if value == nil {
+		return "", false, true
+	}
+	val := reflect.ValueOf(value)
+	if !val.IsValid() {
+		return "", false, true
+	}
+	if val.Kind() == reflect.Pointer {
+		if val.Type().Elem().Kind() != reflect.String {
+			return "", false, false
+		}
+		if val.IsNil() {
+			return "", true, true
+		}
+		return val.Elem().String(), true, false
+	}
+	str, ok := value.(string)
+	return str, ok, false
 }
 
 func isFieldNil(fieldVal reflect.Value) bool {

@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
 type ScanBaseModel struct {
@@ -63,6 +65,90 @@ func TestPrepareScanDestPrefersOuterFieldOverEmbeddedField(t *testing.T) {
 	}
 	if item.Embedded.Name != "" {
 		t.Fatalf("expected embedded field to remain untouched, got %q", item.Embedded.Name)
+	}
+}
+
+func TestPrepareScanDestScansSQLiteRowsWithNullableAndBasicValues(t *testing.T) {
+	type rowModel struct {
+		ID        int64     `db:"id"`
+		CreatedAt time.Time `db:"created_at"`
+		Payload   []byte    `db:"payload"`
+		Nickname  *string   `db:"nickname"`
+		Empty     *string   `db:"empty_value"`
+	}
+
+	db, err := sql.Open("sqlite3", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open returned error: %v", err)
+	}
+	defer db.Close()
+
+	_, err = db.Exec(`
+		CREATE TABLE scan_rows (
+			id INTEGER PRIMARY KEY,
+			created_at DATETIME,
+			payload BLOB,
+			nickname TEXT,
+			empty_value TEXT
+		)
+	`)
+	if err != nil {
+		t.Fatalf("CREATE TABLE returned error: %v", err)
+	}
+
+	now := time.Date(2026, 6, 11, 12, 30, 0, 0, time.UTC)
+	_, err = db.Exec(
+		`INSERT INTO scan_rows (id, created_at, payload, nickname, empty_value) VALUES (?, ?, ?, ?, ?)`,
+		int64(7),
+		now,
+		[]byte("payload"),
+		"neo",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("INSERT returned error: %v", err)
+	}
+
+	rows, err := db.Query(`SELECT id, created_at, payload, nickname, empty_value, 'discarded' AS unknown_column FROM scan_rows`)
+	if err != nil {
+		t.Fatalf("SELECT returned error: %v", err)
+	}
+	defer rows.Close()
+
+	cols, err := rows.Columns()
+	if err != nil {
+		t.Fatalf("Rows.Columns returned error: %v", err)
+	}
+	if !rows.Next() {
+		t.Fatal("expected one row")
+	}
+
+	var model rowModel
+	dest, err := PrepareScanDest(reflect.ValueOf(&model).Elem(), cols)
+	if err != nil {
+		t.Fatalf("PrepareScanDest returned error: %v", err)
+	}
+	if err := rows.Scan(dest...); err != nil {
+		t.Fatalf("Rows.Scan returned error: %v", err)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("Rows.Err returned error: %v", err)
+	}
+
+	if model.ID != 7 {
+		t.Fatalf("expected ID 7, got %d", model.ID)
+	}
+	if model.CreatedAt.IsZero() {
+		t.Fatal("expected CreatedAt to be scanned")
+	}
+	if string(model.Payload) != "payload" {
+		t.Fatalf("expected payload bytes, got %q", string(model.Payload))
+	}
+	if model.Nickname == nil || *model.Nickname != "neo" {
+		t.Fatalf("expected Nickname to be scanned, got %#v", model.Nickname)
+	}
+	if model.Empty != nil {
+		t.Fatalf("expected NULL string pointer to remain nil, got %#v", model.Empty)
 	}
 }
 
