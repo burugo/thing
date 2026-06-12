@@ -440,31 +440,19 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	// log.Printf("DEBUG: Attempting to write %d cache updates for ID %d.", len(writesNeeded), id)
 	locker := cache.GlobalCacheKeyLocker
 
-	for key, writeTask := range writesNeeded {
+	for key := range writesNeeded {
 		// log.Printf("DEBUG Write (%s): Acquiring lock...", key)
 		locker.Lock(key)
 		// log.Printf("DEBUG Write (%s): Acquired lock.", key)
 
 		var writeErr error
-		if writeTask.isListKey {
-			// log.Printf("DEBUG Write (%s): Invalidating list cache due to computed change (Add/Remove/Delete).", key)
-			writeErr = t.cache.Delete(ctx, key)
-			if writeErr == nil {
-				// log.Printf("DEBUG Write (%s): Successfully invalidated list cache.", key)
-			} else if errors.Is(writeErr, common.ErrNotFound) {
-				// log.Printf("DEBUG Write (%s): List cache key not found during invalidation (already gone?).", key)
-				writeErr = nil
-			}
-		} else {
-			// Count caches are invalidated instead of incrementally updated so stale counts
-			// cannot be preserved by applying +/-1 to an already-wrong value.
-			writeErr = t.cache.Delete(ctx, key)
-			if writeErr == nil {
-				// log.Printf("DEBUG Write (%s): Successfully invalidated cached count.", key)
-			} else if errors.Is(writeErr, common.ErrNotFound) {
-				// log.Printf("DEBUG Write (%s): Count cache key not found during invalidation (already gone?).", key)
-				writeErr = nil
-			}
+		// List and count query caches are both invalidated instead of patched in place.
+		writeErr = t.cache.Delete(ctx, key)
+		if writeErr == nil {
+			// log.Printf("DEBUG Write (%s): Successfully invalidated query cache.", key)
+		} else if errors.Is(writeErr, common.ErrNotFound) {
+			// log.Printf("DEBUG Write (%s): Query cache key not found during invalidation (already gone?).", key)
+			writeErr = nil
 		}
 
 		// log.Printf("DEBUG Write (%s): Releasing lock...", key)
