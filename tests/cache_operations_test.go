@@ -390,8 +390,7 @@ func sprintf(format string, args ...interface{}) string {
 }
 
 // TestThing_Query_IncrementalCacheUpdate verifies that list and count caches
-// are updated incrementally when items matching the query are created, updated,
-// or deleted.
+// are invalidated when items matching the query are created, updated, or deleted.
 func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	// Use setupCacheTest to get direct instance and mock cache
 	thingUser, cacheClient, _, cleanup := setupCacheTest[*User](t)
@@ -425,14 +424,13 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	require.NoError(t, err)
 	require.NotZero(t, user1.ID, "User1 should have an ID after save")
 
-	// Verify caches were updated incrementally via counters AFTER ResetCalls
-	// Create operation: Reads miss cache, invalidates list, writes count, sets model cache.
-	assert.Equal(t, 1, cacheClient.Counters["Get"], "Expected 1 Get (count cache miss) during create")
+	// Verify caches were invalidated via counters AFTER ResetCalls.
+	assert.Equal(t, 0, cacheClient.Counters["Get"], "Expected 0 Get (count cache is not read) during create")
 	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (list cache miss) during create")
-	assert.Equal(t, 1, cacheClient.Counters["Set"], "Expected 1 Set (count cache write) during create")
+	assert.Equal(t, 0, cacheClient.Counters["Set"], "Expected 0 Set (count cache is invalidated, not updated) during create")
 	// List cache is now invalidated (Deleted) instead of Set
 	assert.Equal(t, 0, cacheClient.Counters["SetQueryIDs"], "Expected 0 SetQueryIDs (list cache invalidated) during create")
-	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Expected 1 Delete (list cache invalidated) during create")
+	assert.Equal(t, 2, cacheClient.Counters["Delete"], "Expected 2 Deletes (list + count invalidated) during create")
 	assert.Equal(t, 1, cacheClient.Counters["SetModel"], "Expected 1 SetModel during create")
 	assert.Equal(t, 0, cacheClient.Counters["DeleteModel"], "Expected 0 DeleteModel during create")
 
@@ -442,14 +440,14 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	count2, err := cr2.Count() // Should hit count cache
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), count2, "Count from cache should be 1")
-	assert.Equal(t, 1, cacheClient.Counters["Get"], "Count query should hit cache (Get)")
-	assert.Equal(t, 0, cacheClient.Counters["Set"], "Count query should not Set cache")
+	assert.Equal(t, 1, cacheClient.Counters["Get"], "Count query should check count cache (Get)")
+	assert.Equal(t, 1, cacheClient.Counters["Set"], "Count query should recompute and Set count cache")
 
 	fetch2, err := cr2.Fetch(0, 10) // Should hit list cache
 	require.NoError(t, err)
 	require.Len(t, fetch2, 1)
 	assert.Equal(t, user1.ID, fetch2[0].ID)
-	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Fetch query should hit list cache (GetQueryIDs)")
+	assert.Equal(t, 2, cacheClient.Counters["GetQueryIDs"], "Count and fetch should check list cache after invalidation")
 	assert.Equal(t, 1, cacheClient.Counters["SetQueryIDs"], "Expected 1 SetQueryIDs (list cache write on miss)")
 
 	cacheClient.ResetCalls()
@@ -461,12 +459,12 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 
 	// Verify caches were updated (removed item) via counters AFTER ResetCalls
 	// Update operation: Reads existing query caches, determines change, writes updated query caches, AND sets the model cache.
-	assert.Equal(t, 1, cacheClient.Counters["Get"], "Expected 1 Get (count cache read) during update-no-match")
+	assert.Equal(t, 0, cacheClient.Counters["Get"], "Expected 0 Get (count cache is not read) during update-no-match")
 	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (list cache read) during update-no-match")
-	assert.Equal(t, 1, cacheClient.Counters["Set"], "Expected 1 Set (count cache write) during update-no-match")
+	assert.Equal(t, 0, cacheClient.Counters["Set"], "Expected 0 Set (count cache is invalidated, not updated) during update-no-match")
 	// List cache is now invalidated (Deleted) instead of Set
 	assert.Equal(t, 0, cacheClient.Counters["SetQueryIDs"], "Expected 0 SetQueryIDs (list cache invalidated) during update-no-match")
-	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Expected 1 Delete (list cache invalidated) during update-no-match")
+	assert.Equal(t, 2, cacheClient.Counters["Delete"], "Expected 2 Deletes (list + count invalidated) during update-no-match")
 	assert.Equal(t, 1, cacheClient.Counters["SetModel"], "Expected 1 SetModel during update-no-match") // Save always updates the model cache
 	assert.Equal(t, 0, cacheClient.Counters["DeleteModel"], "Expected 0 DeleteModel during update-no-match")
 
@@ -481,7 +479,7 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 	fetch3, err := cr3.Fetch(0, 10) // Should hit cache
 	require.NoError(t, err)
 	assert.Len(t, fetch3, 0, "Fetch after non-match update should return empty")
-	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Fetch query after non-match update should hit list cache (GetQueryIDs)")
+	assert.Equal(t, 2, cacheClient.Counters["GetQueryIDs"], "Count and fetch should check list cache after non-match update")
 
 	cacheClient.ResetCalls()
 
@@ -492,12 +490,12 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 
 	// Verify caches were updated (added item back) via counters AFTER ResetCalls
 	// Update operation: Reads existing query caches, determines change, writes updated query caches, AND sets the model cache.
-	assert.Equal(t, 1, cacheClient.Counters["Get"], "Expected 1 Get (count cache read) during update-match")
+	assert.Equal(t, 0, cacheClient.Counters["Get"], "Expected 0 Get (count cache is not read) during update-match")
 	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (list cache read) during update-match")
-	assert.Equal(t, 1, cacheClient.Counters["Set"], "Expected 1 Set (count cache write) during update-match")
+	assert.Equal(t, 0, cacheClient.Counters["Set"], "Expected 0 Set (count cache is invalidated, not updated) during update-match")
 	// List cache is now invalidated (Deleted) instead of Set
 	assert.Equal(t, 0, cacheClient.Counters["SetQueryIDs"], "Expected 0 SetQueryIDs (list cache invalidated) during update-match")
-	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Expected 1 Delete (list cache invalidated) during update-match")
+	assert.Equal(t, 2, cacheClient.Counters["Delete"], "Expected 2 Deletes (list + count invalidated) during update-match")
 	assert.Equal(t, 1, cacheClient.Counters["SetModel"], "Expected 1 SetModel during update-match") // Save always updates the model cache
 	assert.Equal(t, 0, cacheClient.Counters["DeleteModel"], "Expected 0 DeleteModel during update-match")
 
@@ -520,15 +518,15 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 
 	// Verify caches were updated (item removed) via counters AFTER ResetCalls
 	// Delete operation: Reads existing query caches, determines change, writes updated query caches, AND deletes the model cache using Delete.
-	assert.Equal(t, 1, cacheClient.Counters["Get"], "Expected 1 Get (count cache read) during delete")
+	assert.Equal(t, 0, cacheClient.Counters["Get"], "Expected 0 Get (count cache is not read) during delete")
 	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (list cache read) during delete")
-	assert.Equal(t, 1, cacheClient.Counters["Set"], "Expected 1 Set (count cache write) during delete")
+	assert.Equal(t, 0, cacheClient.Counters["Set"], "Expected 0 Set (count cache is invalidated, not updated) during delete")
 	// List cache is now invalidated (Deleted) instead of Set
 	assert.Equal(t, 0, cacheClient.Counters["SetQueryIDs"], "Expected 0 SetQueryIDs (list cache invalidated) during delete")
 	assert.Equal(t, 0, cacheClient.Counters["SetModel"], "Expected 0 SetModel during delete")
 	assert.Equal(t, 0, cacheClient.Counters["DeleteModel"], "Expected 0 DeleteModel during delete")
-	// Expect 2 Deletes: 1 for model cache (via th.Delete), 1 for list cache invalidation
-	assert.Equal(t, 2, cacheClient.Counters["Delete"], "Expected 2 Delete calls (model + list invalidation) during delete")
+	// Expect 3 Deletes: 1 for model cache (via th.Delete), 1 for list, 1 for count invalidation.
+	assert.Equal(t, 3, cacheClient.Counters["Delete"], "Expected 3 Delete calls (model + list + count invalidation) during delete")
 
 	// Check updated cache state by re-querying
 	cacheClient.ResetCalls()
@@ -554,16 +552,16 @@ func TestThing_Query_IncrementalCacheUpdate(t *testing.T) {
 
 	// Verify caches were updated (item removed due to KeepItem() check) via counters AFTER ResetCalls
 	// SoftDelete uses Save, which triggers Update logic.
-	// 1. Reads query caches (Get, GetQueryIDs - HITS expected now if create worked)
+	// 1. Reads list cache only (GetQueryIDs)
 	// 2. Determines item needs removing from query caches because KeepItem is false.
-	// 3. Writes updated query caches (Set, SetQueryIDs)
+	// 3. Invalidates list/count query caches.
 	// 4. Updates the model cache (SetModel).
-	assert.Equal(t, 1, cacheClient.Counters["Get"], "Expected 1 Get (count cache HIT) during soft delete save")
+	assert.Equal(t, 0, cacheClient.Counters["Get"], "Expected 0 Get (count cache is not read) during soft delete save")
 	assert.Equal(t, 1, cacheClient.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (list cache HIT) during soft delete save")
-	assert.Equal(t, 1, cacheClient.Counters["Set"], "Expected 1 Set (count cache write) during soft delete save")
+	assert.Equal(t, 0, cacheClient.Counters["Set"], "Expected 0 Set (count cache is invalidated, not updated) during soft delete save")
 	// List cache is now invalidated (Deleted) instead of Set
 	assert.Equal(t, 0, cacheClient.Counters["SetQueryIDs"], "Expected 0 SetQueryIDs (list cache invalidated) during soft delete save")
-	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Expected 1 Delete (list cache invalidated) during soft delete save")
+	assert.Equal(t, 2, cacheClient.Counters["Delete"], "Expected 2 Deletes (list + count invalidated) during soft delete save")
 	assert.Equal(t, 1, cacheClient.Counters["SetModel"], "Expected 1 SetModel during soft delete save") // Save always Sets
 	assert.Equal(t, 0, cacheClient.Counters["DeleteModel"], "Expected 0 DeleteModel during soft delete save")
 
@@ -629,10 +627,9 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	assert.Error(t, err, "Expected error getting query IDs after invalidation")
 	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound after invalidation")
 
-	// Check count cache: count should be incremented (count cache is still updated)
-	countStr, err = mockCache.Get(ctx, countCacheKey)
-	require.NoError(t, err, "Get count from cache after creating user4 failed")
-	assert.Equal(t, "3", countStr, "Count cache not incremented after creating matching user")
+	// Check count cache: Cache should have been INVALIDATED by the Save operation
+	_, err = mockCache.Get(ctx, countCacheKey)
+	assert.ErrorIs(t, err, common.ErrNotFound, "Expected ErrNotFound for count cache after creating matching user")
 
 	// Verify a subsequent query re-populates the list cache correctly
 	queryResult2 := thingInstance.Query(queryParams)
@@ -669,10 +666,9 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	assert.Error(t, err, "Expected error getting query IDs after update TO match (invalidation)")
 	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound after update TO match (invalidation)")
 
-	// Check count cache: count should be incremented
-	countStr, err = mockCache.Get(ctx, countCacheKey)
-	require.NoError(t, err, "Get count from cache after updating user3 to match failed")
-	assert.Equal(t, "4", countStr, "Count cache not incremented after update TO match")
+	// Check count cache: Cache should have been INVALIDATED by the Save operation
+	_, err = mockCache.Get(ctx, countCacheKey)
+	assert.ErrorIs(t, err, common.ErrNotFound, "Expected ErrNotFound for count cache after update TO match")
 
 	// Verify a subsequent query re-populates the list cache correctly
 	queryResult3 := thingInstance.Query(queryParams)
@@ -694,10 +690,9 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	assert.Error(t, err, "Expected error getting query IDs after update TO NOT match (invalidation)")
 	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound after update TO NOT match (invalidation)")
 
-	// Check count cache: count should be decremented
-	countStr, err = mockCache.Get(ctx, countCacheKey)
-	require.NoError(t, err, "Get count from cache after updating user1 to not match failed")
-	assert.Equal(t, "3", countStr, "Count cache not decremented after update TO NOT match")
+	// Check count cache: Cache should have been INVALIDATED by the Save operation
+	_, err = mockCache.Get(ctx, countCacheKey)
+	assert.ErrorIs(t, err, common.ErrNotFound, "Expected ErrNotFound for count cache after update TO NOT match")
 
 	// Verify a subsequent query re-populates the list cache correctly
 	queryResult4 := thingInstance.Query(queryParams)
@@ -733,10 +728,9 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 	assert.Error(t, err, "Expected error getting query IDs after delete (invalidation)")
 	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound after delete (invalidation)")
 
-	// Check count cache: count should be decremented
-	countStr, err = mockCache.Get(ctx, countCacheKey)
-	require.NoError(t, err, "Get count from cache after deleting user2 failed")
-	assert.Equal(t, "2", countStr, "Count cache not decremented after delete")
+	// Check count cache: Cache should have been INVALIDATED by the Delete operation
+	_, err = mockCache.Get(ctx, countCacheKey)
+	assert.ErrorIs(t, err, common.ErrNotFound, "Expected ErrNotFound for count cache after delete")
 
 	// Verify a subsequent query re-populates the list cache correctly
 	queryResult5 := thingInstance.Query(queryParams)
@@ -753,6 +747,26 @@ func TestThing_IncrementalQueryCacheUpdate(t *testing.T) {
 func generateQueryCacheKey(t *testing.T, keyType, tableName string, params thing.QueryParams) string {
 	t.Helper()
 	return thing.GenerateCacheKey(keyType, tableName, params)
+}
+
+func TestThing_CountCacheInvalidationDropsStaleCountOnMatchingCreate(t *testing.T) {
+	thingUser, mockCache, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+	ctx := context.Background()
+
+	params := thing.QueryParams{Where: "name = ?", Args: []interface{}{"Stale Count"}}
+	initialCount, err := thingUser.Query(params).Count()
+	require.NoError(t, err)
+	require.Equal(t, int64(0), initialCount)
+
+	countCacheKey := generateQueryCacheKey(t, "count", "users", params)
+	require.NoError(t, mockCache.Set(ctx, countCacheKey, "3", 0))
+
+	require.NoError(t, thingUser.Save(&User{Name: "Stale Count", Email: "stale-count@example.com"}))
+
+	countAfterCreate, err := thingUser.Query(params).Count()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), countAfterCreate, "stale count cache should be deleted and recomputed, not incremented")
 }
 
 func TestThing_DeleteInvalidatesQueryCacheWhenMatchCannotParse(t *testing.T) {
@@ -866,7 +880,7 @@ func TestThing_Query_IncrementalCacheUpdate_Complex(t *testing.T) {
 	user3 := User{BaseModel: thing.BaseModel{}, Name: "Bob", Email: "bob@example.com"}
 	require.NoError(t, thingUser.Save(&user3))
 	// Should invalidate the cache (full match)
-	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated for full match")
+	assert.Equal(t, 2, cacheClient.Counters["Delete"], "List and count caches should be invalidated for full match")
 }
 
 // Test: IN clause query (name IN (?))
@@ -893,7 +907,7 @@ func TestThing_Query_IncrementalCacheUpdate_IN(t *testing.T) {
 	// Create item in IN set
 	user2 := User{BaseModel: thing.BaseModel{}, Name: "Tom", Email: "tom@example.com"}
 	require.NoError(t, thingUser.Save(&user2))
-	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated for matching IN")
+	assert.Equal(t, 2, cacheClient.Counters["Delete"], "List and count caches should be invalidated for matching IN")
 }
 
 func TestThing_InvalidateQueryCachesClearsRegisteredListAndCountCaches(t *testing.T) {
@@ -953,7 +967,7 @@ func TestThing_Query_IncrementalCacheUpdate_ID_IN(t *testing.T) {
 	user := User{BaseModel: thing.BaseModel{}, Name: "First ID", Email: "first-id@example.com"}
 	require.NoError(t, thingUser.Save(&user))
 	require.Equal(t, int64(1), user.ID)
-	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated when created id matches id IN (?)")
+	assert.Equal(t, 2, cacheClient.Counters["Delete"], "List and count caches should be invalidated when created id matches id IN (?)")
 }
 
 func TestThing_Query_IncrementalCacheUpdate_GroupedOR(t *testing.T) {
@@ -976,7 +990,7 @@ func TestThing_Query_IncrementalCacheUpdate_GroupedOR(t *testing.T) {
 
 	matchesSecondBranch := User{BaseModel: thing.BaseModel{}, Name: "Other", Email: "grouped-or@example.com"}
 	require.NoError(t, thingUser.Save(&matchesSecondBranch))
-	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated when second OR branch matches")
+	assert.Equal(t, 2, cacheClient.Counters["Delete"], "List and count caches should be invalidated when second OR branch matches")
 }
 
 // Test: Range query (id > ?)
@@ -1000,5 +1014,5 @@ func TestThing_Query_IncrementalCacheUpdate_Range(t *testing.T) {
 	user2 := User{BaseModel: thing.BaseModel{}, Name: "HighID", Email: "highid@example.com"}
 	require.NoError(t, thingUser.Save(&user2))
 	require.Greater(t, user2.ID, baseline.ID)
-	assert.Equal(t, 1, cacheClient.Counters["Delete"], "Cache should be invalidated when created id matches id > ?")
+	assert.Equal(t, 2, cacheClient.Counters["Delete"], "List and count caches should be invalidated when created id matches id > ?")
 }

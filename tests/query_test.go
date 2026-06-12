@@ -95,6 +95,35 @@ func TestCachedResult_Count(t *testing.T) {
 	require.Equal(t, int64(0), emptyCount)
 }
 
+func TestCachedResult_CountUsesSmallListCache(t *testing.T) {
+	th, mockCache, dbAdapter, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+	mockDB, ok := dbAdapter.(*mockDBAdapter)
+	require.True(t, ok)
+
+	users := []*User{
+		{Name: "List Count", Email: "list-count-1@example.com"},
+		{Name: "List Count", Email: "list-count-2@example.com"},
+	}
+	for _, user := range users {
+		require.NoError(t, th.Save(user))
+	}
+
+	params := thing.QueryParams{Where: "name = ?", Args: []interface{}{"List Count"}, Order: "id ASC"}
+	fetched, err := th.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	require.Len(t, fetched, 2)
+
+	countCacheKey := generateQueryCacheKey(t, "count", "users", params)
+	require.NoError(t, mockCache.Delete(context.Background(), countCacheKey))
+
+	mockDB.ResetCounts()
+	count, err := th.Query(params).Count()
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count)
+	assert.Equal(t, 0, mockDB.GetCountCalls, "Count should derive from small list cache without querying DB count")
+}
+
 // TestCachedResult_Fetch tests the Fetch() method with caching.
 func TestCachedResult_Fetch(t *testing.T) {
 	th, mockCache, _, _ := setupCacheTest[*User](t)

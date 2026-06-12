@@ -153,9 +153,9 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	assert.Equal(t, 1, mockCache.Counters["SetModel"], "SoftDelete should call SetModel via Save")
 	assert.Equal(t, 0, mockCache.Counters["DeleteModel"], "SoftDelete should not call DeleteModel")
 	// List cache should be invalidated (Delete)
-	assert.Equal(t, 1, mockCache.Counters["Delete"], "SoftDelete should trigger list cache invalidation (Delete)")
-	// Count cache should be updated (Set)
-	assert.Equal(t, 1, mockCache.Counters["Set"], "SoftDelete should trigger count cache update (Set)")
+	assert.Equal(t, 2, mockCache.Counters["Delete"], "SoftDelete should trigger list and count cache invalidation (Delete)")
+	// Count cache should be invalidated instead of incrementally updated.
+	assert.Equal(t, 0, mockCache.Counters["Set"], "SoftDelete should not update count cache with Set")
 
 	// 5. Verify Cache State
 	// Model cache exists but is marked deleted (or updated by SetModel)
@@ -170,10 +170,10 @@ func TestThing_SoftDelete_CacheInteraction(t *testing.T) {
 	require.Error(t, err, "List cache should be invalidated")
 	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound for list cache")
 
-	// Count cache should be updated to 0
-	countStr, err := mockCache.Get(context.Background(), countCacheKey)
-	require.NoError(t, err, "Count cache should still exist")
-	assert.Equal(t, "0", countStr, "Count cache should be updated to 0")
+	// Count cache should be gone and recomputed on the next Count().
+	_, err = mockCache.Get(context.Background(), countCacheKey)
+	require.Error(t, err, "Count cache should be invalidated")
+	assert.True(t, errors.Is(err, common.ErrNotFound), "Expected ErrNotFound for count cache")
 
 	// 6. Verify Fetching Behavior
 	// ByID should now SUCCEED and return the soft-deleted record

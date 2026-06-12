@@ -358,7 +358,6 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 
 	// --- Phase 2: Simulated Batch Read ---
 	initialListValues := make(map[string][]int64)
-	initialCountValues := make(map[string]int64)
 	readErrors := make(map[string]error)
 
 	for _, task := range tasks {
@@ -383,34 +382,6 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					}
 					// log.Printf("DEBUG Read (%s): Read initial list (size %d).", task.cacheKey, len(initialListValues[task.cacheKey]))
 				}
-			}
-		} else if task.isCountKey {
-			if _, exists := initialCountValues[task.cacheKey]; !exists && readErrors[task.cacheKey] == nil {
-				countStr, err := t.cache.Get(ctx, task.cacheKey)
-				var count int64
-				switch {
-				case err != nil && errors.Is(err, common.ErrNotFound):
-					count = 0
-				case err != nil:
-					log.Printf("ERROR: Failed to read initial count cache for key %s: %v", task.cacheKey, err)
-					readErrors[task.cacheKey] = err
-					initialCountValues[task.cacheKey] = -1
-					continue
-				case countStr == "":
-					count = 0
-				default:
-					parsedCount, parseErr := strconv.ParseInt(countStr, 10, 64)
-					if parseErr != nil {
-						log.Printf("ERROR: Failed to parse count cache value '%s' for key %s: %v", countStr, task.cacheKey, parseErr)
-						readErrors[task.cacheKey] = parseErr
-						initialCountValues[task.cacheKey] = -1
-						continue
-					} else {
-						count = parsedCount
-					}
-				}
-				initialCountValues[task.cacheKey] = count
-				// log.Printf("DEBUG Read (%s): Read initial count (%d).", task.cacheKey, count)
 			}
 		}
 	}
@@ -448,33 +419,14 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 				// log.Printf("DEBUG Compute (%s): Identified list invalidation needed.", task.cacheKey)
 			}
 		} else if task.isCountKey {
-			initialCount := initialCountValues[task.cacheKey]
-			if initialCount == -1 {
-				continue
-			}
-			newCount := initialCount
-			changed := false
-			if task.needsAdd {
-				newCount++
-				changed = true
-				// log.Printf("DEBUG Compute (%s): Incrementing count %d -> %d", task.cacheKey, initialCount, newCount)
-			} else if task.needsRemove {
-				if newCount > 0 {
-					newCount--
-					changed = true
-					// log.Printf("DEBUG Compute (%s): Decrementing count %d -> %d", task.cacheKey, initialCount, newCount)
-				} else {
-					// log.Printf("DEBUG Compute (%s): Skipping count decrement as it's already zero.", task.cacheKey)
-				}
-			}
-			if changed {
+			if task.needsAdd || task.needsRemove {
 				writesNeeded[task.cacheKey] = finalWriteTask{
 					cacheKey:  task.cacheKey,
 					newList:   nil,
-					newCount:  newCount,
+					newCount:  -1,
 					isListKey: false,
 				}
-				// log.Printf("DEBUG Compute (%s): Identified count write needed. New value: %d", task.cacheKey, newCount)
+				// log.Printf("DEBUG Compute (%s): Identified count invalidation needed.", task.cacheKey)
 			}
 		}
 	}
@@ -504,10 +456,14 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 				writeErr = nil
 			}
 		} else {
-			countStr := strconv.FormatInt(writeTask.newCount, 10)
-			writeErr = t.cache.Set(ctx, key, countStr, globalCacheTTL)
+			// Count caches are invalidated instead of incrementally updated so stale counts
+			// cannot be preserved by applying +/-1 to an already-wrong value.
+			writeErr = t.cache.Delete(ctx, key)
 			if writeErr == nil {
-				// log.Printf("DEBUG Write (%s): Successfully updated cached count (%d).", key, writeTask.newCount)
+				// log.Printf("DEBUG Write (%s): Successfully invalidated cached count.", key)
+			} else if errors.Is(writeErr, common.ErrNotFound) {
+				// log.Printf("DEBUG Write (%s): Count cache key not found during invalidation (already gone?).", key)
+				writeErr = nil
 			}
 		}
 

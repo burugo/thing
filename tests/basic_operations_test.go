@@ -241,17 +241,18 @@ func TestThing_Delete(t *testing.T) {
 	// Access the Counters map directly
 	// Check counts *after* the Delete operation.
 	assert.Equal(t, 0, mockCache.Counters["DeleteModel"], "Expected 0 DeleteModel calls")
-	// Expect 2 deletes: 1 for the model itself, 1 for the invalidated list cache
-	assert.Equal(t, 2, mockCache.Counters["Delete"], "Expected 2 Delete calls (model + list invalidation)")
+	// Expect 4 deletes: 1 for the model itself, 1 for the invalidated list cache,
+	// and 2 for affected count caches.
+	assert.Equal(t, 4, mockCache.Counters["Delete"], "Expected 4 Delete calls (model + list + count invalidation)")
 
-	// Cache invalidation for list/count caches involves reads and writes (or deletes).
+	// Cache invalidation reads list cache only; count caches are deleted without reading.
 	// We now DELETE the list cache instead of setting it.
-	assert.Equal(t, 2, mockCache.Counters["Get"], "Expected 2 Gets (count name + count email)")
+	assert.Equal(t, 0, mockCache.Counters["Get"], "Expected 0 Gets (count caches are invalidated without reading)")
 	// Expect 1 GetQueryIDs: During the initial read in handleDeleteInQueryCaches Phase 2.
 	assert.Equal(t, 1, mockCache.Counters["GetQueryIDs"], "Expected 1 GetQueryIDs (initial read in Delete)")
 	assert.Equal(t, 0, mockCache.Counters["SetQueryIDs"], "Expected 0 SetQueryIDs (list email is now deleted)")
-	// Expect 3 sets: 2 for count decrements, 1 for NoneResult caching by post-delete ByID check.
-	assert.Equal(t, 3, mockCache.Counters["Set"], "Expected 3 Sets (2 count decrements + 1 NoneResult)")
+	// Expect 1 set: NoneResult caching by post-delete ByID check.
+	assert.Equal(t, 1, mockCache.Counters["Set"], "Expected 1 Set (NoneResult only)")
 
 	// Verify user is actually gone from DB
 	_, err = th.ByID(1)

@@ -124,6 +124,21 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 		// Fall through to DB fetch
 	}
 
+	listCacheKey := cr.generateListCacheKey()
+	if cachedIDs, idsErr := cr.thing.cache.GetQueryIDs(cr.thing.ctx, listCacheKey); idsErr == nil && len(cachedIDs) < cacheListCountLimit {
+		count := int64(len(cachedIDs))
+		cr.cachedCount = count
+		cr.hasLoadedCount = true
+		cacheSetErr := cr.thing.cache.Set(cr.thing.ctx, cacheKey, strconv.FormatInt(count, 10), globalCacheTTL)
+		if cacheSetErr != nil {
+			log.Printf("WARN: Failed to cache count from list cache for key %s: %v", cacheKey, cacheSetErr)
+		}
+		cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, cacheKey, toInternalQueryParams(cr.params))
+		return count, nil
+	} else if idsErr != nil && !errors.Is(idsErr, common.ErrNotFound) && !errors.Is(idsErr, common.ErrQueryCacheNoneResult) {
+		log.Printf("WARN: Cache GetQueryIDs error for list key %s while deriving count: %v. Proceeding to DB count.", listCacheKey, idsErr)
+	}
+
 	// 4. Cache miss or error, query database
 	// Assuming DBAdapter has a GetCount method
 	// Add the soft delete condition implicitly here, *unless* IncludeDeleted is true
