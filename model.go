@@ -52,6 +52,18 @@ func (b BaseModel) KeepItem() bool {
 	return !b.Deleted
 }
 
+// KeepItemFields returns the DB column names that the model's KeepItem() logic
+// depends on (besides "deleted", which the framework already special-cases).
+// When any of these columns changes, the framework invalidates the affected
+// list/count query caches even if the column is absent from their WHERE clauses.
+//
+// The default implementation returns nil. A model that overrides KeepItem()
+// MUST also override KeepItemFields() (returning nil if it depends on no mutable
+// column); otherwise construction via New/Use fails fast.
+func (b BaseModel) KeepItemFields() []string {
+	return nil
+}
+
 // SetNewRecordFlag sets the internal isNewRecord flag.
 func (b *BaseModel) SetNewRecordFlag(isNew bool) {
 	b.isNewRecord = isNew

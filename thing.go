@@ -18,6 +18,7 @@ import (
 // Model is the base interface for all ORM models.
 type Model interface {
 	KeepItem() bool
+	KeepItemFields() []string
 	GetID() int64
 }
 
@@ -59,6 +60,12 @@ func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 	// log.Printf("DEBUG: New[T] - Got model info: %+v", info)
 	if info.TableName == "" {
 		log.Printf("Warning: Could not determine table name for type %s during New. Relying on instance method?", modelType.Name())
+	}
+	if info.HasCustomKeepItem && !info.HasCustomKeepItemFields {
+		return nil, fmt.Errorf(
+			"model %s overrides KeepItem() but not KeepItemFields(); declare the "+
+				"columns KeepItem() depends on (return nil if it depends on none) so "+
+				"cache invalidation works", modelType.Name())
 	}
 	t := &Thing[T]{
 		db:    db,

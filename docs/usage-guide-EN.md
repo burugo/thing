@@ -409,6 +409,61 @@ Good candidates for `KeepItem()`:
 
 If a condition is simple, stable, and frequently used as a list entry point, prefer storing it as a normal column and using it in `WHERE`. That keeps cache candidate sets smaller.
 
+#### Declare KeepItemFields When You Override KeepItem
+
+Thing's automatic cache invalidation locates affected list/count caches by the
+**columns used in each query's `WHERE`/`ORDER`**. The framework already
+special-cases `deleted`. A *custom* KeepItem field such as `hidden` is otherwise
+treated as an ordinary column: if it does not appear in a query's `WHERE`,
+changing it would not invalidate that query's cache, leaving it stale.
+
+To close this gap, a model that overrides `KeepItem()` **must** also override
+`KeepItemFields()` to declare the DB columns its visibility logic depends on
+(besides `deleted`):
+
+```go
+func (p *Post) KeepItem() bool          { return !p.Deleted && !p.Hidden }
+func (p *Post) KeepItemFields() []string { return []string{"hidden"} }
+```
+
+Now changing `hidden` via `Save()` automatically invalidates the affected
+list/count caches — in both directions (showing or hiding a row) — with no
+manual call:
+
+```go
+post.Hidden = false
+posts.Save(post) // list/count caches that include this row are refreshed
+```
+
+If your `KeepItem()` depends on no mutable column (for example it always returns
+`true`), declare it explicitly as empty:
+
+```go
+func (u *User) KeepItem() bool          { return true }
+func (u *User) KeepItemFields() []string { return nil }
+```
+
+Enforcement is at construction time: `thing.New[T]` / `thing.Use[T]` returns an
+error if a model overrides `KeepItem()` but not `KeepItemFields()`. (Go cannot
+enforce this at compile time, so it fails fast at the first construction
+instead.)
+
+Note: automatic invalidation works within a single process. In a multi-instance
+deployment sharing one Redis cache, each process only knows about cache keys it
+registered itself, so cross-process invalidation is not yet guaranteed (tracked
+in `docs/todo/distributed-cache-index.md`).
+
+#### Count And CountPrecise With Custom KeepItem
+
+`KeepItem` runs in Go and cannot be expressed in SQL, so `Count()` and `CountPrecise()` differ on large result sets once you override it:
+
+- `Count()` derives the exact visible count from the KeepItem-filtered **list cache** when that cache is warm and under the list cache limit (200). When the list is not cached or exceeds the limit, it falls back to a SQL `COUNT` that ignores `KeepItem` and is therefore only approximate (possibly larger than the visible total).
+- `CountPrecise()` is **always exact**: it applies `KeepItem` filtering, cached under a separate key, and stays correct even for result sets larger than the list cache limit (it scans and loads matching rows, so it is more expensive on large sets).
+
+For models that do not override `KeepItem` (the default `BaseModel` behavior), the two methods are equivalent and both use the fast path.
+
+Use `Count()` when a cheap, possibly-approximate count is acceptable for large sets. Use `CountPrecise()` when you must show or act on the exact visible total regardless of size.
+
 ### Reuse Conditions For Count And List
 
 Pagination often needs both a page and a total:

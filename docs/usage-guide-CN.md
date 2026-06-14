@@ -409,6 +409,46 @@ Thing 的列表加载会允许多取一批 ID，再通过 `KeepItem()` 过滤，
 
 如果某个条件简单、稳定、经常用于列表入口，仍然建议落成普通列并写入 `WHERE`，这样缓存候选集合更小。
 
+#### 重写 KeepItem 时必须声明 KeepItemFields
+
+Thing 的自动缓存失效是按**每个查询 `WHERE`/`ORDER` 用到的列**来定位受影响的 list/count 缓存的。框架已经对 `deleted` 做了特殊处理。但一个**自定义**的 KeepItem 字段（如 `hidden`）默认只被当成普通列：如果它没出现在某个查询的 `WHERE` 里，修改它就不会让该查询的缓存失效，缓存就会变脏。
+
+为弥补这个缺口，重写了 `KeepItem()` 的模型**必须**同时重写 `KeepItemFields()`，声明其可见性逻辑依赖的 DB 列（`deleted` 除外）：
+
+```go
+func (p *Post) KeepItem() bool          { return !p.Deleted && !p.Hidden }
+func (p *Post) KeepItemFields() []string { return []string{"hidden"} }
+```
+
+这样通过 `Save()` 修改 `hidden` 时，相关的 list/count 缓存会被自动失效——无论是让一行显示还是隐藏，都无需手动调用：
+
+```go
+post.Hidden = false
+posts.Save(post) // 包含该行的 list/count 缓存会被刷新
+```
+
+如果你的 `KeepItem()` 不依赖任何可变列（例如永远返回 `true`），请显式声明为空：
+
+```go
+func (u *User) KeepItem() bool          { return true }
+func (u *User) KeepItemFields() []string { return nil }
+```
+
+强制检查发生在构造阶段：若模型重写了 `KeepItem()` 却没重写 `KeepItemFields()`，`thing.New[T]` / `thing.Use[T]` 会返回错误。（Go 无法在编译期强制这一点，因此改为在首次构造时快速失败。）
+
+注意：自动失效在单进程内有效。在共享同一个 Redis 缓存的多实例部署下，每个进程只知道自己注册过的缓存 key，因此跨进程失效尚无法保证（已在 `docs/todo/distributed-cache-index.md` 记录）。
+
+#### 自定义 KeepItem 下的 Count 与 CountPrecise
+
+`KeepItem` 在 Go 层执行，无法翻译成 SQL，因此一旦重写它，`Count()` 和 `CountPrecise()` 在大结果集上就会不同：
+
+- `Count()` 在 KeepItem 过滤后的**列表缓存**已预热且未超过列表缓存上限（200）时，从中得出精确的可见条数；当列表未缓存或超过上限时，回退到忽略 `KeepItem` 的 SQL `COUNT`，此时只是近似值（可能比实际可见条数偏大）。
+- `CountPrecise()` **始终精确**：应用 `KeepItem` 过滤，使用独立缓存 key，即使结果集超过列表缓存上限也保持精确（需要扫描并加载匹配行，因此在大结果集上开销更高）。
+
+对于没有重写 `KeepItem` 的模型（即默认 `BaseModel` 行为），两个方法等价，都走快速路径。
+
+当大结果集下接受廉价的近似值时用 `Count()`；当必须展示或依据精确可见总数（无论规模大小）时用 `CountPrecise()`。
+
 ### Count 和列表使用同一组条件
 
 分页通常需要列表和总数：

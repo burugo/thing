@@ -239,6 +239,288 @@ func (p *VisibilityPost) KeepItem() bool {
 	return p.BaseModel.KeepItem() && !p.Hidden
 }
 
+func (p *VisibilityPost) KeepItemFields() []string {
+	return []string{"hidden"}
+}
+
+// ForgotFieldsPost overrides KeepItem but NOT KeepItemFields, used to verify
+// that New/Use fails fast.
+type ForgotFieldsPost struct {
+	thing.BaseModel
+	Title  string `db:"title"`
+	Hidden bool   `db:"hidden"`
+}
+
+func (p *ForgotFieldsPost) TableName() string {
+	return "forgot_fields_posts"
+}
+
+func (p *ForgotFieldsPost) KeepItem() bool {
+	return p.BaseModel.KeepItem() && !p.Hidden
+}
+
+// TestCount_CustomKeepItem_ApproximateVsPrecise verifies that for a model with
+// a custom KeepItem, Count() returns the SQL-only (approximate, possibly larger)
+// value while CountPrecise() returns the KeepItem-filtered exact value.
+func TestCount_CustomKeepItem_ApproximateVsPrecise(t *testing.T) {
+	th, mockCache, cleanup := setupVisibilityPostThing(t)
+	defer cleanup()
+
+	// 2 visible + 3 hidden = 5 rows in SQL, 2 visible after KeepItem.
+	posts := []*VisibilityPost{
+		{Title: "v1"},
+		{Title: "h1", Hidden: true},
+		{Title: "v2"},
+		{Title: "h2", Hidden: true},
+		{Title: "h3", Hidden: true},
+	}
+	for _, p := range posts {
+		require.NoError(t, th.Save(p))
+	}
+
+	params := thing.QueryParams{Order: "id ASC"}
+
+	// Cold cache: approximate Count is SQL count (ignores KeepItem) => 5.
+	mockCache.Reset()
+	approx, err := th.Query(params).Count()
+	require.NoError(t, err)
+	assert.Equal(t, int64(5), approx, "approximate Count should reflect SQL rows, ignoring custom KeepItem")
+
+	// CountPrecise applies KeepItem => 2.
+	precise, err := th.Query(params).CountPrecise()
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), precise, "CountPrecise should apply custom KeepItem")
+}
+
+// TestCount_CustomKeepItem_DerivesFromWarmListCache verifies that once the
+// KeepItem-filtered list cache is warm (and under the list cache limit),
+// Count() derives the exact visible count from it.
+func TestCount_CustomKeepItem_DerivesFromWarmListCache(t *testing.T) {
+	th, mockCache, cleanup := setupVisibilityPostThing(t)
+	defer cleanup()
+
+	posts := []*VisibilityPost{
+		{Title: "v1"},
+		{Title: "h1", Hidden: true},
+		{Title: "v2"},
+	}
+	for _, p := range posts {
+		require.NoError(t, th.Save(p))
+	}
+
+	params := thing.QueryParams{Order: "id ASC"}
+
+	// Warm the list cache via Fetch (filters KeepItem down to 2 IDs).
+	_, err := th.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+
+	// Drop only the count cache so Count must recompute from the list cache.
+	countCacheKey := testGenerateCountCacheKey(t, th, params)
+	require.NoError(t, mockCache.Delete(context.Background(), countCacheKey))
+
+	// With a warm list cache under the limit, Count derives the exact visible
+	// count (2) from it.
+	count, err := th.Query(params).Count()
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), count, "Count should derive the visible count from the warm list cache")
+}
+
+// TestCountPrecise_SeparateCacheKey verifies precise and approximate counts use
+// distinct cache keys so one does not overwrite the other.
+func TestCountPrecise_SeparateCacheKey(t *testing.T) {
+	th, mockCache, cleanup := setupVisibilityPostThing(t)
+	defer cleanup()
+
+	posts := []*VisibilityPost{
+		{Title: "v1"},
+		{Title: "h1", Hidden: true},
+		{Title: "v2"},
+	}
+	for _, p := range posts {
+		require.NoError(t, th.Save(p))
+	}
+
+	params := thing.QueryParams{Order: "id ASC"}
+	mockCache.Reset()
+
+	precise, err := th.Query(params).CountPrecise()
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), precise)
+
+	// Approximate count must still see 3 (its own key is unaffected by precise).
+	approx, err := th.Query(params).Count()
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), approx)
+
+	// And precise stays 2 on a second call.
+	precise2, err := th.Query(params).CountPrecise()
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), precise2)
+}
+
+// TestCountPrecise_DefaultModelMatchesCount verifies that for a default model
+// (no custom KeepItem) Count and CountPrecise agree.
+func TestCountPrecise_DefaultModelMatchesCount(t *testing.T) {
+	th, _, _, cleanup := setupCacheTest[*User](t)
+	defer cleanup()
+
+	for i := 0; i < 4; i++ {
+		require.NoError(t, th.Save(&User{Name: "Same", Email: fmt.Sprintf("c%d@example.com", i)}))
+	}
+
+	params := thing.QueryParams{Where: "name = ?", Args: []interface{}{"Same"}}
+	count, err := th.Query(params).Count()
+	require.NoError(t, err)
+	precise, err := th.Query(params).CountPrecise()
+	require.NoError(t, err)
+	assert.Equal(t, count, precise)
+	assert.Equal(t, int64(4), precise)
+}
+
+// TestCountPrecise_LargeResultSetExact verifies precise count stays exact even
+// when the filtered result set exceeds the list cache limit (200), forcing the
+// full-scan path.
+func TestCountPrecise_LargeResultSetExact(t *testing.T) {
+	th, mockCache, cleanup := setupVisibilityPostThing(t)
+	defer cleanup()
+
+	// 250 visible + 50 hidden. Visible count (250) exceeds cacheListCountLimit.
+	const visible = 250
+	const hidden = 50
+	for i := 0; i < visible; i++ {
+		require.NoError(t, th.Save(&VisibilityPost{Title: fmt.Sprintf("v%d", i)}))
+	}
+	for i := 0; i < hidden; i++ {
+		require.NoError(t, th.Save(&VisibilityPost{Title: fmt.Sprintf("h%d", i), Hidden: true}))
+	}
+
+	params := thing.QueryParams{Order: "id ASC"}
+	mockCache.Reset()
+
+	precise, err := th.Query(params).CountPrecise()
+	require.NoError(t, err)
+	assert.Equal(t, int64(visible), precise, "CountPrecise must be exact beyond the list cache limit")
+
+	// Approximate count reflects all SQL rows.
+	approx, err := th.Query(params).Count()
+	require.NoError(t, err)
+	assert.Equal(t, int64(visible+hidden), approx)
+}
+
+// TestKeepItemFieldChange_AutoInvalidatesListCache verifies that changing a
+// declared KeepItem field via Save automatically invalidates list/count caches
+// whose WHERE clause does not mention that field.
+func TestKeepItemFieldChange_AutoInvalidatesListCache(t *testing.T) {
+	th, _, cleanup := setupVisibilityPostThing(t)
+	defer cleanup()
+
+	// One hidden post; queried by title (WHERE does NOT mention hidden).
+	post := &VisibilityPost{Title: "topic", Hidden: true}
+	require.NoError(t, th.Save(post))
+	require.NoError(t, th.Save(&VisibilityPost{Title: "topic", Hidden: false}))
+
+	params := thing.QueryParams{Where: "title = ?", Args: []interface{}{"topic"}, Order: "id ASC"}
+
+	// Prime caches: 1 visible (the hidden one is filtered by KeepItem).
+	ids, err := th.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	require.Len(t, ids, 1)
+	precise, err := th.Query(params).CountPrecise()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), precise)
+
+	// Flip hidden -> false via Save. Because "hidden" is a declared
+	// KeepItemField, the title=? caches must be auto-invalidated even though
+	// "hidden" is absent from the WHERE clause.
+	post.Hidden = false
+	require.NoError(t, th.Save(post))
+
+	// No manual call: caches should already reflect both visible posts.
+	fresh, err := th.Query(params).CountPrecise()
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), fresh, "precise count should reflect both visible posts after KeepItem field change")
+
+	list, err := th.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	assert.Len(t, list, 2, "list should include the now-visible post after KeepItem field change")
+}
+
+// TestKeepItemFieldChange_HidingAutoInvalidates verifies the reverse direction:
+// hiding a previously-visible post (visible -> invisible) also auto-invalidates.
+func TestKeepItemFieldChange_HidingAutoInvalidates(t *testing.T) {
+	th, _, cleanup := setupVisibilityPostThing(t)
+	defer cleanup()
+
+	post := &VisibilityPost{Title: "topic", Hidden: false}
+	require.NoError(t, th.Save(post))
+	require.NoError(t, th.Save(&VisibilityPost{Title: "topic", Hidden: false}))
+
+	params := thing.QueryParams{Where: "title = ?", Args: []interface{}{"topic"}, Order: "id ASC"}
+
+	// Prime caches: 2 visible.
+	ids, err := th.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	require.Len(t, ids, 2)
+
+	// Hide one post.
+	post.Hidden = true
+	require.NoError(t, th.Save(post))
+
+	list, err := th.Query(params).Fetch(0, 10)
+	require.NoError(t, err)
+	assert.Len(t, list, 1, "list should drop the now-hidden post after KeepItem field change")
+}
+
+// TestNew_CustomKeepItemWithoutFields_FailsFast verifies that constructing a
+// Thing for a model that overrides KeepItem but not KeepItemFields returns an
+// error.
+func TestNew_CustomKeepItemWithoutFields_FailsFast(t *testing.T) {
+	db, mockCache, cleanup := setupTestDB(t)
+	defer cleanup()
+	_, err := db.Exec(
+		context.Background(),
+		`CREATE TABLE IF NOT EXISTS forgot_fields_posts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			created_at DATETIME,
+			updated_at DATETIME,
+			deleted BOOLEAN DEFAULT FALSE,
+			title TEXT,
+			hidden BOOLEAN DEFAULT FALSE
+		);`,
+	)
+	require.NoError(t, err)
+
+	_, err = thing.New[*ForgotFieldsPost](db, mockCache)
+	require.Error(t, err, "New must fail fast when KeepItem is overridden but KeepItemFields is not")
+	assert.Contains(t, err.Error(), "KeepItemFields")
+}
+
+// TestCountPrecise_InvalidatedOnWrite verifies that the precise count cache is
+// invalidated when a matching row is created/updated/deleted.
+func TestCountPrecise_InvalidatedOnWrite(t *testing.T) {
+	th, _, cleanup := setupVisibilityPostThing(t)
+	defer cleanup()
+
+	require.NoError(t, th.Save(&VisibilityPost{Title: "v1"}))
+	require.NoError(t, th.Save(&VisibilityPost{Title: "h1", Hidden: true}))
+
+	params := thing.QueryParams{Order: "id ASC"}
+
+	// Prime the precise count: 1 visible.
+	precise, err := th.Query(params).CountPrecise()
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), precise)
+
+	// Add another visible row; the precise count cache must be invalidated.
+	require.NoError(t, th.Save(&VisibilityPost{Title: "v2"}))
+
+	precise, err = th.Query(params).CountPrecise()
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), precise, "precise count must reflect newly added visible row")
+}
+
+// setupVisibilityPostThing creates a Thing backed by a real SQLite table and
+// mock cache for the VisibilityPost model.
 func setupVisibilityPostThing(t *testing.T) (*thing.Thing[*VisibilityPost], *mockCacheClient, func()) {
 	db, mockCache, cleanup := setupTestDB(t)
 	_, err := db.Exec(

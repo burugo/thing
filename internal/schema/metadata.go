@@ -65,6 +65,14 @@ type ModelInfo struct {
 	CompareFields    []ComparableFieldInfo // Fields to compare during diff operations (new)
 	Indexes          []IndexInfo           // 普通索引
 	UniqueIndexes    []IndexInfo           // 唯一索引
+	// HasCustomKeepItem is true when the model overrides KeepItem instead of
+	// inheriting the promoted method from BaseModel. Custom KeepItem logic
+	// cannot be expressed in SQL, so count derivations must account for it.
+	HasCustomKeepItem bool
+	// HasCustomKeepItemFields is true when the model overrides KeepItemFields
+	// instead of inheriting the promoted method from BaseModel. Used to enforce
+	// that a model overriding KeepItem also declares its dependency fields.
+	HasCustomKeepItemFields bool
 }
 
 // modelCache stores ModelInfo structs, keyed by reflect.Type.
@@ -318,6 +326,10 @@ func GetCachedModelInfo(modelType reflect.Type) (*ModelInfo, error) {
 		}
 	}
 	info.PkName = pkDbName
+
+	// Detect whether the model overrides KeepItem with custom visibility logic.
+	info.HasCustomKeepItem = HasCustomKeepItem(modelType)
+	info.HasCustomKeepItemFields = HasCustomKeepItemFields(modelType)
 
 	// Store in cache
 	ModelCache.Store(modelType, &info)

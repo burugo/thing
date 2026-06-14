@@ -82,6 +82,13 @@ func (cr *CachedResult[T]) generateCountCacheKey() string {
 	return GenerateCacheKey("count", cr.thing.info.TableName, cr.params)
 }
 
+// Helper function to generate cache key for precise count queries.
+// Precise counts apply KeepItem filtering and therefore use a distinct prefix
+// so they never overwrite the approximate (SQL-only) count cache.
+func (cr *CachedResult[T]) generatePreciseCountCacheKey() string {
+	return GenerateCacheKey("count_precise", cr.thing.info.TableName, cr.params)
+}
+
 // Helper function to generate cache key for list queries.
 func (cr *CachedResult[T]) generateListCacheKey() string {
 	return GenerateCacheKey("list", cr.thing.info.TableName, cr.params)
@@ -170,6 +177,104 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, cacheKey, toInternalQueryParams(cr.params))
 
 	return cr.cachedCount, nil
+}
+
+// CountPrecise returns the exact number of records matching the query after
+// applying the model's KeepItem filter.
+//
+// For models that do not override KeepItem, this is identical to Count() and
+// reuses the same fast path. For models with custom KeepItem logic that SQL
+// cannot express, CountPrecise loads matching IDs and filters them with
+// KeepItem, which is more expensive on large result sets. Its result is cached
+// under a dedicated key so it never overwrites the approximate Count() cache.
+func (cr *CachedResult[T]) CountPrecise() (int64, error) {
+	if cr.thing == nil || cr.thing.cache == nil || cr.thing.db == nil {
+		return 0, errors.New("CountPrecise: CachedResult not properly initialized")
+	}
+
+	// Default models: precise == approximate. Reuse the cheaper Count() path.
+	if !cr.thing.info.HasCustomKeepItem {
+		return cr.Count()
+	}
+
+	preciseKey := cr.generatePreciseCountCacheKey()
+
+	// 1. Check the precise count cache.
+	if valStr, err := cr.thing.cache.Get(cr.thing.ctx, preciseKey); err == nil {
+		if count, convErr := strconv.ParseInt(valStr, 10, 64); convErr == nil {
+			return count, nil
+		}
+		log.Printf("WARN: Invalid precise count value in cache for key %s: %s", preciseKey, valStr)
+		_ = cr.thing.cache.Delete(cr.thing.ctx, preciseKey)
+	} else if !errors.Is(err, common.ErrNotFound) {
+		log.Printf("WARN: Cache Get error for precise count key %s: %v. Proceeding to recompute.", preciseKey, err)
+	}
+
+	// 2. If the list cache holds the complete (KeepItem-filtered) result set, its
+	//    length is the exact count.
+	listCacheKey := cr.generateListCacheKey()
+	if cachedIDs, idsErr := cr.thing.cache.GetQueryIDs(cr.thing.ctx, listCacheKey); idsErr == nil && len(cachedIDs) < cacheListCountLimit {
+		return cr.cachePreciseCount(preciseKey, int64(len(cachedIDs)))
+	} else if idsErr != nil && !errors.Is(idsErr, common.ErrNotFound) && !errors.Is(idsErr, common.ErrQueryCacheNoneResult) {
+		log.Printf("WARN: Cache GetQueryIDs error for list key %s while deriving precise count: %v. Proceeding to full scan.", listCacheKey, idsErr)
+	}
+
+	// 3. Full scan: page through all matching IDs and count those kept by KeepItem.
+	count, err := cr.countByFullScan()
+	if err != nil {
+		return 0, err
+	}
+	return cr.cachePreciseCount(preciseKey, count)
+}
+
+// cachePreciseCount stores the precise count under its dedicated key and
+// registers it for invalidation.
+func (cr *CachedResult[T]) cachePreciseCount(preciseKey string, count int64) (int64, error) {
+	if err := cr.thing.cache.Set(cr.thing.ctx, preciseKey, strconv.FormatInt(count, 10), globalCacheTTL); err != nil {
+		log.Printf("WARN: Failed to cache precise count for key %s: %v", preciseKey, err)
+	}
+	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, preciseKey, toInternalQueryParams(cr.params))
+	return count, nil
+}
+
+// countByFullScan pages through all matching IDs and counts those retained by
+// KeepItem. Unlike _fetch_data it does not stop at cacheListCountLimit, so the
+// count stays exact for large result sets.
+func (cr *CachedResult[T]) countByFullScan() (int64, error) {
+	var count int64
+	currentOffset := 0
+	const batchSize = 500
+
+	for {
+		batchIDs, dbErr := cr._fetch_ids_from_db(currentOffset, batchSize)
+		if dbErr != nil {
+			return 0, fmt.Errorf("CountPrecise: failed to fetch IDs from database: %w", dbErr)
+		}
+		if len(batchIDs) == 0 {
+			break
+		}
+
+		models, modelsErr := cr.thing.ByIDs(batchIDs)
+		if modelsErr != nil {
+			return 0, fmt.Errorf("CountPrecise: failed to fetch models for IDs: %w", modelsErr)
+		}
+
+		for _, id := range batchIDs {
+			model, found := models[id]
+			if !found {
+				continue
+			}
+			if cr.params.IncludeDeleted || model.KeepItem() {
+				count++
+			}
+		}
+
+		currentOffset += len(batchIDs)
+		if len(batchIDs) < batchSize {
+			break
+		}
+	}
+	return count, nil
 }
 
 // WithDeleted returns a new CachedResult instance that will include

@@ -191,6 +191,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 		return
 	}
 	changedColumns := changedModelColumns(info, model, originalModel)
+	kiFieldChanged := keepItemFieldChanged(model, changedColumns)
 
 	// Collect all field values for this model
 	fieldValues := make(map[string]interface{})
@@ -211,7 +212,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 		v := modelVal.FieldByIndex(f.Index)
 		fieldValues[f.DBColumn] = v.Interface()
 	}
-	candidateColumns := cacheCandidateColumns(fieldValues, changedColumns, isCreate, isDelete, !model.KeepItem())
+	candidateColumns := cacheCandidateColumns(fieldValues, changedColumns, isCreate, isDelete, !model.KeepItem() || kiFieldChanged)
 
 	// Use valueIndex for exact match fields
 	cacheKeySet := make(map[string]struct{})
@@ -265,7 +266,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 
 	for _, cacheKey := range queryCacheKeys {
 		isListKey := strings.HasPrefix(cacheKey, "list:")
-		isCountKey := strings.HasPrefix(cacheKey, "count:")
+		isCountKey := strings.HasPrefix(cacheKey, "count:") || strings.HasPrefix(cacheKey, "count_precise:")
 		if !isListKey && !isCountKey {
 			log.Printf("DEBUG: Skipping unknown cache key format in index: %s", cacheKey)
 			continue
@@ -331,6 +332,12 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			}
 			needsAdd, needsRemove := determineCacheAction(isCreate, matchesOriginal, matchesCurrent, model.KeepItem())
 			if isListKey && !isCreate && matchesOriginal && matchesCurrent && orderDependencyChanged(queryDeps, changedColumns) {
+				needsRemove = true
+			}
+			// A change to a declared KeepItem field can flip the row's
+			// visibility without changing whether it matches the WHERE clause.
+			// Invalidate so the cache is rebuilt with correct KeepItem filtering.
+			if kiFieldChanged && matchesCurrent {
 				needsRemove = true
 			}
 			if needsAdd || needsRemove {
@@ -549,6 +556,22 @@ func cacheCandidateColumns(fieldValues map[string]interface{}, changedColumns ma
 		columns[col] = true
 	}
 	return columns
+}
+
+// keepItemFieldChanged reports whether any column declared by the model's
+// KeepItemFields() is among the changed columns. When true, the framework
+// forces full-candidate invalidation so list/count caches are refreshed even
+// when the KeepItem-dependency column is absent from their WHERE clauses.
+func keepItemFieldChanged[T Model](model T, changedColumns map[string]bool) bool {
+	if len(changedColumns) == 0 {
+		return false
+	}
+	for _, col := range model.KeepItemFields() {
+		if changedColumns[col] {
+			return true
+		}
+	}
+	return false
 }
 
 // determineCacheAction determines cache add/remove actions.

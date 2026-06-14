@@ -20,8 +20,9 @@ type SimpleUser struct {
 }
 
 // Implement thing.Model interface
-func (u *SimpleUser) GetID() int64   { return int64(u.ID) }
-func (u *SimpleUser) KeepItem() bool { return true }
+func (u *SimpleUser) GetID() int64             { return int64(u.ID) }
+func (u *SimpleUser) KeepItem() bool           { return true }
+func (u *SimpleUser) KeepItemFields() []string { return nil }
 
 func TestParseFieldsDSL_ToJsonOptions(t *testing.T) {
 	tests := []struct {
@@ -332,8 +333,9 @@ type MethodUser struct {
 }
 
 // Implement thing.Model interface
-func (u *MethodUser) GetID() int64   { return int64(u.ID) }
-func (u *MethodUser) KeepItem() bool { return true }
+func (u *MethodUser) GetID() int64             { return int64(u.ID) }
+func (u *MethodUser) KeepItem() bool           { return true }
+func (u *MethodUser) KeepItemFields() []string { return nil }
 
 // Method-based virtual
 func (u *MethodUser) FullName() string {

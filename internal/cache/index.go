@@ -537,7 +537,10 @@ func (idx *CacheIndex) GetFullTableCountKeys(tableName string) []string {
 	defer idx.mu.RUnlock()
 	var keys []string
 	for k, params := range idx.keyToParams {
-		if params.Where == "" && strings.HasPrefix(k, "count:") && strings.Contains(k, ":"+tableName+":") {
+		if params.Where != "" || !strings.Contains(k, ":"+tableName+":") {
+			continue
+		}
+		if strings.HasPrefix(k, "count:") || strings.HasPrefix(k, "count_precise:") {
 			keys = append(keys, k)
 		}
 	}
