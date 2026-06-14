@@ -323,6 +323,27 @@ func TestCacheIndex_FullTableListKeys(t *testing.T) {
 	assert.ElementsMatch(t, []string{listKey1, listKey2}, keys)
 }
 
+// Test Full-Table Count Keys registration and retrieval
+func TestCacheIndex_FullTableCountKeys(t *testing.T) {
+	cache.ResetGlobalCacheIndex()
+	idx := cache.GlobalCacheIndex
+
+	table := "users"
+	countKey := "count:users:all"
+	precise := "count_precise:users:all"
+	// Register full-table count keys
+	idx.RegisterQuery(table, countKey, types.QueryParams{Where: "", Args: nil})
+	idx.RegisterQuery(table, precise, types.QueryParams{Where: "", Args: nil})
+	// Register a full-table list key and a filtered count key to ensure they are not included
+	idx.RegisterQuery(table, "list:users:all", types.QueryParams{Where: "", Args: nil})
+	idx.RegisterQuery(table, "count:users:filtered", types.QueryParams{Where: "id = ?", Args: []interface{}{1}})
+	// Register a full-table count key for a different table to ensure isolation
+	idx.RegisterQuery("posts", "count:posts:all", types.QueryParams{Where: "", Args: nil})
+
+	keys := idx.GetFullTableCountKeys(table)
+	assert.ElementsMatch(t, []string{countKey, precise}, keys)
+}
+
 // Test FieldIndex and valueIndex behaviors for mixed exact and non-exact conditions
 func TestCacheIndex_FieldIndexAndValueIndex(t *testing.T) {
 	cache.ResetGlobalCacheIndex()

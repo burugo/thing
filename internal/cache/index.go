@@ -51,19 +51,23 @@ type CacheIndex struct {
 	// TableToFullTableListKeys records all list cache keys with empty where clause (i.e., full table cache)
 	TableToFullTableListKeys map[string]map[string]bool
 
+	// TableToFullTableCountKeys records all count/count_precise cache keys with empty where clause.
+	TableToFullTableCountKeys map[string]map[string]bool
+
 	mu sync.RWMutex // Protects access to all maps
 }
 
 // NewCacheIndex creates and initializes a new CacheIndex.
 func NewCacheIndex() *CacheIndex {
 	return &CacheIndex{
-		keyToParams:              make(map[string]types.QueryParams),
-		keyToDependencies:        make(map[string]QueryDependencies),
-		tableToQueryKeys:         make(map[string]map[string]bool),
-		DependencyIndex:          make(map[string]map[string]map[string]bool),
-		valueIndex:               make(map[string]map[string]map[string]map[string]bool),
-		FieldIndex:               make(map[string]map[string]map[string]bool),
-		TableToFullTableListKeys: make(map[string]map[string]bool),
+		keyToParams:               make(map[string]types.QueryParams),
+		keyToDependencies:         make(map[string]QueryDependencies),
+		tableToQueryKeys:          make(map[string]map[string]bool),
+		DependencyIndex:           make(map[string]map[string]map[string]bool),
+		valueIndex:                make(map[string]map[string]map[string]map[string]bool),
+		FieldIndex:                make(map[string]map[string]map[string]bool),
+		TableToFullTableListKeys:  make(map[string]map[string]bool),
+		TableToFullTableCountKeys: make(map[string]map[string]bool),
 	}
 }
 
@@ -85,7 +89,12 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params types.Qu
 		idx.tableToQueryKeys[tableName] = make(map[string]bool)
 	}
 	idx.tableToQueryKeys[tableName][cacheKey] = true
-	deps := buildQueryDependencies(params, strings.HasPrefix(cacheKey, "list:"))
+
+	// Parse the WHERE clause once and reuse the result for dependency,
+	// value, and field indexing below.
+	whereFields, uncertainWhere, exactFields := parseQueryForIndex(params)
+
+	deps := buildQueryDependencies(whereFields, uncertainWhere, params.Order, strings.HasPrefix(cacheKey, "list:"))
 	idx.keyToDependencies[cacheKey] = deps
 	for field := range deps.WhereFields {
 		idx.addDependencyLocked(tableName, field, cacheKey)
@@ -105,8 +114,15 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params types.Qu
 		idx.TableToFullTableListKeys[tableName][cacheKey] = true
 	}
 
+	// --- 新增: 注册全表 count cache key ---
+	if params.Where == "" && (strings.HasPrefix(cacheKey, "count:") || strings.HasPrefix(cacheKey, "count_precise:")) {
+		if _, ok := idx.TableToFullTableCountKeys[tableName]; !ok {
+			idx.TableToFullTableCountKeys[tableName] = make(map[string]bool)
+		}
+		idx.TableToFullTableCountKeys[tableName][cacheKey] = true
+	}
+
 	// --- 新增: 注册值级索引 ---
-	exactFields := ParseExactMatchFields(params)
 	for field, vals := range exactFields {
 		if _, ok := idx.valueIndex[tableName]; !ok {
 			idx.valueIndex[tableName] = make(map[string]map[string]map[string]bool)
@@ -124,8 +140,7 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params types.Qu
 	}
 
 	// --- 新增: 注册字段级索引 ---
-	fields := extractAllWhereFields(params)
-	for _, field := range fields {
+	for _, field := range whereFields {
 		if _, ok := idx.FieldIndex[tableName]; !ok {
 			idx.FieldIndex[tableName] = make(map[string]map[string]bool)
 		}
@@ -149,26 +164,38 @@ func (idx *CacheIndex) addDependencyLocked(tableName, field, cacheKey string) {
 	idx.DependencyIndex[tableName][field][cacheKey] = true
 }
 
-func buildQueryDependencies(params types.QueryParams, isListKey bool) QueryDependencies {
+func buildQueryDependencies(whereFields []string, uncertainWhere bool, order string, isListKey bool) QueryDependencies {
 	deps := QueryDependencies{
 		WhereFields: make(map[string]bool),
 		OrderFields: make(map[string]bool),
 	}
-	whereFields, uncertainWhere := queryWhereFields(params)
 	for _, field := range whereFields {
 		deps.WhereFields[field] = true
 	}
 	if uncertainWhere {
 		deps.WhereFields[uncertainDependencyField] = true
 	}
-	if isListKey && params.Order != "" {
-		orderFields, uncertain := ParseOrderFields(params.Order)
+	if isListKey && order != "" {
+		orderFields, uncertain := ParseOrderFields(order)
 		for _, field := range orderFields {
 			deps.OrderFields[field] = true
 		}
 		deps.HasUncertainOrder = uncertain
 	}
 	return deps
+}
+
+// parseQueryForIndex parses the WHERE clause of params a single time and returns
+// the data needed to populate every index: the set of referenced fields, whether
+// parsing was uncertain (fell back to the legacy heuristic), and the exact-match
+// (=, IN) candidate values. This avoids parsing the same WHERE clause multiple
+// times during RegisterQuery.
+func parseQueryForIndex(params types.QueryParams) (whereFields []string, uncertainWhere bool, exactFields map[string][]interface{}) {
+	predicate, err := parseQueryPredicate(params)
+	if err == nil {
+		return predicate.Fields(), false, predicate.ExactMatches()
+	}
+	return legacyExtractAllWhereFields(params), true, legacyParseExactMatchFields(params)
 }
 
 // toIndexValueString converts an index value to string for use as a map key
@@ -189,20 +216,8 @@ func toIndexValueString(v interface{}) string {
 	}
 }
 
-// extractAllWhereFields extracts all field names from the WHERE clause
-func extractAllWhereFields(params types.QueryParams) []string {
-	fields, _ := queryWhereFields(params)
-	return fields
-}
-
-func queryWhereFields(params types.QueryParams) ([]string, bool) {
-	predicate, err := parseQueryPredicate(params)
-	if err == nil {
-		return predicate.Fields(), false
-	}
-	return legacyExtractAllWhereFields(params), true
-}
-
+// legacyExtractAllWhereFields extracts all field names from the WHERE clause
+// using a simple heuristic, used as a fallback when the predicate parser fails.
 func legacyExtractAllWhereFields(params types.QueryParams) []string {
 	var fields []string
 	where := params.Where
@@ -536,11 +551,8 @@ func (idx *CacheIndex) GetFullTableCountKeys(tableName string) []string {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	var keys []string
-	for k, params := range idx.keyToParams {
-		if params.Where != "" || !strings.Contains(k, ":"+tableName+":") {
-			continue
-		}
-		if strings.HasPrefix(k, "count:") || strings.HasPrefix(k, "count_precise:") {
+	if m, ok := idx.TableToFullTableCountKeys[tableName]; ok {
+		for k := range m {
 			keys = append(keys, k)
 		}
 	}

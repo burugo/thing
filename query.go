@@ -379,6 +379,12 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	currentOffset := 0
 	batchSize := int(float64(cacheListCountLimit) * 1.5) // Larger batch for efficiency
 
+	// Models without a custom KeepItem() are fully filtered by the SQL
+	// "deleted" = false clause already applied in _fetch_ids_from_db, so the
+	// per-row KeepItem() check is redundant. In that case we can collect IDs
+	// directly and skip loading every model just to filter.
+	skipKeepItemFilter := !cr.thing.info.HasCustomKeepItem && !cr.params.IncludeDeleted
+
 	// 4b. Loop until we have enough IDs or no more results, with max iteration protection
 	const maxIterations = 20 // Prevent excessive looping when many records are soft-deleted
 	iterationCount := 0
@@ -402,27 +408,38 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 			break
 		}
 
-		// Get models for these IDs to check KeepItem()
-		models, modelsErr := cr.thing.ByIDs(batchIDs)
-		if modelsErr != nil {
-			log.Printf("WARN: Failed to fetch models for IDs: %v", modelsErr)
-			// Continue with next batch
-			currentOffset += len(batchIDs)
-			continue
-		}
-
-		// Filter models based on KeepItem()
-		for _, id := range batchIDs {
-			if len(validIDs) >= cacheListCountLimit {
-				break
+		if skipKeepItemFilter {
+			// No custom KeepItem: SQL already excluded soft-deleted rows, so
+			// every fetched ID is valid. Avoid loading the models here.
+			for _, id := range batchIDs {
+				if len(validIDs) >= cacheListCountLimit {
+					break
+				}
+				validIDs = append(validIDs, id)
 			}
-			model, found := models[id]
-			if !found {
+		} else {
+			// Get models for these IDs to check KeepItem()
+			models, modelsErr := cr.thing.ByIDs(batchIDs)
+			if modelsErr != nil {
+				log.Printf("WARN: Failed to fetch models for IDs: %v", modelsErr)
+				// Continue with next batch
+				currentOffset += len(batchIDs)
 				continue
 			}
-			// Only filter out soft-deleted items if !IncludeDeleted
-			if cr.params.IncludeDeleted || model.KeepItem() {
-				validIDs = append(validIDs, id)
+
+			// Filter models based on KeepItem()
+			for _, id := range batchIDs {
+				if len(validIDs) >= cacheListCountLimit {
+					break
+				}
+				model, found := models[id]
+				if !found {
+					continue
+				}
+				// Only filter out soft-deleted items if !IncludeDeleted
+				if cr.params.IncludeDeleted || model.KeepItem() {
+					validIDs = append(validIDs, id)
+				}
 			}
 		}
 
