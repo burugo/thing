@@ -302,7 +302,7 @@ func (c *client) MGetModel(ctx context.Context, keys []string, dests []interface
 						case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 							field.SetInt(numericVal)
 						case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-							field.SetUint(uint64(numericVal))
+							field.SetUint(uint64(numericVal)) //nolint:gosec // overflow acceptable for ORM field mapping
 						}
 					}
 				}

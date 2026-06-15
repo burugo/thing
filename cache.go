@@ -634,10 +634,10 @@ func NewChannelLock() *ChannelLock {
 
 // localCache implements CacheClient using in-memory sync.Map.
 type localCache struct {
-	store       sync.Map // map[string]string
-	lockPool    sync.Map // map[string]*ChannelLock
-	counters    sync.Map // map[string]*atomic.Int64
-	expiryStore sync.Map // map[string]time.Time, stores expiration times
+	store       sync.Map  // map[string]string
+	lockPool    sync.Map  // map[string]*ChannelLock
+	counters    sync.Map  // map[string]*atomic.Int64
+	expiryStore sync.Map  // map[string]time.Time, stores expiration times
 	cleanupOnce sync.Once // ensures cleanup goroutine starts only once
 }
 
