@@ -41,7 +41,9 @@ func (m *ptrOverrideModel) KeepItem() bool           { return !m.Deleted && !m.S
 func (m *ptrOverrideModel) KeepItemFields() []string { return []string{"spam"} }
 
 // midModel / deepModel exercise two-level embedding (still default).
-type midModel struct{ testBaseModel }
+type midModel struct {
+	testBaseModel
+}
 type deepModel struct {
 	midModel
 	X int
