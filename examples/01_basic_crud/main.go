@@ -32,8 +32,9 @@ func main() {
 
 	// Get the User ORM object
 	users, err := thing.Use[*User]()
-
-	// Create
+	if err != nil {
+		log.Fatal(err)
+	}
 	u := &User{Name: "Alice", Age: 30}
 	if err := users.Save(u); err != nil {
 		log.Fatal(err)

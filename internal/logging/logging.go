@@ -1,3 +1,6 @@
+// Package logging provides a level-filtered logger used internally by the
+// thing ORM. External callers configure it via thing.SetLogger and
+// thing.SetLogLevel.
 package logging
 
 import (

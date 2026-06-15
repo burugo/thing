@@ -1,3 +1,5 @@
+// Package schema defines shared types for database schema introspection
+// used by Thing's driver implementations and auto-migration system.
 package schema
 
 import (

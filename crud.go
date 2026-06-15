@@ -141,7 +141,7 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 			if cache != nil {
 				cacheKey := generateCacheKey(modelInfo.TableName, id)
 				// Pass modelInfo.Fields which contains the list of Go field names
-				if errCache := cache.SetModel(ctx, cacheKey, modelPtr, modelInfo.Fields, globalCacheTTL); errCache != nil { // USE globalCacheTTL
+				if errCache := cache.SetModel(ctx, cacheKey, modelPtr, modelInfo.Fields, getGlobalCacheTTL()); errCache != nil { // USE getGlobalCacheTTL()
 					log.Printf("WARN: Failed to cache model %s:%d after batch fetch: %v", modelInfo.TableName, id, errCache)
 				}
 			}
@@ -156,7 +156,7 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 					// This ID was queried but not returned by DB
 					cacheKey := generateCacheKey(modelInfo.TableName, batchID)
 					log.Printf("DEBUG DB NOT FOUND for %s (in batch %v). Caching NoneResult.", cacheKey, batchIDs)
-					errCacheSet := cache.Set(ctx, cacheKey, common.NoneResult, globalCacheTTL) // USE globalCacheTTL
+					errCacheSet := cache.Set(ctx, cacheKey, common.NoneResult, getGlobalCacheTTL()) // USE getGlobalCacheTTL()
 					if errCacheSet != nil {
 						log.Printf("WARN: Failed to set NoneResult in cache for key %s: %v", cacheKey, errCacheSet)
 					}
@@ -227,7 +227,7 @@ func (t *Thing[T]) saveInternal(ctx context.Context, value T) error {
 func (t *Thing[T]) saveWithExecutor(ctx context.Context, executor sqlExecutor, value T, readOriginalFromExecutor bool) (saveMutation[T], error) {
 	mutation := saveMutation[T]{value: value}
 	if t.db == nil || t.cache == nil {
-		return mutation, errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+		return mutation, errors.New("thing not properly initialized with DBAdapter and CacheClient")
 	}
 	if executor == nil {
 		return mutation, errors.New("saveWithExecutor: executor is nil")
@@ -430,7 +430,7 @@ func (t *Thing[T]) finalizeSave(ctx context.Context, mutation saveMutation[T]) {
 		lockKey := cacheKey + ":lock"
 
 		errLock := WithLock(ctx, t.cache, lockKey, func(ctx context.Context) error {
-			if errCache := t.cache.SetModel(ctx, cacheKey, value, t.info.Fields, globalCacheTTL); errCache != nil {
+			if errCache := t.cache.SetModel(ctx, cacheKey, value, t.info.Fields, getGlobalCacheTTL()); errCache != nil {
 				log.Printf("WARN: Failed to update cache for %s after save: %v", cacheKey, errCache)
 			}
 			return nil
@@ -463,7 +463,7 @@ func (t *Thing[T]) finalizeSave(ctx context.Context, mutation saveMutation[T]) {
 // deleteInternal handles deleting records.
 func (t *Thing[T]) deleteInternal(ctx context.Context, value T) error {
 	if t.db == nil || t.cache == nil {
-		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+		return errors.New("thing not properly initialized with DBAdapter and CacheClient")
 	}
 
 	id := value.GetID()
@@ -591,7 +591,7 @@ func (t *Thing[T]) SaveMany(values []T) error {
 		return nil
 	}
 	if t.db == nil || t.cache == nil {
-		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+		return errors.New("thing not properly initialized with DBAdapter and CacheClient")
 	}
 
 	tx, err := t.db.BeginTx(t.ctx, nil)
@@ -687,7 +687,7 @@ func (t *Thing[T]) DeleteMany(values []T) error {
 		return nil
 	}
 	if t.db == nil || t.cache == nil {
-		return errors.New("Thing not properly initialized with DBAdapter and CacheClient")
+		return errors.New("thing not properly initialized with DBAdapter and CacheClient")
 	}
 
 	tx, err := t.db.BeginTx(t.ctx, nil)

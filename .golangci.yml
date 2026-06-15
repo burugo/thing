@@ -52,6 +52,8 @@ linters:
     - unparam
     - whitespace
     - gofumpt
+    - errcheck
+    - staticcheck
     # - cyclop
 
 issues:

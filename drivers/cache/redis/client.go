@@ -1,3 +1,5 @@
+// Package redis provides a Thing CacheClient implementation backed by Redis
+// via the redis/go-redis/v9 client library.
 package redis
 
 import (

@@ -4,10 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 
 	driversSchema "github.com/burugo/thing/drivers/schema"
 )
+
+// validMySQLIdentifier rejects identifiers that contain anything other than
+// letters, digits, and underscores. SHOW COLUMNS FROM does not support
+// parameterized table names, so this is a defense-in-depth measure.
+var validMySQLIdentifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // MySQLIntrospector implements schema.Introspector for MySQL.
 type MySQLIntrospector struct {
@@ -19,9 +25,12 @@ func (mi *MySQLIntrospector) GetTableInfo(ctx context.Context, tableName string)
 	if mi.DB == nil {
 		return nil, fmt.Errorf("MySQLIntrospector: DB is nil")
 	}
+	if !validMySQLIdentifierRe.MatchString(tableName) {
+		return nil, fmt.Errorf("MySQLIntrospector: invalid table name %q", tableName)
+	}
 
 	// 1. 获取字段信息
-	colRows, err := mi.DB.QueryContext(ctx, "SHOW COLUMNS FROM "+tableName) // #nosec G202
+	colRows, err := mi.DB.QueryContext(ctx, "SHOW COLUMNS FROM "+tableName) //nolint:gosec // tableName validated above
 	if err != nil {
 		// MySQL: Error 1146 (42S02): Table 'xxx' doesn't exist
 		if err.Error() == "Error 1146: Table '"+tableName+"' doesn't exist" ||

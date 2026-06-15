@@ -255,7 +255,7 @@ func TestThing_Delete(t *testing.T) {
 	assert.Equal(t, 1, mockCache.Counters["Set"], "Expected 1 Set (NoneResult only)")
 
 	// Verify user is actually gone from DB
-	_, err = th.ByID(1)
+	_, _ = th.ByID(1)
 }
 
 func TestThing_DeleteManyDeletesInTransaction(t *testing.T) {

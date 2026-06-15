@@ -188,16 +188,11 @@ func (m *mockCacheClient) GetValue(key string) ([]byte, bool) {
 	if expiryVal, expOk := m.expiryStore.Load(key); expOk {
 		if expiry, timeOk := expiryVal.(time.Time); timeOk {
 			if time.Now().After(expiry) {
-				// log.Printf("DEBUG GetValue: Key %s IS expired. Deleting.", key)
-				// Expired, delete key
 				m.store.Delete(key)
 				m.expiryStore.Delete(key)
 				return nil, false // Expired
 			}
-			// log.Printf("DEBUG GetValue: Key %s has expiry and is NOT expired", key)
 		}
-	} else {
-		// log.Printf("DEBUG GetValue: Key %s has NO expiry", key)
 	}
 
 	storedBytes, ok := val.([]byte)
@@ -332,9 +327,6 @@ func (m *mockCacheClient) Set(ctx context.Context, key string, value string, exp
 	if expiration > 0 {
 		expiryTime := time.Now().Add(expiration)
 		m.expiryStore.Store(key, expiryTime)
-		// log.Printf("DEBUG Set: Set key %s with expiry at %v", key, expiryTime)
-	} else {
-		// log.Printf("DEBUG Set: Set key %s with no expiry", key)
 	}
 	return nil
 }
@@ -448,11 +440,6 @@ func (m *mockCacheClient) GetQueryIDs(ctx context.Context, queryKey string) ([]i
 func (m *mockCacheClient) SetQueryIDs(ctx context.Context, queryKey string, ids []int64, expiration time.Duration) error {
 	m.incrementCounter("SetQueryIDs") // Use helper
 
-	// log.Printf("DEBUG SetQueryIDs: Setting query key: %s with %d IDs, expiration: %v", queryKey, len(ids), expiration)
-	if len(ids) > 0 {
-		// log.Printf("DEBUG SetQueryIDs: First few IDs: %v", ids[:min(3, len(ids))])
-	}
-
 	var buf bytes.Buffer
 	encoder := gob.NewEncoder(&buf)
 	if err := encoder.Encode(ids); err != nil { // Directly encode ids
@@ -465,9 +452,6 @@ func (m *mockCacheClient) SetQueryIDs(ctx context.Context, queryKey string, ids 
 	if expiration > 0 {
 		expiryTime := time.Now().Add(expiration)
 		m.expiryStore.Store(queryKey, expiryTime)
-		// log.Printf("DEBUG SetQueryIDs: Set query key %s with expiry at %v", queryKey, expiryTime)
-	} else {
-		// log.Printf("DEBUG SetQueryIDs: Set query key %s with no expiry", queryKey)
 	}
 
 	return nil
@@ -505,9 +489,6 @@ func (m *mockCacheClient) AcquireLock(ctx context.Context, key string, expiratio
 	if expiration > 0 {
 		expiryTime := time.Now().Add(expiration)
 		m.expiryStore.Store(lockKey, expiryTime) // Store expiry separately
-		// log.Printf("DEBUG AcquireLock: Acquired lock %s with expiry at %v", lockKey, expiryTime)
-	} else {
-		// log.Printf("DEBUG AcquireLock: Acquired lock %s with no expiry", lockKey)
 	}
 
 	return true, nil // Lock acquired

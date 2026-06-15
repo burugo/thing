@@ -1,3 +1,5 @@
+// Package dbscan maps database/sql row results into Go struct fields using
+// cached column-to-field-index lookups.
 package dbscan
 
 import (

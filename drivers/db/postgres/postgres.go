@@ -1,3 +1,5 @@
+// Package postgres provides a Thing DBAdapter implementation backed by
+// PostgreSQL via the lib/pq driver.
 package postgres
 
 import (

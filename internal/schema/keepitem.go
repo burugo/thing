@@ -43,12 +43,12 @@ func hasCustomMethod(modelType reflect.Type, methodName string) bool {
 		}
 		// Value set says promoted; double-check the pointer set in case an
 		// override only exists there.
-		if isCustomPtr, foundPtr := methodIsCustom(reflect.PtrTo(modelType), methodName); foundPtr {
+		if isCustomPtr, foundPtr := methodIsCustom(reflect.PointerTo(modelType), methodName); foundPtr {
 			return isCustomPtr
 		}
 		return false
 	}
-	if isCustom, found := methodIsCustom(reflect.PtrTo(modelType), methodName); found {
+	if isCustom, found := methodIsCustom(reflect.PointerTo(modelType), methodName); found {
 		return isCustom
 	}
 	return false

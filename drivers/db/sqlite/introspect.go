@@ -4,10 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/burugo/thing/drivers/schema"
 )
+
+// validSQLiteIdentifier rejects identifiers that contain anything other than
+// letters, digits, and underscores. SQLite PRAGMAs do not support parameterized
+// table/index names, so this is a defense-in-depth measure.
+var validIdentifierRe = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // SQLiteIntrospector implements schema.Introspector for SQLite.
 type SQLiteIntrospector struct {
@@ -18,6 +24,9 @@ type SQLiteIntrospector struct {
 func (si *SQLiteIntrospector) GetTableInfo(ctx context.Context, tableName string) (*schema.TableInfo, error) {
 	if si.DB == nil {
 		return nil, fmt.Errorf("SQLiteIntrospector: DB is nil")
+	}
+	if !validIdentifierRe.MatchString(tableName) {
+		return nil, fmt.Errorf("SQLiteIntrospector: invalid table name %q", tableName)
 	}
 
 	// 1. 获取字段信息
@@ -84,7 +93,10 @@ func (si *SQLiteIntrospector) GetTableInfo(ctx context.Context, tableName string
 			continue // 跳过主键索引
 		}
 		// 获取索引列
-		colInfoRows, err := si.DB.QueryContext(ctx, "PRAGMA index_info("+name+")")
+		if !validIdentifierRe.MatchString(name) {
+			continue // skip index with unexpected name
+		}
+		colInfoRows, err := si.DB.QueryContext(ctx, "PRAGMA index_info("+name+")") //nolint:gosec // name validated above
 		if err != nil {
 			return nil, fmt.Errorf("PRAGMA index_info(%s) failed: %w", name, err)
 		}

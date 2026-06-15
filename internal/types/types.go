@@ -1,7 +1,7 @@
+// Package types defines internal data structures shared between thing's
+// sub-packages to avoid import cycles.
 package types
 
-// --- Local Interfaces/Structs/Vars for internal/cache --- //
-// Local QueryParams matching root structure
 type QueryParams struct {
 	Where          string
 	Args           []interface{}

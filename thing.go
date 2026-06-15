@@ -42,7 +42,7 @@ func NewSQLBuilder(d Dialector) SQLBuilder {
 // Accepts one or more CacheClient; if none provided, uses defaultLocalCache.
 func New[T Model](db DBAdapter, cache CacheClient) (*Thing[T], error) {
 	if db == nil {
-		return nil, errors.New("DBAdapter must be non-nil")
+		return nil, errors.New("dbAdapter must be non-nil")
 	}
 	if cache == nil {
 		cache = DefaultLocalCache

@@ -1,3 +1,5 @@
+// Package utils provides internal helper functions for gob registration,
+// value normalization, table name derivation, and ordered maps.
 package utils
 
 import (
@@ -125,9 +127,7 @@ func registerNamedType(t reflect.Type) {
 	// Register the type with gob, using safe registration to handle panics
 	safeGobRegister := func(val interface{}) {
 		defer func() {
-			if r := recover(); r != nil {
-				// Ignore duplicate registration panic
-			}
+			_ = recover() //nolint:staticcheck // intentionally suppress duplicate gob registration panics
 		}()
 		gob.Register(val)
 	}
@@ -211,9 +211,7 @@ func RegisterTypeRecursive(t reflect.Type) {
 	// Register struct and pointer to struct using existing logic
 	safeGobRegister := func(val interface{}) {
 		defer func() {
-			if r := recover(); r != nil {
-				// Ignore duplicate registration panic
-			}
+			_ = recover() //nolint:staticcheck // intentionally suppress duplicate gob registration panics
 		}()
 		gob.Register(val)
 	}

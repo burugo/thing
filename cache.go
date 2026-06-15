@@ -265,8 +265,6 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					needsAdd:    false,
 					needsRemove: true,
 				})
-			} else {
-				// log.Printf("DEBUG Gather Task (%s): Deleted item did not match query. No cache change needed.", cacheKey)
 			}
 		} else {
 			// Save/Update: check both current and original model
@@ -310,8 +308,6 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 					needsAdd:    needsAdd,
 					needsRemove: needsRemove,
 				})
-			} else {
-				// log.Printf("DEBUG Gather Task (%s): No cache change needed.", cacheKey)
 			}
 		}
 	}
@@ -369,9 +365,6 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			if task.needsAdd {
 				if !containsID(initialIDs, id) {
 					changed = true
-					// log.Printf("DEBUG Compute (%s): Needs Add - Adding ID %d. Marking changed.", task.cacheKey, id)
-				} else {
-					// log.Printf("DEBUG Compute (%s): Skipping list add as ID %d already exists. No change needed.", task.cacheKey, id)
 				}
 			} else if task.needsRemove {
 				changed = true
@@ -639,6 +632,7 @@ type localCache struct {
 	counters    sync.Map  // map[string]*atomic.Int64
 	expiryStore sync.Map  // map[string]time.Time, stores expiration times
 	cleanupOnce sync.Once // ensures cleanup goroutine starts only once
+	stopCleanup chan struct{}
 }
 
 // DefaultLocalCache is the default in-memory cache client for Thing ORM.
@@ -739,6 +733,7 @@ func (m *localCache) isExpired(key string) bool {
 // startCleanupGoroutine starts a background goroutine to clean up expired keys
 func (m *localCache) startCleanupGoroutine() {
 	m.cleanupOnce.Do(func() {
+		m.stopCleanup = make(chan struct{})
 		go m.cleanupExpiredKeys()
 	})
 }
@@ -748,7 +743,13 @@ func (m *localCache) cleanupExpiredKeys() {
 	ticker := time.NewTicker(1 * time.Minute) // Clean up every minute
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-m.stopCleanup:
+			return
+		case <-ticker.C:
+		}
+
 		now := time.Now()
 		keysToDelete := make([]string, 0)
 
@@ -1084,7 +1085,7 @@ func (m *localCache) Incr(ctx context.Context, key string) (int64, error) {
 	}
 
 	// Successfully acquired lock
-	defer m.ReleaseLock(ctx, lockKey) // Ensure lock is released
+	defer func() { _ = m.ReleaseLock(ctx, lockKey) }() // Ensure lock is released
 
 	// --- Original atomic increment logic here ---
 	val, loaded := m.store.Load(key)

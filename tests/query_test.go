@@ -622,7 +622,7 @@ func TestCachedResult_First(t *testing.T) {
 	require.NoError(t, thingInstance.Save(&u2))
 
 	t.Run("Find First Match", func(t *testing.T) {
-		mockCache.FlushAll(context.Background())
+		_ = mockCache.FlushAll(context.Background())
 		params := thing.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id ASC"}
 		cr := thingInstance.Query(params)
 		firstUser, err := cr.First()
@@ -633,7 +633,7 @@ func TestCachedResult_First(t *testing.T) {
 	})
 
 	t.Run("Find First Match (Different Order)", func(t *testing.T) {
-		mockCache.FlushAll(context.Background())
+		_ = mockCache.FlushAll(context.Background())
 		params := thing.QueryParams{Where: "name LIKE ?", Args: []interface{}{"%User"}, Order: "id DESC"}
 		cr := thingInstance.Query(params)
 		firstUser, err := cr.First()
@@ -644,7 +644,7 @@ func TestCachedResult_First(t *testing.T) {
 	})
 
 	t.Run("Find No Match", func(t *testing.T) {
-		mockCache.FlushAll(context.Background())
+		_ = mockCache.FlushAll(context.Background())
 		params := thing.QueryParams{Where: "name = ?", Args: []interface{}{"NonExistent"}}
 		cr := thingInstance.Query(params)
 		_, err := cr.First()
@@ -653,7 +653,7 @@ func TestCachedResult_First(t *testing.T) {
 	})
 
 	t.Run("Cache Hit (List Cache -> ByID)", func(t *testing.T) {
-		mockCache.FlushAll(context.Background())
+		_ = mockCache.FlushAll(context.Background())
 		params := thing.QueryParams{Where: "name = ?", Args: []interface{}{u1.Name}}
 		cacheKey := testGenerateListCacheKey(t, thingInstance, params)
 		countCacheKey := testGenerateCountCacheKey(t, thingInstance, params)

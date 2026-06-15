@@ -41,7 +41,9 @@ func TestAddressUserWithJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create sqlite adapter: %v", err)
 	}
-	thing.Configure(dbAdapter, nil)
+	if err := thing.Configure(dbAdapter, nil); err != nil {
+		t.Fatalf("Configure failed: %v", err)
+	}
 	err = thing.AutoMigrate(&AddressUser{})
 	if err != nil {
 		t.Fatalf("AutoMigrate failed: %v", err)

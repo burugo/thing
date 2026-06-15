@@ -1,3 +1,5 @@
+// Package mysql provides a Thing DBAdapter implementation backed by MySQL
+// via the go-sql-driver/mysql driver.
 package mysql
 
 import (

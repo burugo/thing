@@ -1,3 +1,5 @@
+// Package schema extracts and caches struct metadata (table names, columns,
+// field mappings, indexes) from Go model types for use by the thing ORM.
 package schema
 
 import (
@@ -448,10 +450,10 @@ func indexInfoFromValue(indexValue reflect.Value) (IndexInfo, error) {
 
 func validateProgrammaticIndex(info *ModelInfo, idx IndexInfo) error {
 	if len(idx.Columns) == 0 {
-		return fmt.Errorf("Columns must be non-empty")
+		return fmt.Errorf("columns must be non-empty")
 	}
 	if idx.Name == "" && len(idx.Columns) > 1 {
-		return fmt.Errorf("Name is required for composite indexes")
+		return fmt.Errorf("name is required for composite indexes")
 	}
 	for _, column := range idx.Columns {
 		if _, ok := info.ColumnToFieldMap[column]; !ok {

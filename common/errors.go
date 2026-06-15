@@ -1,3 +1,5 @@
+// Package common provides shared error sentinels and constants used across
+// the thing ORM and its drivers.
 package common
 
 import "errors"

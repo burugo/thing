@@ -219,7 +219,7 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 
 	relatedPtrType := relatedModelType
 	if relatedPtrType.Kind() != reflect.Ptr {
-		relatedPtrType = reflect.PtrTo(relatedModelType)
+		relatedPtrType = reflect.PointerTo(relatedModelType)
 	}
 	relatedMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, relatedInfo, relatedPtrType, uniqueFkList)
 	if err != nil {
@@ -241,11 +241,7 @@ func (t *Thing[T]) preloadBelongsTo(ctx context.Context, resultsVal reflect.Valu
 					if relationField.IsValid() && relationField.CanSet() {
 						// log.Printf("DEBUG Preload Set: Setting %s.%s (FK: %d) to %v", owningModelElem.Type().Name(), field.Name, fkValueInt64, relatedModelPtr.Interface()) // DEBUG LOG
 						relationField.Set(relatedModelPtr) // Set post.Author = userPtr (*R)
-					} else {
-						log.Printf("WARN Preload Set: Relation field %s.%s is not valid or settable", owningModelElem.Type().Name(), field.Name) // DEBUG LOG
 					}
-				} else {
-					// log.Printf("DEBUG Preload Set: Related model for FK %d not found in map", fkValueInt64) // DEBUG LOG
 				}
 			} // else: FK was not convertible or was zero, do nothing
 		}
@@ -421,12 +417,12 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 		if t.cache != nil && listCacheKey != "" {
 			if len(relatedIDs) > 0 {
 				log.Printf("Caching %d fetched IDs for query key %s", len(relatedIDs), listCacheKey)
-				if qcErr := t.cache.SetQueryIDs(ctx, listCacheKey, relatedIDs, globalCacheTTL); qcErr != nil {
+				if qcErr := t.cache.SetQueryIDs(ctx, listCacheKey, relatedIDs, getGlobalCacheTTL()); qcErr != nil {
 					log.Printf("WARN: Failed to cache query IDs for key %s: %v", listCacheKey, qcErr)
 				}
 			} else {
 				log.Printf("Caching NoneResult for query key %s", listCacheKey)
-				if qcErr := t.cache.Set(ctx, listCacheKey, common.NoneResult, globalCacheTTL); qcErr != nil {
+				if qcErr := t.cache.Set(ctx, listCacheKey, common.NoneResult, getGlobalCacheTTL()); qcErr != nil {
 					log.Printf("WARN: Failed to cache NoneResult for query key %s: %v", listCacheKey, qcErr)
 				}
 			}
@@ -439,7 +435,7 @@ func (t *Thing[T]) preloadHasMany(ctx context.Context, resultsVal reflect.Value,
 		// Use the internal helper which checks object cache
 		log.Printf("Fetching %d related %s models using fetchModelsByIDsInternal", len(relatedIDs), relatedModelType.Name())
 		// Always pass pointer type (*R) to fetchModelsByIDsInternal
-		relatedPtrType := reflect.PtrTo(relatedModelType)
+		relatedPtrType := reflect.PointerTo(relatedModelType)
 		if relatedPtrType.Kind() != reflect.Ptr {
 			return fmt.Errorf("preloadHasMany: relatedPtrType must be a pointer type, got %s", relatedPtrType.Kind())
 		}
@@ -614,11 +610,17 @@ func (t *Thing[T]) preloadManyToMany(ctx context.Context, resultsVal reflect.Val
 			var idList []int64
 			for rows.Next() {
 				var rid int64
-				if err := rows.Scan(&rid); err == nil {
-					ids = append(ids, rid)
-					idList = append(idList, rid)
-					allRelatedIDsSet[rid] = struct{}{}
+				if err := rows.Scan(&rid); err != nil {
+					_ = rows.Close()
+					return fmt.Errorf("manyToMany scan error for %s: %w", joinTable, err)
 				}
+				ids = append(ids, rid)
+				idList = append(idList, rid)
+				allRelatedIDsSet[rid] = struct{}{}
+			}
+			if err := rows.Err(); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("manyToMany rows iteration error for %s: %w", joinTable, err)
 			}
 			_ = rows.Close()
 			// 写入缓存
@@ -664,7 +666,7 @@ func (t *Thing[T]) preloadManyToMany(ctx context.Context, resultsVal reflect.Val
 	}
 	relatedPtrType := relatedModelType
 	if relatedPtrType.Kind() != reflect.Ptr {
-		relatedPtrType = reflect.PtrTo(relatedModelType)
+		relatedPtrType = reflect.PointerTo(relatedModelType)
 	}
 	roleMap, err := fetchModelsByIDsInternal(ctx, t.cache, t.db, relatedInfo, relatedPtrType, intIDs)
 	if err != nil {

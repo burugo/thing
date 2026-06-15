@@ -1,3 +1,5 @@
+// Package sqlbuilder generates dialect-aware SQL statements (SELECT, INSERT,
+// UPDATE, DELETE, COUNT) for the thing ORM.
 package sqlbuilder
 
 import (

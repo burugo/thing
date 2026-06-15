@@ -125,18 +125,15 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 			// Optionally delete the invalid cache entry here
 			_ = cr.thing.cache.Delete(cr.thing.ctx, cacheKey)
 		}
-	} else if errors.Is(cacheErr, common.ErrNotFound) {
-		// Cache Miss
-		// log.Printf("CACHE MISS (Count): Key %s not found.", cacheKey)
-		// Fall through to DB fetch
 	}
+	// Cache miss or error — fall through to DB fetch
 
 	listCacheKey := cr.generateListCacheKey()
 	if cachedIDs, idsErr := cr.thing.cache.GetQueryIDs(cr.thing.ctx, listCacheKey); idsErr == nil && len(cachedIDs) < cacheListCountLimit {
 		count := int64(len(cachedIDs))
 		cr.cachedCount = count
 		cr.hasLoadedCount = true
-		cacheSetErr := cr.thing.cache.Set(cr.thing.ctx, cacheKey, strconv.FormatInt(count, 10), globalCacheTTL)
+		cacheSetErr := cr.thing.cache.Set(cr.thing.ctx, cacheKey, strconv.FormatInt(count, 10), getGlobalCacheTTL())
 		if cacheSetErr != nil {
 			log.Printf("WARN: Failed to cache count from list cache for key %s: %v", cacheKey, cacheSetErr)
 		}
@@ -168,7 +165,7 @@ func (cr *CachedResult[T]) Count() (int64, error) {
 	cr.cachedCount = dbCount
 	cr.hasLoadedCount = true
 
-	cacheSetErr := cr.thing.cache.Set(cr.thing.ctx, cacheKey, strconv.FormatInt(dbCount, 10), globalCacheTTL)
+	cacheSetErr := cr.thing.cache.Set(cr.thing.ctx, cacheKey, strconv.FormatInt(dbCount, 10), getGlobalCacheTTL())
 	if cacheSetErr != nil {
 		log.Printf("WARN: Failed to cache count for key %s: %v", cacheKey, cacheSetErr)
 	}
@@ -230,7 +227,7 @@ func (cr *CachedResult[T]) CountPrecise() (int64, error) {
 // cachePreciseCount stores the precise count under its dedicated key and
 // registers it for invalidation.
 func (cr *CachedResult[T]) cachePreciseCount(preciseKey string, count int64) (int64, error) {
-	if err := cr.thing.cache.Set(cr.thing.ctx, preciseKey, strconv.FormatInt(count, 10), globalCacheTTL); err != nil {
+	if err := cr.thing.cache.Set(cr.thing.ctx, preciseKey, strconv.FormatInt(count, 10), getGlobalCacheTTL()); err != nil {
 		log.Printf("WARN: Failed to cache precise count for key %s: %v", preciseKey, err)
 	}
 	cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, preciseKey, toInternalQueryParams(cr.params))
@@ -455,8 +452,8 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	// 5. Handle filtered DB results and cache appropriately
 	// log.Printf("DB HIT: List Key: %s, Found %d valid IDs after filtering. Caching IDs.", listCacheKey, len(validIDs))
 	// Use the helper function to store the list (works for empty lists too)
-	// cacheSetErr := cache.SetCachedListIDs(cr.thing.ctx, cr.thing.cache, listCacheKey, validIDs, globalCacheTTL) // Use helper
-	cacheSetErr := cr.thing.cache.SetQueryIDs(cr.thing.ctx, listCacheKey, validIDs, globalCacheTTL)
+	// cacheSetErr := cache.SetCachedListIDs(cr.thing.ctx, cr.thing.cache, listCacheKey, validIDs, getGlobalCacheTTL()) // Use helper
+	cacheSetErr := cr.thing.cache.SetQueryIDs(cr.thing.ctx, listCacheKey, validIDs, getGlobalCacheTTL())
 	if cacheSetErr != nil {
 		log.Printf("WARN: Failed to cache list IDs for key %s: %v", listCacheKey, cacheSetErr) // Log remains the same
 	}
@@ -467,11 +464,9 @@ func (cr *CachedResult[T]) _fetch_data() ([]int64, error) {
 	if len(validIDs) < cacheListCountLimit { // Changed to < for clarity
 		countCacheKey := cr.generateCountCacheKey()
 		countStr := strconv.FormatInt(int64(len(validIDs)), 10) // Correctly gets "0" if len is 0
-		countSetErr := cr.thing.cache.Set(cr.thing.ctx, countCacheKey, countStr, globalCacheTTL)
+		countSetErr := cr.thing.cache.Set(cr.thing.ctx, countCacheKey, countStr, getGlobalCacheTTL())
 		if countSetErr != nil {
 			log.Printf("WARN: Failed to update count cache (key: %s) after list fetch: %v", countCacheKey, countSetErr)
-		} else {
-			// log.Printf("Updated count cache (key: %s) with count %d after list fetch", countCacheKey, len(validIDs))
 		}
 		// Register the count key
 		cache.GlobalCacheIndex.RegisterQuery(cr.thing.info.TableName, countCacheKey, toInternalQueryParams(cr.params))
@@ -491,9 +486,6 @@ func (cr *CachedResult[T]) invalidateCache() error {
 	deleteErr := cr.thing.cache.Delete(cr.thing.ctx, listCacheKey)
 	if deleteErr != nil && !errors.Is(deleteErr, common.ErrNotFound) {
 		log.Printf("WARN: Failed to invalidate list cache for key %s: %v", listCacheKey, deleteErr)
-		// Continue despite error, try to invalidate count cache as well
-	} else {
-		// log.Printf("Cache invalidated for list key: %s", listCacheKey)
 	}
 
 	// 2. Invalidate count cache
@@ -502,8 +494,6 @@ func (cr *CachedResult[T]) invalidateCache() error {
 	deleteErr = cr.thing.cache.Delete(cr.thing.ctx, countCacheKey)
 	if deleteErr != nil && !errors.Is(deleteErr, common.ErrNotFound) {
 		log.Printf("WARN: Failed to invalidate count cache for key %s: %v", countCacheKey, deleteErr)
-	} else {
-		// log.Printf("Cache invalidated for count key: %s", countCacheKey)
 	}
 
 	// 3. Reset in-memory cache state to trigger reload on next access
@@ -577,7 +567,6 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 			endOffset := nextFetchOffset + actualFetchLimit
 			idsToCheck = cr.cachedIDs[nextFetchOffset:endOffset]
 			// log.Printf("Fetch Iteration: Using %d cached IDs [%d:%d], need %d more results (source: %s)",
-			// 	len(idsToCheck), nextFetchOffset, endOffset, remainingNeeded, fetchSource)
 
 		case int64(nextFetchOffset) < totalCount:
 			// Still have more data in the database according to total count
@@ -590,19 +579,11 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 				return nil, fmt.Errorf("failed to fetch additional IDs from database: %w", dbErr)
 			}
 
-			if len(idsToCheck) == 0 {
-				// No more results in DB despite what count says
-				// log.Printf("Fetch Iteration: No more IDs from database (source: %s)", fetchSource)
-				break
-			}
-
 			// log.Printf("Fetch Iteration: Fetched %d IDs from database, need %d more results (source: %s)",
-			// 	len(idsToCheck), remainingNeeded, fetchSource)
 
 		default:
 			// Reached the end of total records
 			// log.Printf("Fetch Iteration: Reached end of all results (%d total)", totalCount)
-			break
 		}
 
 		if len(idsToCheck) == 0 {
@@ -617,11 +598,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 
 			// If fetching from cache failed, invalidate cache
 			if fetchSource == "Cache" && !cacheInvalidated {
-				// log.Printf("Invalidating cache due to ByIDs failure for cached IDs")
-				invErr := cr.invalidateCache()
-				if invErr != nil {
-					// log.Printf("WARN: Failed to invalidate cache: %v", invErr)
-				}
+				_ = cr.invalidateCache()
 				cacheInvalidated = true
 
 				// Skip this batch and continue
@@ -662,11 +639,7 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 
 		// If any issues found with cached IDs and cache hasn't been invalidated yet
 		if fetchSource == "Cache" && anyIssueFound && !cacheInvalidated {
-			// log.Printf("Invalidating cache due to inconsistencies found in cached IDs")
-			invErr := cr.invalidateCache()
-			if invErr != nil {
-				// log.Printf("WARN: Failed to invalidate cache: %v", invErr)
-			}
+			_ = cr.invalidateCache()
 			cacheInvalidated = true
 
 			// We continue with the results we have so far, and possibly fetch more
@@ -687,7 +660,6 @@ func (cr *CachedResult[T]) Fetch(offset, limit int) ([]T, error) {
 		}
 
 		// log.Printf("Fetch Iteration: Got %d/%d items so far, need %d more. Next fetch: offset=%d, limit=%d",
-		// 	len(finalResults), limit, remainingNeeded, nextFetchOffset, nextFetchLimit)
 	}
 
 	log.Printf("Fetch: Returning %d/%d requested results", len(finalResults), limit)

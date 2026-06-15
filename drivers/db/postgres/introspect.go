@@ -70,11 +70,10 @@ func (pi *PostgreSQLIntrospector) GetTableInfo(ctx context.Context, tableName st
 	}
 	defer pkRows.Close()
 	var pkCol string
-	for pkRows.Next() {
+	if pkRows.Next() {
 		if err := pkRows.Scan(&pkCol); err != nil {
 			return nil, fmt.Errorf("scan pk: %w", err)
 		}
-		break // 只取第一个主键字段
 	}
 	if err := pkRows.Err(); err != nil {
 		return nil, fmt.Errorf("pk rows: %w", err)

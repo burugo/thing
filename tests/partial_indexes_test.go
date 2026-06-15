@@ -105,7 +105,7 @@ func TestAutoMigratePostgresPartialUniqueIndex(t *testing.T) {
 
 	ctx := context.Background()
 	_, _ = dbAdapter.Exec(ctx, "DROP TABLE IF EXISTS partial_index_users;")
-	defer dbAdapter.Exec(ctx, "DROP TABLE IF EXISTS partial_index_users;")
+	defer func() { _, _ = dbAdapter.Exec(ctx, "DROP TABLE IF EXISTS partial_index_users;") }()
 
 	require.NoError(t, thing.Configure(dbAdapter, nil, 0))
 	require.NoError(t, thing.AutoMigrate(PartialIndexUser{}))

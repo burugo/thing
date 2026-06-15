@@ -1,3 +1,5 @@
+// Package cache implements the query cache index, query-match predicate
+// evaluation, and cache key lock management used internally by the thing ORM.
 package cache
 
 import (

@@ -471,15 +471,11 @@ func ParseFieldsDSL(dsl string) (*JSONOptions, error) {
 				if name != "" {
 					if _, exists := currentOpts.NestedRules[name]; !exists {
 						currentOpts.NestedRules[name] = nestedOpts
-					} else {
-						// DEBUG: 跳过重复嵌套
 					}
 				}
 				if isExclude {
 					if name != "" && !contains(currentOpts.OrderedExclude, name) {
 						currentOpts.OrderedExclude = append(currentOpts.OrderedExclude, name)
-					} else {
-						// Do NOT add to OrderedInclude for top-level excluded fields with nested rules
 					}
 				} else {
 					// If the field is included (e.g., books{...}), add to include list with nested rules
@@ -503,8 +499,6 @@ func ParseFieldsDSL(dsl string) (*JSONOptions, error) {
 					name := strings.TrimPrefix(field, "-")
 					if name != "" && !contains(currentOpts.OrderedExclude, name) {
 						currentOpts.OrderedExclude = append(currentOpts.OrderedExclude, name)
-					} else {
-						// DEBUG: 跳过重复 exclude
 					}
 				} else {
 					found := false

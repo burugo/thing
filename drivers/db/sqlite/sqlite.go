@@ -1,3 +1,5 @@
+// Package sqlite provides a Thing DBAdapter implementation backed by SQLite
+// via the mattn/go-sqlite3 driver.
 package sqlite
 
 import (

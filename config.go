@@ -3,6 +3,7 @@ package thing
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	log "github.com/burugo/thing/internal/logging"
@@ -15,11 +16,21 @@ var (
 	globalCache  CacheClient
 	isConfigured bool
 	configMutex  sync.RWMutex
-	// Global cache TTL, determined at startup
-	globalCacheTTL time.Duration
+	// Global cache TTL stored atomically (nanoseconds) for lock-free reads.
+	atomicCacheTTLNs atomic.Int64
 	// Cache version for query cache key isolation across restarts
 	cacheVersion int64
 )
+
+// globalCacheTTL returns the current global cache TTL, safe for concurrent reads.
+func getGlobalCacheTTL() time.Duration {
+	return time.Duration(atomicCacheTTLNs.Load())
+}
+
+// setGlobalCacheTTL stores the TTL atomically.
+func setGlobalCacheTTL(d time.Duration) {
+	atomicCacheTTLNs.Store(int64(d))
+}
 
 // Config holds configuration for the Thing ORM.
 type Config struct {
@@ -90,9 +101,9 @@ func Configure(args ...interface{}) error {
 	}
 
 	if ttl > 0 {
-		globalCacheTTL = ttl
+		setGlobalCacheTTL(ttl)
 	} else {
-		globalCacheTTL = defaultTTL
+		setGlobalCacheTTL(defaultTTL)
 	}
 	globalDB = db
 	globalCache = cache
@@ -104,10 +115,10 @@ func Configure(args ...interface{}) error {
 // ConfigureWithConfig sets up the package-level database and cache clients using a Config struct.
 func ConfigureWithConfig(cfg Config) error {
 	if cfg.DB == nil {
-		return errors.New("DBAdapter must be non-nil")
+		return errors.New("dbAdapter must be non-nil")
 	}
 	if cfg.Cache == nil {
-		return errors.New("CacheClient must be non-nil")
+		return errors.New("cacheClient must be non-nil")
 	}
 	if cfg.Logger != nil {
 		SetLogger(cfg.Logger)

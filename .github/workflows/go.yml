@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: [ '1.19.x', '1.22.x' ] # Test minimum supported and latest stable
+        go-version: [ '1.22.x', '1.24.x' ] # Test minimum supported and latest stable
 
     steps:
     - name: Set up Go
@@ -30,6 +30,9 @@ jobs:
     - name: Run tests
       run: go test -v ./...
 
+    - name: Run tests with race detector
+      run: go test -race -count=1 ./...
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -37,7 +40,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22.x' # Use latest stable for linting
+          go-version: '1.24.x' # Use latest stable for linting
         id: go
 
       - name: Check out code

@@ -352,10 +352,7 @@ func checkInOperator(modelField reflect.Value, argSlice reflect.Value) (bool, er
 	// If types are compatible or convertible, proceed with comparison
 	for i := 0; i < argSlice.Len(); i++ {
 		sliceElem := argSlice.Index(i)
-		var sliceElemVal interface{}
-
-		// Try safe value comparison first with DeepEqual
-		sliceElemVal = sliceElem.Interface()
+		sliceElemVal := sliceElem.Interface()
 		if reflect.DeepEqual(modelFieldVal, sliceElemVal) {
 			return true, nil // Found a match directly
 		}
