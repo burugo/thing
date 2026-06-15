@@ -682,6 +682,15 @@ func (m *mockCacheClient) GetModelCount() int {
 	return count
 }
 
+// MGetModel retrieves multiple models by key using sequential GetModel calls.
+func (m *mockCacheClient) MGetModel(ctx context.Context, keys []string, dests []interface{}) []error {
+	errs := make([]error, len(keys))
+	for i, key := range keys {
+		errs[i] = m.GetModel(ctx, key, dests[i])
+	}
+	return errs
+}
+
 // GetCacheStats returns a snapshot of cache operation counters for the mock client.
 // The returned map is a copy and safe for concurrent use.
 // Typical keys: "Get", "GetMiss", "GetModel", "GetModelMiss", etc.

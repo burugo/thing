@@ -30,11 +30,10 @@ type client struct {
 	createdInternally bool             // Indicates whether redisClient was created by this struct
 }
 
-// Ensure client implements thing.CacheClient, thing.BatchCacheClient and io.Closer.
+// Ensure client implements thing.CacheClient and io.Closer.
 var (
-	_ thing.CacheClient      = (*client)(nil)
-	_ thing.BatchCacheClient = (*client)(nil)
-	_ io.Closer              = (*client)(nil)
+	_ thing.CacheClient = (*client)(nil)
+	_ io.Closer         = (*client)(nil)
 )
 
 // incrementCounter safely increments a named operation counter.

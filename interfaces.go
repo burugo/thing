@@ -53,16 +53,11 @@ type CacheClient interface {
 	Expire(ctx context.Context, key string, expiration time.Duration) error
 
 	GetCacheStats(ctx context.Context) CacheStats
-}
 
-// BatchCacheClient is an optional extension of CacheClient that supports batch operations.
-// Implementations that support MGetModel can reduce N+1 cache reads to a single round-trip.
-type BatchCacheClient interface {
-	CacheClient
 	// MGetModel retrieves multiple models from cache in a single batch operation.
 	// The keys slice and dests slice must have the same length.
 	// Each dest must be a non-nil pointer to a struct.
-	// Returns a map of index -> error for each key. ErrNotFound means cache miss.
+	// Returns a slice of errors, one per key. ErrNotFound means cache miss.
 	MGetModel(ctx context.Context, keys []string, dests []interface{}) []error
 }
 

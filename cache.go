@@ -879,9 +879,7 @@ func (m *localCache) GetModel(ctx context.Context, key string, dest interface{})
 	return nil
 }
 
-// MGetModel retrieves multiple models from cache in a single batch call.
-// For localCache this is just a loop, but it satisfies the BatchCacheClient interface
-// so that fetchModelsByIDsInternal can use the same code path.
+// MGetModel retrieves multiple models by key using sequential GetModel calls.
 func (m *localCache) MGetModel(ctx context.Context, keys []string, dests []interface{}) []error {
 	errs := make([]error, len(keys))
 	for i, key := range keys {
