@@ -30,10 +30,11 @@ type client struct {
 	createdInternally bool             // Indicates whether redisClient was created by this struct
 }
 
-// Ensure client implements thing.CacheClient and io.Closer.
+// Ensure client implements thing.CacheClient, thing.BatchCacheClient and io.Closer.
 var (
-	_ thing.CacheClient = (*client)(nil)
-	_ io.Closer         = (*client)(nil)
+	_ thing.CacheClient      = (*client)(nil)
+	_ thing.BatchCacheClient = (*client)(nil)
+	_ io.Closer              = (*client)(nil)
 )
 
 // incrementCounter safely increments a named operation counter.
@@ -215,6 +216,100 @@ func (c *client) GetModel(ctx context.Context, key string, dest interface{}) err
 		}
 	}
 	return nil
+}
+
+// MGetModel retrieves multiple models from Redis in a single MGET call,
+// reducing N network round-trips to 1.
+func (c *client) MGetModel(ctx context.Context, keys []string, dests []interface{}) []error {
+	c.incrementCounter("MGetModel")
+	errs := make([]error, len(keys))
+	if len(keys) == 0 {
+		return errs
+	}
+
+	vals, err := c.redisClient.MGet(ctx, keys...).Result()
+	if err != nil {
+		c.incrementCounter("MGetModelError")
+		for i := range errs {
+			errs[i] = fmt.Errorf("redis MGet error: %w", err)
+		}
+		return errs
+	}
+
+	for i, val := range vals {
+		if val == nil {
+			c.incrementCounter("GetModelMiss")
+			errs[i] = common.ErrNotFound
+			continue
+		}
+
+		var b []byte
+		switch v := val.(type) {
+		case string:
+			b = []byte(v)
+		case []byte:
+			b = v
+		default:
+			c.incrementCounter("GetModelError")
+			errs[i] = fmt.Errorf("redis MGet: unexpected type %T for key '%s'", val, keys[i])
+			continue
+		}
+
+		c.incrementCounter("GetModelHit")
+
+		destVal := reflect.ValueOf(dests[i])
+		if destVal.Kind() != reflect.Ptr || destVal.IsNil() {
+			errs[i] = fmt.Errorf("MGetModel: dest[%d] must be a non-nil pointer, got %T", i, dests[i])
+			continue
+		}
+		destElem := destVal.Elem()
+		if destElem.Kind() != reflect.Struct {
+			errs[i] = fmt.Errorf("MGetModel: dest[%d] must point to a struct, got %T", i, dests[i])
+			continue
+		}
+
+		var dataMap map[string]interface{}
+		buf := bytes.NewBuffer(b)
+		decoder := gob.NewDecoder(buf)
+		if decErr := decoder.Decode(&dataMap); decErr != nil {
+			buf.Reset()
+			buf.Write(b)
+			decoder = gob.NewDecoder(buf)
+			if directDecodeErr := decoder.Decode(dests[i]); directDecodeErr != nil {
+				errs[i] = fmt.Errorf("redis Gob Unmarshal error for key '%s': %w", keys[i], directDecodeErr)
+			}
+			continue
+		}
+
+		for k, v := range dataMap {
+			field := destElem.FieldByName(k)
+			if field.IsValid() && field.CanSet() {
+				valueToSet := reflect.ValueOf(v)
+				switch {
+				case valueToSet.Type().AssignableTo(field.Type()):
+					field.Set(valueToSet)
+				case valueToSet.Type().ConvertibleTo(field.Type()):
+					field.Set(valueToSet.Convert(field.Type()))
+				default:
+					if (valueToSet.Kind() == reflect.Float64 || valueToSet.Kind() == reflect.Int64) && (field.Kind() >= reflect.Int && field.Kind() <= reflect.Uint64) {
+						var numericVal int64
+						if valueToSet.Kind() == reflect.Float64 {
+							numericVal = int64(valueToSet.Float())
+						} else {
+							numericVal = valueToSet.Int()
+						}
+						switch field.Kind() {
+						case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+							field.SetInt(numericVal)
+						case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+							field.SetUint(uint64(numericVal))
+						}
+					}
+				}
+			}
+		}
+	}
+	return errs
 }
 
 // SetModel stores a model in Redis using Gob encoding based on fieldsToCache.

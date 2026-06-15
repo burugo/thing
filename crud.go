@@ -44,27 +44,51 @@ func fetchModelsByIDsInternal(ctx context.Context, cache CacheClient, db DBAdapt
 
 	// 1. Try fetching from cache
 	if cache != nil {
-		for _, id := range ids { // Iterate through original ids
-			cacheKey := generateCacheKey(modelInfo.TableName, id) // 统一用主键 key
-			instanceVal := reflect.New(modelType.Elem()).Elem()   // User
-			instancePtr := instanceVal.Addr().Interface()         // *User
-			err := cache.GetModel(ctx, cacheKey, instancePtr)
+		// Use batch MGetModel if the cache supports it
+		if batchCache, ok := cache.(BatchCacheClient); ok {
+			keys := make([]string, len(ids))
+			dests := make([]interface{}, len(ids))
+			for i, id := range ids {
+				keys[i] = generateCacheKey(modelInfo.TableName, id)
+				instanceVal := reflect.New(modelType.Elem()).Elem()
+				dests[i] = instanceVal.Addr().Interface()
+			}
+			errs := batchCache.MGetModel(ctx, keys, dests)
+			for i, err := range errs {
+				switch {
+				case err == nil:
+					ptr := dests[i]
+					setNewRecordFlagIfBaseModel(ptr, false)
+					resultMap[ids[i]] = reflect.ValueOf(ptr)
+				case errors.Is(err, common.ErrCacheNoneResult):
+					// NoneResult marker — handled, skip
+				case errors.Is(err, common.ErrNotFound):
+					missingIDs = append(missingIDs, ids[i])
+				default:
+					log.Printf("WARN: Cache error during batch fetch for key %s: %v", keys[i], err)
+					missingIDs = append(missingIDs, ids[i])
+				}
+			}
+		} else {
+			// Fallback: sequential GetModel
+			for _, id := range ids {
+				cacheKey := generateCacheKey(modelInfo.TableName, id)
+				instanceVal := reflect.New(modelType.Elem()).Elem()
+				instancePtr := instanceVal.Addr().Interface()
+				err := cache.GetModel(ctx, cacheKey, instancePtr)
 
-			switch {
-			case err == nil:
-				// Found in cache
-				setNewRecordFlagIfBaseModel(instancePtr, false)
-				resultMap[id] = reflect.ValueOf(instancePtr) // Store the pointer
-			case errors.Is(err, common.ErrCacheNoneResult):
-				// Found NoneResult marker - this ID is handled, DO NOT add to missingIDs.
-				// No action needed, just continue
-			case errors.Is(err, common.ErrNotFound):
-				// True cache miss
-				missingIDs = append(missingIDs, id)
-			default:
-				// Unexpected cache error
-				log.Printf("WARN: Cache error during batch fetch for key %s: %v", cacheKey, err)
-				missingIDs = append(missingIDs, id) // Treat as missing if error
+				switch {
+				case err == nil:
+					setNewRecordFlagIfBaseModel(instancePtr, false)
+					resultMap[id] = reflect.ValueOf(instancePtr)
+				case errors.Is(err, common.ErrCacheNoneResult):
+					// NoneResult marker
+				case errors.Is(err, common.ErrNotFound):
+					missingIDs = append(missingIDs, id)
+				default:
+					log.Printf("WARN: Cache error during batch fetch for key %s: %v", cacheKey, err)
+					missingIDs = append(missingIDs, id)
+				}
 			}
 		}
 	} else {

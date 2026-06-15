@@ -1,15 +1,17 @@
 package cache
 
 import (
+	"hash/fnv"
 	"sync"
-
-	log "github.com/burugo/thing/internal/logging"
 )
 
-// CacheKeyLockManagerInternal manages a map of mutexes, one for each cache key.
-// It uses sync.Map for efficient concurrent access.
+const lockShardCount = 256
+
+// CacheKeyLockManagerInternal manages a fixed set of sharded mutexes.
+// Cache keys are mapped to a shard via FNV hash, eliminating the sync.Map
+// memory leak where per-key mutexes were never cleaned up.
 type CacheKeyLockManagerInternal struct {
-	locks sync.Map // map[string]*sync.Mutex
+	shards [lockShardCount]sync.Mutex
 }
 
 // NewCacheKeyLockManagerInternal creates a new lock manager.
@@ -17,58 +19,26 @@ func NewCacheKeyLockManagerInternal() *CacheKeyLockManagerInternal {
 	return &CacheKeyLockManagerInternal{}
 }
 
-// Lock acquires the mutex associated with the given cache key.
-// If the mutex does not exist, it is created.
-// This operation blocks until the lock is acquired.
-func (m *CacheKeyLockManagerInternal) Lock(key string) {
-	if key == "" {
-		// Avoid locking on empty key, though this shouldn't happen in practice.
-		return
-	}
-	// LoadOrStore ensures that only one mutex is created per key.
-	// It returns the existing mutex if found, or stores and returns the new one.
-	mutex, _ := m.locks.LoadOrStore(key, &sync.Mutex{})
-	// log.Printf("DEBUG: Acquiring lock for key '%s'", key)
-	mutex.(*sync.Mutex).Lock()
-	// log.Printf("DEBUG: Acquired lock for key '%s'", key)
+func (m *CacheKeyLockManagerInternal) shard(key string) *sync.Mutex {
+	h := fnv.New32a()
+	h.Write([]byte(key))
+	return &m.shards[h.Sum32()%lockShardCount]
 }
 
-// Unlock releases the mutex associated with the given cache key.
-// It is crucial to call Unlock after the critical section protected by Lock.
-// Typically used with defer: `defer cacheKeyLocker.Unlock(key)`.
+// Lock acquires the mutex shard for the given cache key.
+func (m *CacheKeyLockManagerInternal) Lock(key string) {
+	if key == "" {
+		return
+	}
+	m.shard(key).Lock()
+}
+
+// Unlock releases the mutex shard for the given cache key.
 func (m *CacheKeyLockManagerInternal) Unlock(key string) {
 	if key == "" {
 		return
 	}
-	// Load retrieves the mutex associated with the key.
-	if mutex, ok := m.locks.Load(key); ok {
-		mutex.(*sync.Mutex).Unlock()
-		// log.Printf("DEBUG: Released lock for key '%s'", key)
-	} else {
-		// This case should ideally not happen if Lock was called correctly.
-		// Log a warning if it does.
-		log.Printf("WARN: Attempted to Unlock a key ('%s') that was not locked or doesn't exist.", key)
-	}
-
-	// Note on garbage collection:
-	// Mutexes stored in the sync.Map will not be garbage collected automatically
-	// if the keys become obsolete. For long-running applications with a vast and
-	// changing set of cache keys, a mechanism to occasionally sweep and remove
-	// unused mutexes might be necessary to prevent memory leaks.
-	// However, for many applications, the overhead is negligible.
-	// Example cleanup strategy (run periodically):
-	/*
-	   m.locks.Range(func(key, value interface{}) bool {
-	       mu := value.(*sync.Mutex)
-	       // Try to acquire the lock briefly. If successful, it means it's likely unused.
-	       if mu.TryLock() {
-	           mu.Unlock() // Release immediately
-	           // Consider removing the lock if it hasn't been used recently (requires tracking usage)
-	           // m.locks.Delete(key)
-	       }
-	       return true
-	   })
-	*/
+	m.shard(key).Unlock()
 }
 
 // --- Global Instance ---

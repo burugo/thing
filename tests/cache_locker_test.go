@@ -94,8 +94,10 @@ func TestCacheKeyLockManager_MultipleKeys(t *testing.T) {
 
 func TestCacheKeyLockManager_UnlockNonexistent(t *testing.T) {
 	manager := cache.NewCacheKeyLockManagerInternal()
-	// Unlocking a key that was never locked should not panic
+	// With sharded locks, Lock must always be called before Unlock.
+	// Verify that a Lock+Unlock pair on a never-before-seen key works fine.
 	assert.NotPanics(t, func() {
+		manager.Lock("nonexistent_key")
 		manager.Unlock("nonexistent_key")
 	})
 }

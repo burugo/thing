@@ -3,16 +3,16 @@ package thing
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/gob"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"reflect"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/burugo/thing/common" // Added import for common errors/constants
@@ -87,14 +87,9 @@ func GenerateQueryHash(params QueryParams) string {
 		log.Printf("ERROR: Failed to marshal query params for hash: %v", err)
 		return fmt.Sprintf("error_hash_%d", time.Now().UnixNano())
 	}
-	hasher := sha256.New()
+	hasher := fnv.New64a()
 	hasher.Write(paramsJson)
-	fullHash := hex.EncodeToString(hasher.Sum(nil))
-	// Return only first 8 characters for shorter cache keys (32-bit hex = 8 chars)
-	if len(fullHash) >= 8 {
-		return fullHash[:8]
-	}
-	return fullHash
+	return strconv.FormatUint(hasher.Sum64(), 16)
 }
 
 // GenerateCacheKey generates a cache key for list or count queries with normalized arguments.
@@ -214,45 +209,9 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 	}
 	candidateColumns := cacheCandidateColumns(fieldValues, changedColumns, isCreate, isDelete, !model.KeepItem() || kiFieldChanged)
 
-	// Use valueIndex for exact match fields
-	cacheKeySet := make(map[string]struct{})
-	for col, val := range fieldValues {
-		if !candidateColumns[col] {
-			continue
-		}
-		keys := cache.GlobalCacheIndex.GetKeysByValue(tableName, col, val)
-		for _, k := range keys {
-			cacheKeySet[k] = struct{}{}
-		}
-	}
-	// Use fieldIndex for range/other queries
-	if cache.GlobalCacheIndex != nil && cache.GlobalCacheIndex.FieldIndex != nil {
-		for col := range candidateColumns {
-			if fieldMap, ok := cache.GlobalCacheIndex.FieldIndex[tableName]; ok {
-				if keyMap, ok := fieldMap[col]; ok {
-					for k := range keyMap {
-						cacheKeySet[k] = struct{}{}
-					}
-				}
-			}
-		}
-	}
-	// Always union full-table list cache keys (where is empty)
-	for _, k := range cache.GlobalCacheIndex.GetFullTableListKeys(tableName) {
-		cacheKeySet[k] = struct{}{}
-	}
-	// Always union full-table count cache keys (where is empty)
-	for _, k := range cache.GlobalCacheIndex.GetFullTableCountKeys(tableName) {
-		cacheKeySet[k] = struct{}{}
-	}
-	for _, k := range cache.GlobalCacheIndex.GetKeysByChangedFields(tableName, candidateColumns) {
-		cacheKeySet[k] = struct{}{}
-	}
-	// Convert set to slice
-	queryCacheKeys := make([]string, 0, len(cacheKeySet))
-	for k := range cacheKeySet {
-		queryCacheKeys = append(queryCacheKeys, k)
-	}
+	// Gather all invalidation data in a single lock acquisition
+	invCtx := cache.GlobalCacheIndex.GetInvalidationContext(tableName, fieldValues, candidateColumns)
+	queryCacheKeys := invCtx.CacheKeys
 
 	if len(queryCacheKeys) == 0 {
 		// log.Printf("DEBUG: No query caches registered for table '%s', skipping cache update for ID %d", tableName, id)
@@ -272,7 +231,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			continue
 		}
 
-		paramsInternal, found := cache.GlobalCacheIndex.GetQueryParamsForKey(cacheKey)
+		paramsInternal, found := invCtx.KeyToParams[cacheKey]
 		if !found {
 			log.Printf("DEBUG: QueryParams not found for registered cache key '%s'. Cannot perform cache update.", cacheKey)
 			continue
@@ -283,11 +242,12 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			Order:    paramsInternal.Order,
 			Preloads: paramsInternal.Preloads,
 		}
-		queryDeps, _ := cache.GlobalCacheIndex.GetQueryDependenciesForKey(cacheKey)
+		queryDeps := invCtx.KeyToDeps[cacheKey]
+		cachedPred := invCtx.KeyToPredicate[cacheKey]
 
 		if isDelete {
 			// Only check if the model would have matched before deletion
-			matches, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
+			matches, err := cache.CheckQueryMatchWithPredicate(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot), cachedPred)
 			if err != nil {
 				log.Printf("DEBUG CheckQueryMatch Failed: Query check failed for deleted model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
@@ -310,7 +270,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			}
 		} else {
 			// Save/Update: check both current and original model
-			matchesCurrent, err := cache.CheckQueryMatch(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
+			matchesCurrent, err := cache.CheckQueryMatchWithPredicate(model, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot), cachedPred)
 			if err != nil {
 				log.Printf("DEBUG CheckQueryMatch Failed: Query check failed for cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 				if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
@@ -321,7 +281,7 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 			matchesOriginal := false
 			originalReflect := reflect.ValueOf(originalModel)
 			if !isCreate && originalReflect.Kind() == reflect.Ptr && !originalReflect.IsNil() {
-				matchesOriginal, err = cache.CheckQueryMatch(originalModel, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot))
+				matchesOriginal, err = cache.CheckQueryMatchWithPredicate(originalModel, t.info.TableName, t.info.ColumnToFieldMap, toInternalQueryParams(paramsRoot), cachedPred)
 				if err != nil {
 					log.Printf("DEBUG CheckQueryMatch Failed: Query check failed for original model, cache key '%s'. Deleting this cache entry due to error: %v", cacheKey, err)
 					if delErr := t.cache.Delete(ctx, cacheKey); delErr != nil && !errors.Is(delErr, common.ErrNotFound) {
@@ -456,7 +416,8 @@ func (t *Thing[T]) invalidateAffectedQueryCaches(ctx context.Context, model T, o
 		// List and count query caches are both invalidated instead of patched in place.
 		writeErr = t.cache.Delete(ctx, key)
 		if writeErr == nil {
-			// log.Printf("DEBUG Write (%s): Successfully invalidated query cache.", key)
+			// Key deleted; it will be re-registered on next Fetch.
+			// CacheIndex cleanup happens via periodic GC to avoid premature deregistration.
 		} else if errors.Is(writeErr, common.ErrNotFound) {
 			// log.Printf("DEBUG Write (%s): Query cache key not found during invalidation (already gone?).", key)
 			writeErr = nil
@@ -673,12 +634,11 @@ func NewChannelLock() *ChannelLock {
 
 // localCache implements CacheClient using in-memory sync.Map.
 type localCache struct {
-	store       sync.Map   // map[string]string
-	lockPool    sync.Map   // map[string]*ChannelLock
-	counters    sync.Map   // map[string]int, now each counter is a separate key
-	countersMu  sync.Mutex // protects counters increment
-	expiryStore sync.Map   // map[string]time.Time, stores expiration times
-	cleanupOnce sync.Once  // ensures cleanup goroutine starts only once
+	store       sync.Map // map[string]string
+	lockPool    sync.Map // map[string]*ChannelLock
+	counters    sync.Map // map[string]*atomic.Int64
+	expiryStore sync.Map // map[string]time.Time, stores expiration times
+	cleanupOnce sync.Once // ensures cleanup goroutine starts only once
 }
 
 // DefaultLocalCache is the default in-memory cache client for Thing ORM.
@@ -806,7 +766,14 @@ func (m *localCache) cleanupExpiredKeys() {
 		for _, key := range keysToDelete {
 			m.store.Delete(key)
 			m.expiryStore.Delete(key)
-			log.Printf("DEBUG: localCache cleaned up expired key: %s", key)
+		}
+
+		// GC stale CacheIndex entries: deregister keys that are no longer in the cache
+		registeredKeys := cache.GlobalCacheIndex.GetAllRegisteredKeys()
+		for _, key := range registeredKeys {
+			if _, ok := m.store.Load(key); !ok {
+				cache.GlobalCacheIndex.DeregisterQuery(key)
+			}
 		}
 	}
 }
@@ -910,6 +877,17 @@ func (m *localCache) GetModel(ctx context.Context, key string, dest interface{})
 
 	m.incrCounter("GetModelHit")
 	return nil
+}
+
+// MGetModel retrieves multiple models from cache in a single batch call.
+// For localCache this is just a loop, but it satisfies the BatchCacheClient interface
+// so that fetchModelsByIDsInternal can use the same code path.
+func (m *localCache) MGetModel(ctx context.Context, keys []string, dests []interface{}) []error {
+	errs := make([]error, len(keys))
+	for i, key := range keys {
+		errs[i] = m.GetModel(ctx, key, dests[i])
+	}
+	return errs
 }
 
 func (m *localCache) SetModel(ctx context.Context, key string, model interface{}, fieldsToCache []string, expiration time.Duration) error {
@@ -1150,20 +1128,18 @@ func (m *localCache) Expire(ctx context.Context, key string, expiration time.Dur
 }
 
 func (m *localCache) incrCounter(name string) {
-	m.countersMu.Lock()
-	defer m.countersMu.Unlock()
-	val, _ := m.counters.LoadOrStore(name, 0)
-	m.counters.Store(name, val.(int)+1)
+	v, _ := m.counters.LoadOrStore(name, &atomic.Int64{})
+	v.(*atomic.Int64).Add(1)
 }
 
 func (m *localCache) GetCacheStats(ctx context.Context) CacheStats {
 	clonedCounters := make(map[string]int)
 	m.counters.Range(func(key, value any) bool {
-		k, ok1 := key.(string)
-		v, ok2 := value.(int)
-		if ok1 && ok2 {
-			clonedCounters[k] = v
+		k, ok := key.(string)
+		if !ok {
+			return true
 		}
+		clonedCounters[k] = int(value.(*atomic.Int64).Load())
 		return true
 	})
 	return CacheStats{Counters: clonedCounters}

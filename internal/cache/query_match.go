@@ -39,6 +39,12 @@ func isArgNil(argValue interface{}) bool {
 // joined by AND/OR with parentheses.
 // Support for complex LIKE patterns is NOT yet implemented.
 func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[string]string, params types.QueryParams) (bool, error) {
+	return CheckQueryMatchWithPredicate(model, tableName, columnToFieldMap, params, nil)
+}
+
+// CheckQueryMatchWithPredicate is like CheckQueryMatch but accepts an optional pre-parsed predicate
+// to avoid re-parsing the WHERE clause on every call. If pred is nil, it falls back to parsing.
+func CheckQueryMatchWithPredicate(model interface{}, tableName string, columnToFieldMap map[string]string, params types.QueryParams, pred *queryPredicate) (bool, error) {
 	if model == nil {
 		return false, errors.New("model cannot be nil")
 	}
@@ -54,10 +60,14 @@ func CheckQueryMatch(model interface{}, tableName string, columnToFieldMap map[s
 		return false, errors.New("model must be a non-nil pointer")
 	}
 
-	predicate, err := parseQueryPredicate(params)
-	if err != nil {
-		log.Printf("DEBUG: CheckQueryMatch could not parse WHERE clause '%s': %v", params.Where, err)
-		return false, err
+	predicate := pred
+	if predicate == nil {
+		var err error
+		predicate, err = parseQueryPredicate(params)
+		if err != nil {
+			log.Printf("DEBUG: CheckQueryMatch could not parse WHERE clause '%s': %v", params.Where, err)
+			return false, err
+		}
 	}
 	return predicate.Match(modelVal.Elem(), tableName, columnToFieldMap)
 }

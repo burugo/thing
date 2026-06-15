@@ -33,6 +33,9 @@ type CacheIndex struct {
 	keyToParams map[string]types.QueryParams
 	// keyToDependencies maps a query cache key to the fields it depends on.
 	keyToDependencies map[string]QueryDependencies
+	// keyToPredicate caches the parsed query predicate for each cache key,
+	// avoiding re-parsing the WHERE clause on every CheckQueryMatch call.
+	keyToPredicate map[string]*queryPredicate
 	// tableToQueryKeys maps table -> all registered list/count query cache keys.
 	tableToQueryKeys map[string]map[string]bool
 
@@ -62,6 +65,7 @@ func NewCacheIndex() *CacheIndex {
 	return &CacheIndex{
 		keyToParams:               make(map[string]types.QueryParams),
 		keyToDependencies:         make(map[string]QueryDependencies),
+		keyToPredicate:            make(map[string]*queryPredicate),
 		tableToQueryKeys:          make(map[string]map[string]bool),
 		DependencyIndex:           make(map[string]map[string]map[string]bool),
 		valueIndex:                make(map[string]map[string]map[string]map[string]bool),
@@ -89,6 +93,10 @@ func (idx *CacheIndex) RegisterQuery(tableName, cacheKey string, params types.Qu
 		idx.tableToQueryKeys[tableName] = make(map[string]bool)
 	}
 	idx.tableToQueryKeys[tableName][cacheKey] = true
+
+	// Parse and cache the query predicate for efficient CheckQueryMatch later
+	pred, _ := parseQueryPredicate(params)
+	idx.keyToPredicate[cacheKey] = pred
 
 	// Parse the WHERE clause once and reuse the result for dependency,
 	// value, and field indexing below.
@@ -266,6 +274,18 @@ func (idx *CacheIndex) GetQueryDependenciesForKey(cacheKey string) (QueryDepende
 	return deps, found
 }
 
+// GetCachedPredicate returns the pre-parsed query predicate for a cache key, if available.
+func (idx *CacheIndex) GetCachedPredicate(cacheKey string) *queryPredicate {
+	if cacheKey == "" {
+		return nil
+	}
+
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	return idx.keyToPredicate[cacheKey]
+}
+
 // GetQueryKeysForTable returns all registered list/count query cache keys for a table.
 func (idx *CacheIndex) GetQueryKeysForTable(tableName string) []string {
 	if tableName == "" {
@@ -316,6 +336,137 @@ func (idx *CacheIndex) GetKeysByChangedFields(table string, changedFields map[st
 	return keys
 }
 
+// GetKeysByFieldIndex returns all cache keys from the FieldIndex for the given table and candidate fields.
+// This method holds the RLock to prevent data races with concurrent RegisterQuery writes.
+func (idx *CacheIndex) GetKeysByFieldIndex(table string, candidateFields map[string]bool) []string {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	fieldMap, ok := idx.FieldIndex[table]
+	if !ok {
+		return nil
+	}
+	keySet := make(map[string]bool)
+	for col := range candidateFields {
+		if keyMap, ok := fieldMap[col]; ok {
+			for k := range keyMap {
+				keySet[k] = true
+			}
+		}
+	}
+	if len(keySet) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(keySet))
+	for k := range keySet {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// InvalidationContext holds all data needed for cache invalidation, gathered in a single lock acquisition.
+type InvalidationContext struct {
+	// CacheKeys is the deduplicated set of all cache keys that may need invalidation.
+	CacheKeys []string
+	// KeyToParams maps cache key to its QueryParams.
+	KeyToParams map[string]types.QueryParams
+	// KeyToDeps maps cache key to its QueryDependencies.
+	KeyToDeps map[string]QueryDependencies
+	// KeyToPredicate maps cache key to its pre-parsed predicate.
+	KeyToPredicate map[string]*queryPredicate
+}
+
+// GetInvalidationContext gathers all invalidation-relevant data for a table in a single RLock,
+// reducing lock acquisitions from 7+ to 1 per Save/Delete operation.
+func (idx *CacheIndex) GetInvalidationContext(tableName string, fieldValues map[string]interface{}, candidateColumns map[string]bool) InvalidationContext {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	keySet := make(map[string]struct{})
+
+	// 1. valueIndex: exact match fields
+	if tbl, ok := idx.valueIndex[tableName]; ok {
+		for col, val := range fieldValues {
+			if !candidateColumns[col] {
+				continue
+			}
+			valStr := toIndexValueString(val)
+			if fld, ok := tbl[col]; ok {
+				if valMap, ok := fld[valStr]; ok {
+					for k := range valMap {
+						keySet[k] = struct{}{}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. FieldIndex: range/other queries
+	if fieldMap, ok := idx.FieldIndex[tableName]; ok {
+		for col := range candidateColumns {
+			if keyMap, ok := fieldMap[col]; ok {
+				for k := range keyMap {
+					keySet[k] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// 3. Full table list keys
+	if m, ok := idx.TableToFullTableListKeys[tableName]; ok {
+		for k := range m {
+			keySet[k] = struct{}{}
+		}
+	}
+
+	// 4. Full table count keys
+	if m, ok := idx.TableToFullTableCountKeys[tableName]; ok {
+		for k := range m {
+			keySet[k] = struct{}{}
+		}
+	}
+
+	// 5. DependencyIndex: keys by changed fields
+	if tableDeps, ok := idx.DependencyIndex[tableName]; ok {
+		for field := range candidateColumns {
+			for key := range tableDeps[field] {
+				keySet[key] = struct{}{}
+			}
+		}
+		for key := range tableDeps[uncertainDependencyField] {
+			keySet[key] = struct{}{}
+		}
+	}
+
+	if len(keySet) == 0 {
+		return InvalidationContext{}
+	}
+
+	// Build result with per-key metadata
+	keys := make([]string, 0, len(keySet))
+	keyToParams := make(map[string]types.QueryParams, len(keySet))
+	keyToDeps := make(map[string]QueryDependencies, len(keySet))
+	keyToPred := make(map[string]*queryPredicate, len(keySet))
+
+	for k := range keySet {
+		keys = append(keys, k)
+		if p, ok := idx.keyToParams[k]; ok {
+			keyToParams[k] = p
+		}
+		if d, ok := idx.keyToDependencies[k]; ok {
+			keyToDeps[k] = d
+		}
+		keyToPred[k] = idx.keyToPredicate[k]
+	}
+
+	return InvalidationContext{
+		CacheKeys:      keys,
+		KeyToParams:    keyToParams,
+		KeyToDeps:      keyToDeps,
+		KeyToPredicate: keyToPred,
+	}
+}
+
 // ResetGlobalCacheIndex resets the global cache index to a new empty state.
 // Primarily useful for testing purposes to ensure test isolation.
 func ResetGlobalCacheIndex() {
@@ -323,9 +474,105 @@ func ResetGlobalCacheIndex() {
 	log.Println("DEBUG: Global Cache Index Reset") // Add log for visibility
 }
 
-// TODO: Consider adding a DeregisterQuery method if cache keys can expire or become invalid permanently.
-// This would need to remove entries from both maps.
-// TODO: Consider persistence options if the index needs to survive application restarts.
+// GetAllRegisteredKeys returns all cache keys currently tracked in the index.
+// Used by periodic GC to check which keys are still alive in the cache.
+func (idx *CacheIndex) GetAllRegisteredKeys() []string {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	keys := make([]string, 0, len(idx.keyToParams))
+	for k := range idx.keyToParams {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
+// DeregisterQuery removes a cache key from all CacheIndex maps.
+// Should be called when a cache key is deleted/expired to prevent memory leaks.
+func (idx *CacheIndex) DeregisterQuery(cacheKey string) {
+	if cacheKey == "" {
+		return
+	}
+
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	// Remove from keyToParams
+	delete(idx.keyToParams, cacheKey)
+
+	// Remove from keyToDependencies
+	delete(idx.keyToDependencies, cacheKey)
+
+	// Remove from keyToPredicate
+	delete(idx.keyToPredicate, cacheKey)
+
+	// Remove from tableToQueryKeys
+	for table, keys := range idx.tableToQueryKeys {
+		delete(keys, cacheKey)
+		if len(keys) == 0 {
+			delete(idx.tableToQueryKeys, table)
+		}
+	}
+
+	// Remove from DependencyIndex
+	for table, fieldMap := range idx.DependencyIndex {
+		for field, keys := range fieldMap {
+			delete(keys, cacheKey)
+			if len(keys) == 0 {
+				delete(fieldMap, field)
+			}
+		}
+		if len(fieldMap) == 0 {
+			delete(idx.DependencyIndex, table)
+		}
+	}
+
+	// Remove from valueIndex
+	for table, fieldMap := range idx.valueIndex {
+		for field, valMap := range fieldMap {
+			for val, keys := range valMap {
+				delete(keys, cacheKey)
+				if len(keys) == 0 {
+					delete(valMap, val)
+				}
+			}
+			if len(valMap) == 0 {
+				delete(fieldMap, field)
+			}
+		}
+		if len(fieldMap) == 0 {
+			delete(idx.valueIndex, table)
+		}
+	}
+
+	// Remove from FieldIndex
+	for table, fieldMap := range idx.FieldIndex {
+		for field, keys := range fieldMap {
+			delete(keys, cacheKey)
+			if len(keys) == 0 {
+				delete(fieldMap, field)
+			}
+		}
+		if len(fieldMap) == 0 {
+			delete(idx.FieldIndex, table)
+		}
+	}
+
+	// Remove from TableToFullTableListKeys
+	for table, keys := range idx.TableToFullTableListKeys {
+		delete(keys, cacheKey)
+		if len(keys) == 0 {
+			delete(idx.TableToFullTableListKeys, table)
+		}
+	}
+
+	// Remove from TableToFullTableCountKeys
+	for table, keys := range idx.TableToFullTableCountKeys {
+		delete(keys, cacheKey)
+		if len(keys) == 0 {
+			delete(idx.TableToFullTableCountKeys, table)
+		}
+	}
+}
 
 // ParseExactMatchFields parses QueryParams and returns candidate values for exact match (=, IN) conditions.
 // The returned values are used as cache invalidation candidates; CheckQueryMatch still verifies the final match.
